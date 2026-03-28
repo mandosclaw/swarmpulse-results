@@ -2,193 +2,229 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    JWT token weakness scanner
 # Mission: API Authentication Bypass Detector
-# Agent:   @quinn
-# Date:    2026-03-23T18:00:32.883Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Agent:   @sue
+# Date:    2026-03-28T21:59:43.488Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
-"""JWT token weakness scanner: decode JWTs without verification, check alg/exp/aud/iss, detect weak patterns."""
+"""
+JWT Token Weakness Scanner
+Task: Scan JWT tokens for weak algorithms, missing expiry, and overly broad claims
+Mission: API Authentication Bypass Detector
+Agent: @sue (SwarmPulse)
+Date: 2024
+"""
 
 import argparse
+import json
 import base64
+import sys
+from datetime import datetime
+from typing import Dict, List, Tuple, Any
 import hashlib
 import hmac
-import json
-import logging
-import re
-import sys
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Optional
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
-
-WEAK_ALGORITHMS = {"none", "hs256", "hs384", "hs512"}
-STRONG_ALGORITHMS = {"rs256", "rs384", "rs512", "es256", "es384", "es512", "ps256", "ps384", "ps512"}
-WEAK_SECRETS = ["secret", "password", "123456", "jwt_secret", "supersecret", "changeme", "admin", "key", "token", "auth", "test", "dev", "local", "letmein", "qwerty", "abc123", "pass", "hello"]
 
 
-@dataclass
-class JWTWeakness:
-    category: str
-    severity: str
-    description: str
-    recommendation: str
+class JWTWeaknessScanner:
+    """Scanner for JWT token vulnerabilities and weaknesses."""
 
+    WEAK_ALGORITHMS = {'none', 'HS256', 'HS384', 'HS512'}
+    CRITICAL_CLAIMS = {'sub', 'iss', 'aud', 'exp', 'iat'}
+    SUSPICIOUS_CLAIMS = {
+        'admin', 'role', 'is_admin', 'is_superuser', 'privileges',
+        'permissions', 'groups', 'scopes', 'acl', 'access_level'
+    }
 
-@dataclass
-class JWTScanResult:
-    token_preview: str
-    header: dict[str, Any]
-    payload: dict[str, Any]
-    weaknesses: list[JWTWeakness]
-    risk_level: str
+    def __init__(self, weak_key_threshold: int = 32):
+        """
+        Initialize the JWT scanner.
 
+        Args:
+            weak_key_threshold: Minimum key length in bits for HMAC algorithms
+        """
+        self.weak_key_threshold = weak_key_threshold
+        self.findings: List[Dict[str, Any]] = []
 
-def b64url_decode(s: str) -> bytes:
-    s = s.strip()
-    pad = 4 - len(s) % 4
-    if pad != 4:
-        s += "=" * pad
-    return base64.urlsafe_b64decode(s)
+    def decode_jwt_parts(self, token: str) -> Tuple[bool, Dict[str, Any], str]:
+        """
+        Decode JWT token parts without verification.
 
+        Args:
+            token: JWT token string
 
-def decode_jwt(token: str) -> tuple[dict, dict, str]:
-    parts = token.strip().split(".")
-    if len(parts) != 3:
-        raise ValueError(f"Expected 3 JWT parts, got {len(parts)}")
-    header = json.loads(b64url_decode(parts[0]))
-    payload = json.loads(b64url_decode(parts[1]))
-    return header, payload, parts[2]
-
-
-def check_algorithm(header: dict) -> list[JWTWeakness]:
-    weaknesses = []
-    alg = header.get("alg", "none").lower()
-    if alg == "none":
-        weaknesses.append(JWTWeakness("algorithm", "CRITICAL", "Algorithm is 'none' — no signature required", "Reject tokens with alg:none"))
-    elif alg in WEAK_ALGORITHMS:
-        weaknesses.append(JWTWeakness("algorithm", "MEDIUM", f"Symmetric algorithm {alg.upper()} — shared secret risk", "Use RS256 or ES256 (asymmetric) for public-facing APIs"))
-    typ = header.get("typ", "").upper()
-    if typ and typ != "JWT":
-        weaknesses.append(JWTWeakness("header", "LOW", f"Unusual typ: {typ}", "Standard JWT type should be 'JWT'"))
-    kid = header.get("kid", "")
-    if kid and re.search(r'[;\'\"\\]|--', str(kid)):
-        weaknesses.append(JWTWeakness("kid_injection", "CRITICAL", f"Potential SQL/path injection in kid: {kid}", "Validate and sanitize kid parameter strictly"))
-    return weaknesses
-
-
-def check_expiry(payload: dict) -> list[JWTWeakness]:
-    weaknesses = []
-    now = datetime.now().timestamp()
-    exp = payload.get("exp")
-    iat = payload.get("iat")
-    nbf = payload.get("nbf")
-
-    if exp is None:
-        weaknesses.append(JWTWeakness("expiry", "HIGH", "No 'exp' claim — token never expires", "Always set an expiry claim (exp)"))
-    else:
-        if exp < now:
-            weaknesses.append(JWTWeakness("expiry", "MEDIUM", f"Token expired at {datetime.fromtimestamp(exp).isoformat()}", "Ensure expired tokens are rejected server-side"))
-        lifetime = exp - (iat or now)
-        if lifetime > 86400 * 30:
-            weaknesses.append(JWTWeakness("expiry", "MEDIUM", f"Very long token lifetime: {lifetime/86400:.1f} days", "Keep token lifetimes short (< 1 hour for access tokens)"))
-
-    if iat is None:
-        weaknesses.append(JWTWeakness("claims", "LOW", "No 'iat' claim — issued-at not set", "Include iat for replay detection"))
-
-    return weaknesses
-
-
-def check_claims(payload: dict) -> list[JWTWeakness]:
-    weaknesses = []
-    if not payload.get("aud"):
-        weaknesses.append(JWTWeakness("claims", "MEDIUM", "No 'aud' claim — audience not restricted", "Set aud to restrict token to specific APIs"))
-    if not payload.get("iss"):
-        weaknesses.append(JWTWeakness("claims", "LOW", "No 'iss' claim — issuer not specified", "Set iss to identify the token issuer"))
-    if not payload.get("sub"):
-        weaknesses.append(JWTWeakness("claims", "LOW", "No 'sub' claim — subject not specified", "Set sub to identify the token subject"))
-    if not payload.get("jti"):
-        weaknesses.append(JWTWeakness("claims", "LOW", "No 'jti' claim — replay attacks possible", "Add jti (JWT ID) for replay prevention"))
-    sensitive_patterns = re.compile(r'password|secret|key|token|hash|salt', re.I)
-    for k, v in payload.items():
-        if sensitive_patterns.search(k):
-            weaknesses.append(JWTWeakness("sensitive_data", "HIGH", f"Sensitive field '{k}' in payload", "Never store sensitive data in JWT payload (unencrypted)"))
-    return weaknesses
-
-
-def check_weak_secret(token: str, header: dict) -> list[JWTWeakness]:
-    weaknesses = []
-    alg = header.get("alg", "").upper()
-    if alg not in ("HS256", "HS384", "HS512"):
-        return weaknesses
-    parts = token.split(".")
-    signing_input = f"{parts[0]}.{parts[1]}".encode()
-    original_sig = b64url_decode(parts[2])
-    hash_func = {"HS256": hashlib.sha256, "HS384": hashlib.sha384, "HS512": hashlib.sha512}.get(alg, hashlib.sha256)
-    for secret in WEAK_SECRETS:
-        sig = hmac.new(secret.encode(), signing_input, hash_func).digest()
-        if sig == original_sig:
-            weaknesses.append(JWTWeakness("weak_secret", "CRITICAL", f"Weak HMAC secret found: '{secret}'", "Use a cryptographically random secret of at least 256 bits"))
-            break
-    return weaknesses
-
-
-def scan_token(token: str) -> JWTScanResult:
-    header, payload, sig = decode_jwt(token)
-    weaknesses = []
-    weaknesses.extend(check_algorithm(header))
-    weaknesses.extend(check_expiry(payload))
-    weaknesses.extend(check_claims(payload))
-    weaknesses.extend(check_weak_secret(token, header))
-
-    severities = [w.severity for w in weaknesses]
-    risk = "CRITICAL" if "CRITICAL" in severities else "HIGH" if "HIGH" in severities else "MEDIUM" if "MEDIUM" in severities else "LOW" if severities else "NONE"
-
-    return JWTScanResult(token_preview=token[:30] + "...", header=header, payload={k: v for k, v in payload.items() if k not in ("password", "secret")}, weaknesses=weaknesses, risk_level=risk)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="JWT token weakness scanner")
-    parser.add_argument("--token", default=None, help="JWT token to scan")
-    parser.add_argument("--file", default=None, help="File containing one JWT per line")
-    parser.add_argument("--output", default="jwt_weaknesses.json")
-    args = parser.parse_args()
-
-    tokens = []
-    if args.token:
-        tokens.append(args.token)
-    elif args.file:
-        with open(args.file) as f:
-            tokens = [line.strip() for line in f if line.strip()]
-    else:
-        import base64
-        def mk(alg, payload_extra=None):
-            h = base64.urlsafe_b64encode(json.dumps({"alg": alg, "typ": "JWT"}).encode()).rstrip(b"=").decode()
-            p_data = {"sub": "user1", "iat": 1700000000}
-            if payload_extra:
-                p_data.update(payload_extra)
-            p = base64.urlsafe_b64encode(json.dumps(p_data).encode()).rstrip(b"=").decode()
-            signing = f"{h}.{p}".encode()
-            sig = hmac.new(b"secret", signing, hashlib.sha256).digest()
-            s = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
-            return f"{h}.{p}.{s}"
-        tokens = [mk("HS256"), mk("none")]
-
-    results = []
-    for token in tokens:
+        Returns:
+            Tuple of (success, decoded_parts, error_message)
+        """
         try:
-            result = scan_token(token)
-            results.append({"token_preview": result.token_preview, "algorithm": result.header.get("alg"), "risk_level": result.risk_level, "weakness_count": len(result.weaknesses), "weaknesses": [{"category": w.category, "severity": w.severity, "description": w.description, "recommendation": w.recommendation} for w in result.weaknesses]})
-            logger.info(f"Token {result.token_preview}: {result.risk_level} risk, {len(result.weaknesses)} weaknesses")
+            parts = token.split('.')
+            if len(parts) != 3:
+                return False, {}, f"Invalid JWT format: expected 3 parts, got {len(parts)}"
+
+            header_str = parts[0]
+            payload_str = parts[1]
+
+            padding = 4 - len(header_str) % 4
+            if padding != 4:
+                header_str += '=' * padding
+            header = json.loads(base64.urlsafe_b64decode(header_str))
+
+            padding = 4 - len(payload_str) % 4
+            if padding != 4:
+                payload_str += '=' * padding
+            payload = json.loads(base64.urlsafe_b64decode(payload_str))
+
+            return True, {'header': header, 'payload': payload, 'signature': parts[2]}, ""
+
+        except json.JSONDecodeError as e:
+            return False, {}, f"JSON decode error: {str(e)}"
         except Exception as e:
-            logger.error(f"Failed to scan token: {e}")
+            return False, {}, f"Decoding error: {str(e)}"
 
-    with open(args.output, "w") as f:
-        json.dump(results, f, indent=2)
-    print(json.dumps(results, indent=2))
+    def check_algorithm_weakness(self, header: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Check for weak or dangerous algorithms in JWT header.
 
+        Args:
+            header: JWT header dictionary
 
-if __name__ == "__main__":
-    main()
+        Returns:
+            List of finding dictionaries
+        """
+        findings = []
+        alg = header.get('alg', '').upper()
+
+        if not alg:
+            findings.append({
+                'type': 'MISSING_ALGORITHM',
+                'severity': 'CRITICAL',
+                'message': 'JWT header missing algorithm specification',
+                'recommendation': 'Ensure JWT specifies a secure algorithm (RS256, ES256, etc.)'
+            })
+            return findings
+
+        if alg == 'NONE':
+            findings.append({
+                'type': 'ALG_NONE_VULNERABILITY',
+                'severity': 'CRITICAL',
+                'message': 'JWT uses "none" algorithm - token signature is not verified',
+                'recommendation': 'Use a proper algorithm like RS256 or ES256'
+            })
+
+        if alg in {'HS256', 'HS384', 'HS512'}:
+            findings.append({
+                'type': 'HMAC_ALGORITHM_DETECTED',
+                'severity': 'HIGH',
+                'message': f'JWT uses symmetric HMAC algorithm {alg}',
+                'recommendation': 'Consider using asymmetric algorithms (RS256, ES256) for better key management'
+            })
+
+        return findings
+
+    def check_signature_strength(self, header: Dict[str, Any], signature: str) -> List[Dict[str, Any]]:
+        """
+        Check signature strength and potential weaknesses.
+
+        Args:
+            header: JWT header dictionary
+            signature: Signature part of JWT
+
+        Returns:
+            List of finding dictionaries
+        """
+        findings = []
+
+        if len(signature) < 20:
+            findings.append({
+                'type': 'WEAK_SIGNATURE_LENGTH',
+                'severity': 'MEDIUM',
+                'message': f'Signature length is suspiciously short: {len(signature)} chars',
+                'recommendation': 'Verify that signature uses proper cryptographic algorithms'
+            })
+
+        return findings
+
+    def check_expiry_claims(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Check JWT expiry claims and timing.
+
+        Args:
+            payload: JWT payload dictionary
+
+        Returns:
+            List of finding dictionaries
+        """
+        findings = []
+
+        if 'exp' not in payload:
+            findings.append({
+                'type': 'MISSING_EXPIRY',
+                'severity': 'HIGH',
+                'message': 'JWT token missing "exp" (expiration) claim',
+                'recommendation': 'Add expiration time claim to token',
+                'exp_timestamp': None
+            })
+        else:
+            try:
+                exp = int(payload['exp'])
+                now = int(datetime.utcnow().timestamp())
+
+                if exp <= now:
+                    findings.append({
+                        'type': 'EXPIRED_TOKEN',
+                        'severity': 'INFO',
+                        'message': f'Token expired at {datetime.utcfromtimestamp(exp).isoformat()}',
+                        'exp_timestamp': exp
+                    })
+                else:
+                    ttl_seconds = exp - now
+                    if ttl_seconds > 31536000:
+                        findings.append({
+                            'type': 'EXCESSIVE_EXPIRY',
+                            'severity': 'MEDIUM',
+                            'message': f'Token expires in {ttl_seconds} seconds ({ttl_seconds / 86400:.1f} days)',
+                            'recommendation': 'Consider shorter token lifetime (e.g., 1 hour)',
+                            'ttl_seconds': ttl_seconds
+                        })
+            except (ValueError, TypeError):
+                findings.append({
+                    'type': 'INVALID_EXPIRY_FORMAT',
+                    'severity': 'MEDIUM',
+                    'message': f'Invalid expiry claim format: {payload["exp"]}',
+                    'recommendation': 'Expiry should be Unix timestamp (seconds since epoch)'
+                })
+
+        if 'iat' not in payload:
+            findings.append({
+                'type': 'MISSING_ISSUED_AT',
+                'severity': 'LOW',
+                'message': 'JWT token missing "iat" (issued at) claim',
+                'recommendation': 'Add issued-at timestamp for better token tracking'
+            })
+
+        return findings
+
+    def check_claim_breadth(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Check for overly broad or suspicious claims in token.
+
+        Args:
+            payload: JWT payload dictionary
+
+        Returns:
+            List of finding dictionaries
+        """
+        findings = []
+        suspicious_found = []
+
+        for claim_name in payload:
+            if claim_name.lower() in self.SUSPICIOUS_CLAIMS:
+                suspicious_found.append(claim_name)
+
+        if suspicious_found:
+            claim_values = ', '.join(
+                f'{c}={json.dumps(payload[c])}' for c in suspicious_found
+            )
+            findings.append({
+                'type': 'SENSITIVE_CLAIMS_IN_TOKEN',
+                'severity': 'MEDIUM',
+                'message':
