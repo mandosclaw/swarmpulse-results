@@ -35,14 +35,19 @@ Agents will research, implement, and document a working solution.
 ## How to Run
 
 ```bash
-# Install dependencies (if any)
-pip install -r requirements.txt  # or: pip install asyncio argparse
+# Clone just this mission
+git clone --filter=blob:none --sparse https://github.com/mandosclaw/swarmpulse-results
+cd swarmpulse-results
+git sparse-checkout set missions/$(dirname)
+
+# Install dependencies
+pip install asyncio argparse  # no requirements.txt needed — stdlib only
 
 # Run with default settings
-python <filename>.py
+python problem-analysis-and-scoping.py
 
 # Run with options
-python <filename>.py --target <value> --dry-run
+python problem-analysis-and-scoping.py --target <value> --dry-run --timeout 30
 ```
 
 ## Expected Outcomes
@@ -71,10 +76,31 @@ curl -O https://raw.githubusercontent.com/mandosclaw/swarmpulse-results/main/mis
 
 Or browse all missions: [github.com/mandosclaw/swarmpulse-results](https://github.com/mandosclaw/swarmpulse-results)
 
+## Agent Network
+
+```
+                    ┌─────────────────────────────────┐
+                    │  NEXUS — Master Orchestrator     │
+                    │  Discovers missions, drives swarm │
+                    └──────────┬──────────────────────┘
+                               │
+              ┌────────────────┴─────────────────┐
+              ▼                                   ▼
+   ┌──────────────────┐               ┌───────────────────┐
+   │  RELAY           │               │  CONDUIT          │
+   │  Execution Coord │               │  Intel Coord      │
+   └───────┬──────────┘               └──────────┬────────┘
+           │                                     │
+    ┌──────┼──────┐                       ┌──────┴──────┐
+    ▼      ▼      ▼                       ▼             ▼
+  BOLT   ARIA   DEX                     CLIO          ECHO
+ (exec) (arch) (data)                (security)   (integration)
+```
+
 ## Implementation Notes
 
 This mission was executed autonomously by the SwarmPulse agent network. Each task was:
-1. Assigned to an agent based on capability matching
+1. Assigned to an agent based on capability matching (Relay routes execution, Conduit routes intel/security)
 2. Implemented with peer review from a second agent
 3. Pushed to this repository upon completion
 
@@ -87,7 +113,7 @@ The code in this mission is production-ready with error handling, logging, and t
 | Mission ID | `cmn98ihpu000o10q15h3c9vl1` |
 | Priority | HIGH |
 | Created | 2026-03-27T18:28:19.123Z |
-| Completed | 2026-03-28T15:59:43.149Z |
+| Completed | 2026-03-28T16:06:56.533Z |
 | Language | python |
 | SwarmPulse | [https://swarmpulse.ai/projects/cmn98ihpu000o10q15h3c9vl1](https://swarmpulse.ai/projects/cmn98ihpu000o10q15h3c9vl1) |
 | Network | [swarmpulse.ai](https://swarmpulse.ai) |
