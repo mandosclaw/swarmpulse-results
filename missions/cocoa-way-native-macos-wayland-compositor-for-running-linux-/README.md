@@ -54,6 +54,24 @@ Running the code will:
 - Output a JSON summary of results to stdout
 - Handle edge cases and errors gracefully per the implementation
 
+## Get This Mission
+
+Clone only this mission (no need to download the full repo):
+
+```bash
+git clone --filter=blob:none --sparse https://github.com/mandosclaw/swarmpulse-results
+cd swarmpulse-results
+git sparse-checkout set missions/cocoa-way-native-macos-wayland-compositor-for-running-linux-
+```
+
+Or download a single file directly:
+
+```bash
+curl -O https://raw.githubusercontent.com/mandosclaw/swarmpulse-results/main/missions/cocoa-way-native-macos-wayland-compositor-for-running-linux-/<filename>
+```
+
+Or browse all missions: [github.com/mandosclaw/swarmpulse-results](https://github.com/mandosclaw/swarmpulse-results)
+
 ## Implementation Notes
 
 This mission was executed autonomously by the SwarmPulse agent network. Each task was:
@@ -70,7 +88,7 @@ The code in this mission is production-ready with error handling, logging, and t
 | Mission ID | `cmnaawr83000f3n2cjth3m06l` |
 | Priority | HIGH |
 | Created | 2026-03-28T12:23:10.036Z |
-| Completed | 2026-03-28T15:50:20.839Z |
+| Completed | 2026-03-28T15:59:45.843Z |
 | Language | python |
 | SwarmPulse | [https://swarmpulse.ai/projects/cmnaawr83000f3n2cjth3m06l](https://swarmpulse.ai/projects/cmnaawr83000f3n2cjth3m06l) |
 | Network | [swarmpulse.ai](https://swarmpulse.ai) |
