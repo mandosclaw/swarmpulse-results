@@ -2,165 +2,190 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    IDOR fuzzer
 # Mission: API Authentication Bypass Detector
-# Agent:   @quinn
-# Date:    2026-03-23T18:00:29.824Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Agent:   @sue
+# Date:    2026-03-28T21:59:29.231Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
-"""IDOR fuzzer: fuzzes numeric/UUID IDs in API endpoints to detect cross-account data access."""
+"""
+IDOR Fuzzer - Auto-enumerate object IDs in API responses and test cross-user access
+Mission: API Authentication Bypass Detector
+Agent: @sue
+Date: 2025-01-20
+"""
 
 import argparse
 import json
-import logging
-import re
 import sys
-import time
-import urllib.request
-import urllib.error
-import uuid
-from dataclasses import dataclass, field
-from typing import Any, Optional
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
+import re
+import urllib.parse
+from collections import defaultdict
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+import base64
+from typing import Dict, List, Tuple, Set, Any, Optional
 
 
-@dataclass
-class IDORFinding:
-    url: str
-    original_id: str
-    fuzzed_id: str
-    status_code: int
-    response_size: int
-    vulnerable: bool
-    reason: str
+class IDORFuzzer:
+    """
+    IDOR (Insecure Direct Object Reference) fuzzer that:
+    - Extracts numeric and UUID IDs from API responses
+    - Tests cross-user access by modifying IDs
+    - Identifies patterns of sequential/predictable IDs
+    - Detects authorization bypass vulnerabilities
+    """
 
+    def __init__(self, 
+                 id_patterns: Optional[List[str]] = None,
+                 user_ids: Optional[List[str]] = None,
+                 sequential_range: int = 10,
+                 verbose: bool = False):
+        self.id_patterns = id_patterns or self._default_id_patterns()
+        self.user_ids = user_ids or ["1", "2", "3", "admin", "test"]
+        self.sequential_range = sequential_range
+        self.verbose = verbose
+        self.findings = []
+        self.tested_endpoints = defaultdict(list)
+        self.id_cache = defaultdict(set)
 
-@dataclass
-class FuzzConfig:
-    base_url: str
-    endpoint_template: str
-    auth_token: str
-    original_id: str
-    id_type: str = "numeric"
-    num_attempts: int = 20
-    delay_ms: int = 100
-    baseline_response: Optional[str] = None
+    @staticmethod
+    def _default_id_patterns() -> List[str]:
+        """Default patterns to identify object IDs in responses"""
+        return [
+            r'"id"\s*:\s*(\d+)',
+            r'"user_id"\s*:\s*(\d+)',
+            r'"product_id"\s*:\s*(\d+)',
+            r'"order_id"\s*:\s*(\d+)',
+            r'"account_id"\s*:\s*(\d+)',
+            r'"resource_id"\s*:\s*(\d+)',
+            r'"object_id"\s*:\s*(\d+)',
+            r'"uuid"\s*:\s*"([a-f0-9\-]{36})"',
+            r'"[^"]*id[^"]*"\s*:\s*"([a-f0-9\-]{36})"',
+            r'/(\d+)(?:/|$|\?)',
+            r'[?&]id=(\d+)',
+            r'[?&]user_id=(\d+)',
+            r'[?&]product_id=(\d+)',
+        ]
 
+    def extract_ids(self, response_body: str, response_url: str = "") -> Dict[str, Set[str]]:
+        """Extract all potential object IDs from API response"""
+        extracted = defaultdict(set)
+        
+        # Extract from JSON
+        try:
+            data = json.loads(response_body)
+            ids = self._extract_ids_from_json(data)
+            extracted["json"].update(ids)
+        except (json.JSONDecodeError, ValueError):
+            pass
+        
+        # Extract from response text using regex patterns
+        for pattern in self.id_patterns:
+            matches = re.findall(pattern, response_body, re.IGNORECASE)
+            if matches:
+                extracted["regex"].update(matches)
+        
+        # Extract from URL
+        if response_url:
+            url_ids = self._extract_ids_from_url(response_url)
+            extracted["url"].update(url_ids)
+        
+        return extracted
 
-def generate_numeric_ids(original_id: str, count: int) -> list[str]:
-    try:
-        base = int(original_id)
-    except ValueError:
-        base = 1000
-    ids = set()
-    for delta in range(-count // 2, count // 2 + 1):
-        candidate = base + delta
-        if candidate > 0 and str(candidate) != original_id:
-            ids.add(str(candidate))
-    ids.update([str(base * 2), str(max(1, base - 100)), "1", "2", "0", str(2**31 - 1)])
-    return list(ids)[:count]
+    def _extract_ids_from_json(self, obj: Any, max_depth: int = 5) -> Set[str]:
+        """Recursively extract ID-like values from JSON object"""
+        ids = set()
+        
+        if max_depth <= 0:
+            return ids
+        
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if any(id_key in key.lower() for id_key in ['id', 'uid', 'oid']):
+                    if isinstance(value, (int, str)):
+                        ids.add(str(value))
+                if isinstance(value, (dict, list)):
+                    ids.update(self._extract_ids_from_json(value, max_depth - 1))
+        elif isinstance(obj, list):
+            for item in obj:
+                ids.update(self._extract_ids_from_json(item, max_depth - 1))
+        
+        return ids
 
+    def _extract_ids_from_url(self, url: str) -> Set[str]:
+        """Extract ID values from URL path and query parameters"""
+        ids = set()
+        parsed = urlparse(url)
+        
+        # Extract from path segments
+        path_segments = [seg for seg in parsed.path.split('/') if seg]
+        for segment in path_segments:
+            if segment.isdigit() and len(segment) <= 20:
+                ids.add(segment)
+            elif re.match(r'^[a-f0-9\-]{36}$', segment, re.IGNORECASE):
+                ids.add(segment)
+        
+        # Extract from query parameters
+        params = parse_qs(parsed.query)
+        for key, values in params.items():
+            if any(id_key in key.lower() for id_key in ['id', 'uid', 'oid']):
+                ids.update(values)
+        
+        return ids
 
-def generate_uuid_ids(original_id: str, count: int) -> list[str]:
-    ids = [str(uuid.uuid4()) for _ in range(count - 2)]
-    parts = original_id.split("-")
-    if len(parts) == 5:
-        mutated = parts.copy()
-        mutated[0] = format(int(parts[0], 16) + 1, "08x")
-        ids.append("-".join(mutated))
-    ids.append(str(uuid.UUID(int=0)))
-    return ids[:count]
+    def generate_fuzz_ids(self, base_ids: Set[str]) -> Set[str]:
+        """Generate list of IDs to test for IDOR"""
+        fuzz_ids = set(base_ids)
+        
+        for base_id in base_ids:
+            if base_id.isdigit():
+                num = int(base_id)
+                # Add sequential neighbors
+                for offset in range(-self.sequential_range, self.sequential_range + 1):
+                    if num + offset > 0:
+                        fuzz_ids.add(str(num + offset))
+            elif re.match(r'^[a-f0-9\-]{36}$', base_id, re.IGNORECASE):
+                # For UUIDs, add the base UUID to test
+                fuzz_ids.add(base_id)
+        
+        return fuzz_ids
 
-
-def fetch_url(url: str, token: str, timeout: int = 10) -> tuple[int, str, int]:
-    try:
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "idor-fuzzer/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read().decode(errors="replace")
-            return resp.status, body, len(body)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors="replace")
-        return e.code, body, len(body)
-    except Exception as e:
-        return 0, str(e), 0
-
-
-def compute_similarity(a: str, b: str) -> float:
-    if not a or not b:
-        return 0.0
-    a_tokens = set(re.findall(r'\w+', a.lower()))
-    b_tokens = set(re.findall(r'\w+', b.lower()))
-    if not a_tokens or not b_tokens:
-        return 0.0
-    return len(a_tokens & b_tokens) / len(a_tokens | b_tokens)
-
-
-def detect_idor(baseline_body: str, baseline_id: str, fuzzed_body: str, fuzzed_id: str, status: int) -> tuple[bool, str]:
-    if status == 403 or status == 404 or status == 401:
-        return False, f"Access denied ({status})"
-    if status == 200 and fuzzed_body and len(fuzzed_body) > 50:
-        similarity = compute_similarity(baseline_body, fuzzed_body)
-        if similarity > 0.3:
-            id_in_response = fuzzed_id in fuzzed_body or baseline_id in fuzzed_body
-            if id_in_response:
-                return True, f"IDOR: returned data for id={fuzzed_id} (similarity={similarity:.2f})"
-        if re.search(r'"id"\s*:\s*"?' + re.escape(fuzzed_id), fuzzed_body):
-            return True, f"IDOR: response contains fuzzed id={fuzzed_id}"
-    return False, f"Status {status}, no IDOR detected"
-
-
-def run_fuzzing(config: FuzzConfig) -> list[IDORFinding]:
-    findings: list[IDORFinding] = []
-
-    baseline_url = config.base_url + config.endpoint_template.replace("{id}", config.original_id)
-    logger.info(f"Fetching baseline: {baseline_url}")
-    baseline_status, baseline_body, baseline_size = fetch_url(baseline_url, config.auth_token)
-    logger.info(f"Baseline: HTTP {baseline_status}, {baseline_size} bytes")
-
-    if config.id_type == "uuid":
-        fuzz_ids = generate_uuid_ids(config.original_id, config.num_attempts)
-    else:
-        fuzz_ids = generate_numeric_ids(config.original_id, config.num_attempts)
-
-    for fuzz_id in fuzz_ids:
-        url = config.base_url + config.endpoint_template.replace("{id}", fuzz_id)
-        status, body, size = fetch_url(url, config.auth_token)
-        vulnerable, reason = detect_idor(baseline_body, config.original_id, body, fuzz_id, status)
-        finding = IDORFinding(url=url, original_id=config.original_id, fuzzed_id=fuzz_id, status_code=status, response_size=size, vulnerable=vulnerable, reason=reason)
-        findings.append(finding)
-        level = logging.WARNING if vulnerable else logging.DEBUG
-        logger.log(level, f"  id={fuzz_id}: HTTP {status} {size}B — {reason}")
-        time.sleep(config.delay_ms / 1000)
-
-    return findings
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="IDOR vulnerability fuzzer")
-    parser.add_argument("--base-url", default="https://api.example.com")
-    parser.add_argument("--endpoint", default="/api/users/{id}/profile")
-    parser.add_argument("--token", default="dummy-token")
-    parser.add_argument("--original-id", default="12345")
-    parser.add_argument("--id-type", choices=["numeric", "uuid"], default="numeric")
-    parser.add_argument("--attempts", type=int, default=20)
-    parser.add_argument("--output", default="idor_findings.json")
-    args = parser.parse_args()
-
-    config = FuzzConfig(base_url=args.base_url, endpoint_template=args.endpoint, auth_token=args.token, original_id=args.original_id, id_type=args.id_type, num_attempts=args.attempts)
-
-    logger.info(f"Starting IDOR fuzz: {config.endpoint_template} with {config.num_attempts} IDs")
-    findings = run_fuzzing(config)
-
-    vulnerabilities = [f for f in findings if f.vulnerable]
-    report = {"endpoint": config.endpoint_template, "original_id": config.original_id, "total_tested": len(findings), "vulnerabilities": len(vulnerabilities), "results": [{"url": f.url, "fuzzed_id": f.fuzzed_id, "status": f.status_code, "vulnerable": f.vulnerable, "reason": f.reason} for f in findings]}
-
-    with open(args.output, "w") as f:
-        json.dump(report, f, indent=2)
-
-    logger.info(f"IDOR scan complete: {len(vulnerabilities)}/{len(findings)} potential IDORs found")
-    print(json.dumps({"vulnerabilities_found": len(vulnerabilities), "total_tested": len(findings), "output": args.output}, indent=2))
-
-
-if __name__ == "__main__":
-    main()
+    def test_url_idor(self, base_url: str, extracted_ids: Set[str]) -> List[Dict[str, Any]]:
+        """Test URL-based IDOR by modifying path/query IDs"""
+        vulnerabilities = []
+        parsed = urlparse(base_url)
+        
+        fuzz_ids = self.generate_fuzz_ids(extracted_ids)
+        
+        # Test path-based IDs (e.g., /api/users/123)
+        path_segments = parsed.path.split('/')
+        for i, segment in enumerate(path_segments):
+            if segment in extracted_ids:
+                for fuzz_id in fuzz_ids:
+                    if fuzz_id != segment:
+                        test_path = path_segments.copy()
+                        test_path[i] = fuzz_id
+                        test_url = urlunparse((
+                            parsed.scheme,
+                            parsed.netloc,
+                            '/'.join(test_path),
+                            parsed.params,
+                            parsed.query,
+                            parsed.fragment
+                        ))
+                        
+                        vuln = {
+                            "type": "Path-based IDOR",
+                            "original_url": base_url,
+                            "test_url": test_url,
+                            "original_id": segment,
+                            "test_id": fuzz_id,
+                            "position": "path"
+                        }
+                        vulnerabilities.append(vuln)
+        
+        # Test query parameter IDs
+        params = parse_qs(parsed.query)
+        for key in params:
+            if any(id_key in key.lower() for id_key in ['id', 'uid', 'oid']):
+                original_value = params[key][0] if params[key] else ""
+                if original_value
