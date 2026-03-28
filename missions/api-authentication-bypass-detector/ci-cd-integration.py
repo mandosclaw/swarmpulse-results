@@ -2,213 +2,229 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    CI/CD integration
 # Mission: API Authentication Bypass Detector
-# Agent:   @sue
-# Date:    2026-03-28T21:59:44.597Z
+# Agent:   @clio
+# Date:    2026-03-28T22:03:38.581Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: CI/CD integration for API Authentication Bypass Detector
-Mission: Automated scanner for common auth bypass patterns
-Agent: @sue in SwarmPulse network
-Date: 2024
+TASK: CI/CD integration
+MISSION: API Authentication Bypass Detector
+AGENT: @clio
+DATE: 2024
 
-Implements GitHub Action / GitLab CI stage integration that blocks merges on CRITICAL findings.
-Scans for: JWT algorithm confusion, IDOR, mass assignment, broken object-level auth.
+Automated security scanner that detects JWT vulnerabilities, IDOR flaws,
+OAuth misconfigurations, mass assignment, and broken rate limiting in REST APIs.
+Includes CI/CD pipeline integration for automated security testing.
 """
 
 import argparse
 import json
 import sys
-import re
-import base64
+import subprocess
 import hashlib
-from pathlib import Path
-from typing import Dict, List, Tuple, Any
-from enum import Enum
+import base64
+import re
+import time
 from dataclasses import dataclass, asdict
 from datetime import datetime
-
-
-class Severity(Enum):
-    CRITICAL = "CRITICAL"
-    HIGH = "HIGH"
-    MEDIUM = "MEDIUM"
-    LOW = "LOW"
-    INFO = "INFO"
+from typing import List, Dict, Any, Optional, Tuple
+from pathlib import Path
+import urllib.parse
 
 
 @dataclass
-class Finding:
-    id: str
+class VulnerabilityFinding:
+    """Represents a single security vulnerability finding."""
+    vuln_id: str
     severity: str
-    pattern: str
-    file: str
-    line: int
-    code_snippet: str
+    category: str
+    endpoint: str
     description: str
     remediation: str
-    cwe: str
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+    timestamp: str
+    evidence: str
 
 
-class AuthBypassDetector:
-    """Detects API authentication bypass patterns in code."""
+@dataclass
+class ScanResult:
+    """Complete scan result summary."""
+    scan_id: str
+    timestamp: str
+    total_findings: int
+    critical: int
+    high: int
+    medium: int
+    low: int
+    findings: List[VulnerabilityFinding]
+    passed: bool
 
+
+class JWTAnalyzer:
+    """Analyzes JWT tokens for security vulnerabilities."""
+    
     def __init__(self):
-        self.findings: List[Finding] = []
-        self.file_count = 0
-        self.line_count = 0
+        self.findings = []
+    
+    def analyze_jwt(self, token: str, endpoint: str) -> List[VulnerabilityFinding]:
+        """Analyze JWT token for vulnerabilities."""
+        findings = []
+        
+        parts = token.split('.')
+        if len(parts) != 3:
+            findings.append(VulnerabilityFinding(
+                vuln_id="JWT_001",
+                severity="CRITICAL",
+                category="JWT",
+                endpoint=endpoint,
+                description="Invalid JWT structure detected",
+                remediation="Ensure JWT has exactly 3 parts separated by dots",
+                timestamp=datetime.now().isoformat(),
+                evidence=f"Token has {len(parts)} parts instead of 3"
+            ))
+            return findings
+        
+        try:
+            header = self._decode_jwt_part(parts[0])
+            payload = self._decode_jwt_part(parts[1])
+        except Exception as e:
+            findings.append(VulnerabilityFinding(
+                vuln_id="JWT_002",
+                severity="HIGH",
+                category="JWT",
+                endpoint=endpoint,
+                description="JWT decoding failed",
+                remediation="Verify JWT encoding is valid base64url",
+                timestamp=datetime.now().isoformat(),
+                evidence=str(e)
+            ))
+            return findings
+        
+        if header.get('alg') == 'none':
+            findings.append(VulnerabilityFinding(
+                vuln_id="JWT_003",
+                severity="CRITICAL",
+                category="JWT",
+                endpoint=endpoint,
+                description="JWT algorithm set to 'none'",
+                remediation="Never use 'none' algorithm; use RS256 or HS256",
+                timestamp=datetime.now().isoformat(),
+                evidence="alg claim is 'none'"
+            ))
+        
+        if header.get('alg', '').startswith('HS'):
+            if 'exp' not in payload:
+                findings.append(VulnerabilityFinding(
+                    vuln_id="JWT_004",
+                    severity="HIGH",
+                    category="JWT",
+                    endpoint=endpoint,
+                    description="JWT missing expiration claim",
+                    remediation="Add 'exp' claim to limit token lifetime",
+                    timestamp=datetime.now().isoformat(),
+                    evidence="Missing 'exp' in payload"
+                ))
+        
+        if isinstance(payload.get('sub'), dict) or isinstance(payload.get('user'), dict):
+            findings.append(VulnerabilityFinding(
+                vuln_id="JWT_005",
+                severity="MEDIUM",
+                category="JWT",
+                endpoint=endpoint,
+                description="JWT contains complex nested claims",
+                remediation="Minimize claim complexity; use simple identifiers",
+                timestamp=datetime.now().isoformat(),
+                evidence=f"Complex claim structure detected"
+            ))
+        
+        return findings
+    
+    def _decode_jwt_part(self, part: str) -> Dict[str, Any]:
+        """Decode JWT part from base64url."""
+        padding = 4 - (len(part) % 4)
+        if padding != 4:
+            part += '=' * padding
+        decoded = base64.urlsafe_b64decode(part)
+        return json.loads(decoded.decode('utf-8'))
 
-    def scan_jwt_algorithm_confusion(
-        self, content: str, filename: str
-    ) -> List[Finding]:
-        """Detect JWT algorithm confusion (alg:none) vulnerabilities."""
-        results = []
-        lines = content.split("\n")
 
-        # Pattern 1: JWT with alg:none
-        alg_none_patterns = [
-            r'["\']alg["\']:\s*["\']none["\']',
-            r"algorithm\s*=\s*['\"]none['\"]",
-            r"jwt\.decode\([^)]*{[^}]*alg['\"]:\s*['\"]none",
-        ]
+class IDORDetector:
+    """Detects Insecure Direct Object Reference vulnerabilities."""
+    
+    def __init__(self):
+        self.findings = []
+    
+    def detect_idor(self, endpoint: str, parameters: Dict[str, str]) -> List[VulnerabilityFinding]:
+        """Detect IDOR vulnerabilities in endpoint."""
+        findings = []
+        
+        suspicious_params = ['id', 'user_id', 'account_id', 'object_id', 'resource_id']
+        found_suspicious = False
+        
+        for param, value in parameters.items():
+            if any(sus in param.lower() for sus in suspicious_params):
+                found_suspicious = True
+                
+                if value.isdigit() and int(value) < 1000:
+                    findings.append(VulnerabilityFinding(
+                        vuln_id="IDOR_001",
+                        severity="HIGH",
+                        category="IDOR",
+                        endpoint=endpoint,
+                        description="Sequential ID parameter detected",
+                        remediation="Use UUIDs or implement proper authorization checks",
+                        timestamp=datetime.now().isoformat(),
+                        evidence=f"Parameter '{param}' with sequential value '{value}'"
+                    ))
+                
+                if not endpoint.startswith('/admin') and not endpoint.startswith('/internal'):
+                    if re.match(r'^\d{1,3}$', value):
+                        findings.append(VulnerabilityFinding(
+                            vuln_id="IDOR_002",
+                            severity="HIGH",
+                            category="IDOR",
+                            endpoint=endpoint,
+                            description="Direct object reference without authorization verification",
+                            remediation="Implement role-based access control (RBAC)",
+                            timestamp=datetime.now().isoformat(),
+                            evidence=f"Public endpoint '{endpoint}' uses numeric ID: {value}"
+                        ))
+        
+        return findings
 
-        for pattern in alg_none_patterns:
-            for idx, line in enumerate(lines, 1):
-                if re.search(pattern, line, re.IGNORECASE):
-                    results.append(
-                        Finding(
-                            id=f"JWT_ALG_NONE_{idx}",
-                            severity=Severity.CRITICAL.value,
-                            pattern="JWT Algorithm Confusion",
-                            file=filename,
-                            line=idx,
-                            code_snippet=line.strip(),
-                            description="JWT with alg:none bypasses signature verification. Attacker can forge tokens.",
-                            remediation="Always validate JWT algorithm. Never accept 'none'. Use HS256 or RS256 with proper key management.",
-                            cwe="CWE-347",
-                        )
-                    )
 
-        # Pattern 2: Unsafe JWT validation
-        unsafe_jwt_patterns = [
-            r"jwt\.decode\([^)]*verify\s*=\s*False",
-            r"jwt\.decode\([^)]*options\s*=\s*{[^}]*verify_signature['\"]:\s*False",
-        ]
-
-        for pattern in unsafe_jwt_patterns:
-            for idx, line in enumerate(lines, 1):
-                if re.search(pattern, line):
-                    results.append(
-                        Finding(
-                            id=f"JWT_VERIFY_DISABLED_{idx}",
-                            severity=Severity.CRITICAL.value,
-                            pattern="JWT Signature Verification Disabled",
-                            file=filename,
-                            line=idx,
-                            code_snippet=line.strip(),
-                            description="JWT signature verification is disabled. Any token is accepted.",
-                            remediation="Enable signature verification. Remove verify=False or set verify_signature to True.",
-                            cwe="CWE-347",
-                        )
-                    )
-
-        return results
-
-    def scan_idor(self, content: str, filename: str) -> List[Finding]:
-        """Detect Insecure Direct Object Reference (IDOR) vulnerabilities."""
-        results = []
-        lines = content.split("\n")
-
-        # Pattern 1: User ID from request without validation
-        idor_patterns = [
-            r"user_id\s*=\s*request\.(args|form|json|GET|POST)\[?['\"]user_id",
-            r"request\.(args|form|json|GET|POST)\[?['\"]id['\"]?\]?\s*=",
-            r"@app\.route\(['\"][^'\"]*<int:user_id>",
-            r"def\s+\w+\([^)]*user_id[^)]*\):\s*\n\s*user\s*=\s*User\.query\.get\(user_id\)",
-        ]
-
-        for pattern in idor_patterns:
-            for idx, line in enumerate(lines, 1):
-                if re.search(pattern, line):
-                    # Check if there's auth check nearby
-                    window_start = max(0, idx - 5)
-                    window_end = min(len(lines), idx + 5)
-                    window = "\n".join(lines[window_start:window_end])
-
-                    auth_check_patterns = [
-                        r"if.*current_user.*==",
-                        r"authorize\(",
-                        r"permission",
-                        r"owner",
-                    ]
-
-                    has_auth = any(
-                        re.search(p, window, re.IGNORECASE)
-                        for p in auth_check_patterns
-                    )
-
-                    if not has_auth:
-                        results.append(
-                            Finding(
-                                id=f"IDOR_{idx}",
-                                severity=Severity.CRITICAL.value,
-                                pattern="Insecure Direct Object Reference",
-                                file=filename,
-                                line=idx,
-                                code_snippet=line.strip(),
-                                description="User-controlled ID used directly without authorization check. Attacker can access other users' objects.",
-                                remediation="Validate that the current user owns/has permission to access the requested object before returning it.",
-                                cwe="CWE-639",
-                            )
-                        )
-
-        return results
-
-    def scan_mass_assignment(self, content: str, filename: str) -> List[Finding]:
-        """Detect mass assignment vulnerabilities."""
-        results = []
-        lines = content.split("\n")
-
-        # Pattern 1: Directly assigning request data to model
-        mass_assign_patterns = [
-            r"User\(\*\*request\.json\(\)\)",
-            r"User\(\*\*request\.form\)",
-            r"model\.update\(request\.json\(\)\)",
-            r"obj\.__dict__\.update\(request\.form\)",
-            r"for\s+key,\s+value\s+in\s+request\.form\.items\(\):\s*setattr",
-        ]
-
-        for pattern in mass_assign_patterns:
-            for idx, line in enumerate(lines, 1):
-                if re.search(pattern, line):
-                    # Check for whitelist
-                    window_start = max(0, idx - 10)
-                    window_end = min(len(lines), idx + 10)
-                    window = "\n".join(lines[window_start:window_end])
-
-                    whitelist_patterns = [
-                        r"allowed_fields",
-                        r"whitelist",
-                        r"permitted_params",
-                        r"safe_attributes",
-                    ]
-
-                    has_whitelist = any(
-                        re.search(p, window, re.IGNORECASE)
-                        for p in whitelist_patterns
-                    )
-
-                    if not has_whitelist:
-                        results.append(
-                            Finding(
-                                id=f"MASS_ASSIGN_{idx}",
-                                severity=Severity.HIGH.value,
-                                pattern="Mass Assignment",
-                                file=filename,
-                                line=idx,
-                                code_snippet=line.strip(),
-                                description="User
+class OAuthValidator:
+    """Validates OAuth 2.0 configuration."""
+    
+    def __init__(self):
+        self.findings = []
+    
+    def validate_oauth(self, config: Dict[str, Any], endpoint: str) -> List[VulnerabilityFinding]:
+        """Validate OAuth configuration."""
+        findings = []
+        
+        required_fields = ['client_id', 'client_secret', 'redirect_uri', 'authorization_url', 'token_url']
+        missing = [f for f in required_fields if f not in config]
+        
+        if missing:
+            findings.append(VulnerabilityFinding(
+                vuln_id="OAUTH_001",
+                severity="CRITICAL",
+                category="OAuth",
+                endpoint=endpoint,
+                description="Missing required OAuth configuration fields",
+                remediation="Provide all required OAuth configuration",
+                timestamp=datetime.now().isoformat(),
+                evidence=f"Missing fields: {', '.join(missing)}"
+            ))
+        
+        if config.get('client_secret') in ['secret', '123456', 'password', 'client_secret']:
+            findings.append(VulnerabilityFinding(
+                vuln_id="OAUTH_002",
+                severity="CRITICAL",
+                category="OAuth",
+                endpoint=endpoint,
+                description="Weak OAuth client secret",
+                remediation="Use cryptographically secure random secret",
+                timestamp=datetime.now().isoformat(),
+                evidence=f"Client secret is weak: '{config.get('client_secret')}
