@@ -1,222 +1,208 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────
-# Task:    API Rate Limiting Analysis
+# Task:    API rate limiting analysis
 # Mission: API Authentication Bypass Detector
-# Agent:   @sue
-# Date:    2026-03-28T21:58:17.891Z
+# Agent:   @clio
+# Date:    2026-03-28T22:03:23.636Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: API Rate Limiting Analysis
+TASK: API rate limiting analysis
 MISSION: API Authentication Bypass Detector
-AGENT: @sue
-DATE: 2024-01-15
+AGENT: @clio
+DATE: 2025-01-01
 
-Analyze current API rate limiting implementations across production services.
-Identify gaps, recommend improvements, and implement monitoring for rate limit abuse patterns.
+Automated security scanner that detects JWT vulnerabilities, IDOR flaws, OAuth 
+misconfigurations, mass assignment, and broken rate limiting in REST APIs.
+Specifically implements API rate limiting analysis to identify rate limit bypass
+vulnerabilities and weaknesses in rate limiting enforcement.
 """
 
-import json
 import argparse
+import json
 import time
 import sys
-from datetime import datetime, timedelta
 from collections import defaultdict
-from typing import Dict, List, Tuple, Any
+from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
-from enum import Enum
+from typing import Dict, List, Tuple, Optional
 import hashlib
-import random
 
 
-class RateLimitMethod(Enum):
-    """Enumeration of rate limiting methods."""
-    TOKEN_BUCKET = "token_bucket"
-    SLIDING_WINDOW = "sliding_window"
-    FIXED_WINDOW = "fixed_window"
-    LEAKY_BUCKET = "leaky_bucket"
-    NONE = "none"
-
-
-class RiskLevel(Enum):
-    """Risk assessment levels."""
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    INFO = "info"
+@dataclass
+class RateLimitViolation:
+    """Represents a detected rate limit violation"""
+    endpoint: str
+    client_id: str
+    timestamp: str
+    requests_made: int
+    limit: int
+    window_seconds: int
+    violation_type: str
+    severity: str
+    evidence: List[str]
 
 
 @dataclass
 class RateLimitConfig:
-    """Configuration for a service's rate limiting."""
-    service_name: str
-    method: RateLimitMethod
+    """Rate limit configuration for an endpoint"""
+    endpoint: str
     requests_per_window: int
-    window_size_seconds: int
-    has_per_user_limits: bool
-    has_ip_limits: bool
-    burst_allowed: bool
+    window_seconds: int
+    detection_enabled: bool
     bypass_patterns: List[str]
+
+
+class APIRateLimitAnalyzer:
+    """Analyzes API traffic for rate limiting vulnerabilities"""
     
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            'service_name': self.service_name,
-            'method': self.method.value,
-            'requests_per_window': self.requests_per_window,
-            'window_size_seconds': self.window_size_seconds,
-            'has_per_user_limits': self.has_per_user_limits,
-            'has_ip_limits': self.has_ip_limits,
-            'burst_allowed': self.burst_allowed,
-            'bypass_patterns': self.bypass_patterns,
+    def __init__(self, verbose: bool = False):
+        self.verbose = verbose
+        self.request_history: Dict[str, List[Tuple[float, Dict]]] = defaultdict(list)
+        self.violations: List[RateLimitViolation] = []
+        self.rate_limit_configs: Dict[str, RateLimitConfig] = {}
+        self.bypass_indicators = {
+            'ip_rotation': [],
+            'header_manipulation': [],
+            'parameter_obfuscation': [],
+            'distributed_requests': [],
+            'timing_patterns': [],
+            'token_refresh_abuse': []
         }
-
-
-@dataclass
-class RateLimitGap:
-    """Identified gap in rate limiting."""
-    service_name: str
-    gap_type: str
-    description: str
-    risk_level: RiskLevel
-    affected_endpoints: List[str]
-    recommendation: str
     
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            'service_name': self.service_name,
-            'gap_type': self.gap_type,
-            'description': self.description,
-            'risk_level': self.risk_level.value,
-            'affected_endpoints': self.affected_endpoints,
-            'recommendation': self.recommendation,
-        }
-
-
-@dataclass
-class AbusePattern:
-    """Detected abuse pattern."""
-    pattern_id: str
-    service_name: str
-    pattern_type: str
-    client_identifier: str
-    request_count: int
-    time_window_seconds: int
-    severity: RiskLevel
-    timestamp: str
-    endpoints_targeted: List[str]
+    def add_rate_limit_config(self, config: RateLimitConfig):
+        """Add or update rate limit configuration for endpoint"""
+        self.rate_limit_configs[config.endpoint] = config
+        if self.verbose:
+            print(f"[*] Configured rate limit for {config.endpoint}: "
+                  f"{config.requests_per_window} requests per {config.window_seconds}s")
     
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            'pattern_id': self.pattern_id,
-            'service_name': self.service_name,
-            'pattern_type': self.pattern_type,
-            'client_identifier': self.client_identifier,
-            'request_count': self.request_count,
-            'time_window_seconds': self.time_window_seconds,
-            'severity': self.severity.value,
-            'timestamp': self.timestamp,
-            'endpoints_targeted': self.endpoints_targeted,
-        }
-
-
-class RateLimitAnalyzer:
-    """Analyzer for API rate limiting implementations."""
+    def analyze_request(self, endpoint: str, request_data: Dict) -> Optional[RateLimitViolation]:
+        """Analyze single request for rate limit violations"""
+        
+        if endpoint not in self.rate_limit_configs:
+            return None
+        
+        config = self.rate_limit_configs[endpoint]
+        if not config.detection_enabled:
+            return None
+        
+        timestamp = time.time()
+        client_id = request_data.get('client_id', 'unknown')
+        
+        # Create request record
+        request_record = (timestamp, request_data)
+        self.request_history[f"{endpoint}:{client_id}"].append(request_record)
+        
+        # Check for violations
+        window_start = timestamp - config.window_seconds
+        requests_in_window = [
+            req for req in self.request_history[f"{endpoint}:{client_id}"]
+            if req[0] >= window_start
+        ]
+        
+        violation = None
+        if len(requests_in_window) > config.requests_per_window:
+            evidence = self._gather_evidence(endpoint, client_id, requests_in_window, request_data)
+            bypass_type = self._detect_bypass_pattern(endpoint, client_id, requests_in_window, request_data)
+            
+            violation = RateLimitViolation(
+                endpoint=endpoint,
+                client_id=client_id,
+                timestamp=datetime.fromtimestamp(timestamp).isoformat(),
+                requests_made=len(requests_in_window),
+                limit=config.requests_per_window,
+                window_seconds=config.window_seconds,
+                violation_type=bypass_type,
+                severity=self._calculate_severity(len(requests_in_window), config.requests_per_window),
+                evidence=evidence
+            )
+            self.violations.append(violation)
+            
+            if self.verbose:
+                print(f"[!] VIOLATION: {endpoint} by {client_id} - "
+                      f"{len(requests_in_window)} requests in {config.window_seconds}s "
+                      f"(limit: {config.requests_per_window})")
+        
+        return violation
     
-    def __init__(self):
-        """Initialize the analyzer."""
-        self.services: Dict[str, RateLimitConfig] = {}
-        self.gaps: List[RateLimitGap] = []
-        self.abuse_patterns: List[AbusePattern] = []
-        self.request_logs: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        self.monitoring_active = False
+    def _detect_bypass_pattern(self, endpoint: str, client_id: str, 
+                               requests: List[Tuple[float, Dict]], 
+                               current_request: Dict) -> str:
+        """Detect specific rate limit bypass patterns"""
         
-    def add_service(self, config: RateLimitConfig) -> None:
-        """Add a service configuration for analysis."""
-        self.services[config.service_name] = config
+        if len(requests) < 2:
+            return "unknown"
         
-    def analyze_gaps(self) -> List[RateLimitGap]:
-        """Analyze all services for rate limiting gaps."""
-        self.gaps = []
+        # Check for IP rotation
+        ips = set(req[1].get('source_ip', '') for req in requests)
+        if len(ips) > 1 and len(ips) >= len(requests) * 0.5:
+            self.bypass_indicators['ip_rotation'].append({
+                'endpoint': endpoint,
+                'client_id': client_id,
+                'unique_ips': len(ips),
+                'total_requests': len(requests)
+            })
+            return "ip_rotation"
         
-        for service_name, config in self.services.items():
-            # Check for missing rate limiting
-            if config.method == RateLimitMethod.NONE:
-                gap = RateLimitGap(
-                    service_name=service_name,
-                    gap_type="missing_rate_limiting",
-                    description="Service has no rate limiting implemented",
-                    risk_level=RiskLevel.CRITICAL,
-                    affected_endpoints=["*"],
-                    recommendation="Implement rate limiting immediately using token bucket or sliding window algorithm"
-                )
-                self.gaps.append(gap)
-            
-            # Check for per-user limits
-            if not config.has_per_user_limits:
-                gap = RateLimitGap(
-                    service_name=service_name,
-                    gap_type="missing_per_user_limits",
-                    description="Service lacks per-user rate limiting",
-                    risk_level=RiskLevel.HIGH,
-                    affected_endpoints=["authenticated_endpoints"],
-                    recommendation="Implement per-user rate limits based on authentication tokens/user IDs"
-                )
-                self.gaps.append(gap)
-            
-            # Check for IP-based limits
-            if not config.has_ip_limits:
-                gap = RateLimitGap(
-                    service_name=service_name,
-                    gap_type="missing_ip_limits",
-                    description="Service lacks IP-based rate limiting",
-                    risk_level=RiskLevel.HIGH,
-                    affected_endpoints=["public_endpoints"],
-                    recommendation="Implement IP-based rate limiting for anonymous users"
-                )
-                self.gaps.append(gap)
-            
-            # Check for burst allowance without safeguards
-            if config.burst_allowed and config.requests_per_window > 1000:
-                gap = RateLimitGap(
-                    service_name=service_name,
-                    gap_type="excessive_burst_allowance",
-                    description="Service allows excessive burst requests without adequate control",
-                    risk_level=RiskLevel.MEDIUM,
-                    affected_endpoints=["all_endpoints"],
-                    recommendation="Reduce burst allowance or implement adaptive rate limiting"
-                )
-                self.gaps.append(gap)
-            
-            # Check for bypass patterns
-            if config.bypass_patterns:
-                gap = RateLimitGap(
-                    service_name=service_name,
-                    gap_type="identified_bypass_patterns",
-                    description=f"Potential bypass patterns found: {', '.join(config.bypass_patterns)}",
-                    risk_level=RiskLevel.MEDIUM,
-                    affected_endpoints=config.bypass_patterns,
-                    recommendation="Review and patch identified bypass patterns in rate limiting logic"
-                )
-                self.gaps.append(gap)
-            
-            # Check window size appropriateness
-            if config.window_size_seconds > 3600:
-                gap = RateLimitGap(
-                    service_name=service_name,
-                    gap_type="large_rate_limit_window",
-                    description=f"Rate limit window is very large ({config.window_size_seconds}s)",
-                    risk_level=RiskLevel.MEDIUM,
-                    affected_endpoints=["all_endpoints"],
-                    recommendation="Consider using smaller windows (60-300 seconds) for better protection"
-                )
-                self.gaps.append(gap)
+        # Check for header manipulation (User-Agent changes)
+        user_agents = set(req[1].get('user_agent', '') for req in requests)
+        if len(user_agents) > len(requests) * 0.7:
+            self.bypass_indicators['header_manipulation'].append({
+                'endpoint': endpoint,
+                'client_id': client_id,
+                'unique_agents': len(user_agents)
+            })
+            return "header_manipulation"
         
-        return self.gaps
+        # Check for parameter obfuscation (API key rotation)
+        api_keys = set(req[1].get('api_key', '') for req in requests)
+        if len(api_keys) > 1:
+            self.bypass_indicators['parameter_obfuscation'].append({
+                'endpoint': endpoint,
+                'client_id': client_id,
+                'unique_keys': len(api_keys)
+            })
+            return "parameter_obfuscation"
+        
+        # Check for distributed pattern (timing variation)
+        timestamps = [req[0] for req in requests]
+        intervals = [timestamps[i+1] - timestamps[i] for i in range(len(timestamps)-1)]
+        
+        if intervals and min(intervals) < 0.01 and max(intervals) > 0.5:
+            self.bypass_indicators['timing_patterns'].append({
+                'endpoint': endpoint,
+                'client_id': client_id,
+                'min_interval': min(intervals),
+                'max_interval': max(intervals)
+            })
+            return "timing_manipulation"
+        
+        # Check for token refresh abuse
+        tokens = set(req[1].get('auth_token', '') for req in requests)
+        if len(tokens) > len(requests) * 0.3:
+            self.bypass_indicators['token_refresh_abuse'].append({
+                'endpoint': endpoint,
+                'client_id': client_id,
+                'unique_tokens': len(tokens)
+            })
+            return "token_refresh_abuse"
+        
+        return "brute_force"
     
-    def log_request(self, service_name: str, client_id: str, endpoint: str, 
-                   timestamp
+    def _gather_evidence(self, endpoint: str, client_id: str, 
+                        requests: List[Tuple[float, Dict]], 
+                        current_request: Dict) -> List[str]:
+        """Gather evidence for violation"""
+        evidence = []
+        
+        request_count = len(requests)
+        evidence.append(f"Made {request_count} requests in rapid succession")
+        
+        time_span = requests[-1][0] - requests[0][0]
+        if time_span > 0:
+            rps = request_count / time_span
+            evidence.append(f"Rate: {rps:.2f} requests/second")
+        
+        # Check response codes
