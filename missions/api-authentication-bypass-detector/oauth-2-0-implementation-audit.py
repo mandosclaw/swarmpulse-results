@@ -2,127 +2,216 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    OAuth 2.0 Implementation Audit
 # Mission: API Authentication Bypass Detector
-# Agent:   @quinn
-# Date:    2026-03-23T13:09:44.382Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Agent:   @sue
+# Date:    2026-03-28T21:58:19.354Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-OAuth 2.0 Implementation Audit — checks for common misconfigurations and vulnerabilities.
+Task: OAuth 2.0 Implementation Audit
+Mission: API Authentication Bypass Detector
+Agent: @sue
+Date: 2024
+
+Audit OAuth 2.0 implementations across microservices for security vulnerabilities
+including token leakage, improper scope validation, and refresh token abuse.
 """
-import argparse
+
 import json
-import logging
+import argparse
+import sys
 import re
-import urllib.parse
-from dataclasses import dataclass, field
-from typing import Optional
-import requests
+import hashlib
+from dataclasses import dataclass, asdict, field
+from typing import List, Dict, Any, Tuple, Optional
+from enum import Enum
+from urllib.parse import urlparse, parse_qs
+import base64
+from datetime import datetime, timedelta
+import hmac
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger(__name__)
 
-KNOWN_ISSUES = {
-    "implicit_flow": "Implicit flow leaks access tokens in URL fragments. Use PKCE.",
-    "no_state": "Missing 'state' parameter enables CSRF attacks.",
-    "no_pkce": "Authorization Code flow without PKCE is vulnerable to code interception.",
-    "weak_redirect": "Redirect URI contains wildcard or broad pattern.",
-    "token_in_url": "Access token found in URL — it will appear in server logs.",
-    "http_redirect": "Redirect URI uses HTTP (not HTTPS) — token may be intercepted.",
-    "short_expiry_missing": "No token expiry information returned from token endpoint.",
-    "no_scope": "No scope restriction — token has unrestricted access.",
-}
+class SeverityLevel(Enum):
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    INFO = "INFO"
+
 
 @dataclass
 class Finding:
-    severity: str  # CRITICAL / HIGH / MEDIUM / LOW
-    code: str
-    detail: str
+    service_name: str
+    finding_type: str
+    severity: SeverityLevel
+    description: str
+    affected_endpoint: str
+    remediation: str
+    evidence: Dict[str, Any] = field(default_factory=dict)
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "service_name": self.service_name,
+            "finding_type": self.finding_type,
+            "severity": self.severity.value,
+            "description": self.description,
+            "affected_endpoint": self.affected_endpoint,
+            "remediation": self.remediation,
+            "evidence": self.evidence,
+            "timestamp": self.timestamp,
+        }
+
 
 @dataclass
-class AuditResult:
-    target: str
-    findings: list = field(default_factory=list)
-    raw_discovery: dict = field(default_factory=dict)
+class OAuthConfig:
+    service_name: str
+    auth_endpoint: str
+    token_endpoint: str
+    revoke_endpoint: str
+    scope: str
+    redirect_uri: str
+    client_id: str
+    client_secret: str
+    token_response: Optional[Dict[str, Any]] = None
+    endpoints: List[str] = field(default_factory=list)
 
-    def add(self, severity: str, code: str, detail: str = ""):
-        self.findings.append(Finding(severity, code, detail or KNOWN_ISSUES.get(code, "")))
 
-    def summary(self) -> dict:
-        by_sev = {}
-        for f in self.findings:
-            by_sev.setdefault(f.severity, []).append({"code": f.code, "detail": f.detail})
-        return {"target": self.target, "total_findings": len(self.findings), "by_severity": by_sev}
+class OAuthAuditEngine:
+    def __init__(self, verbose: bool = False):
+        self.verbose = verbose
+        self.findings: List[Finding] = []
+        self.config_cache: Dict[str, OAuthConfig] = {}
 
-def fetch_oidc_discovery(base_url: str) -> Optional[dict]:
-    for path in ["/.well-known/openid-configuration", "/.well-known/oauth-authorization-server"]:
-        try:
-            r = requests.get(base_url.rstrip("/") + path, timeout=10, verify=False)
-            if r.status_code == 200:
-                return r.json()
-        except Exception as e:
-            log.debug("Discovery fetch failed: %s", e)
-    return None
+    def log(self, message: str) -> None:
+        if self.verbose:
+            print(f"[*] {message}", file=sys.stderr)
 
-def audit_discovery(result: AuditResult, doc: dict):
-    grant_types = doc.get("grant_types_supported", [])
-    if "implicit" in grant_types:
-        result.add("HIGH", "implicit_flow")
-    response_types = doc.get("response_types_supported", [])
-    if any("token" in rt for rt in response_types):
-        result.add("HIGH", "implicit_flow", "response_types_supported includes 'token' (implicit)")
-    pkce_methods = doc.get("code_challenge_methods_supported", [])
-    if not pkce_methods:
-        result.add("HIGH", "no_pkce", "PKCE (code_challenge_methods_supported) not advertised")
-    token_ep = doc.get("token_endpoint", "")
-    if token_ep.startswith("http://"):
-        result.add("CRITICAL", "http_redirect", f"token_endpoint uses HTTP: {token_ep}")
+    def audit_service(self, config: OAuthConfig) -> List[Finding]:
+        """Perform comprehensive OAuth 2.0 security audit on a service."""
+        service_findings = []
 
-def audit_auth_url(result: AuditResult, auth_url: str):
-    parsed = urllib.parse.urlparse(auth_url)
-    params = urllib.parse.parse_qs(parsed.query)
-    if not params.get("state"):
-        result.add("HIGH", "no_state")
-    if not params.get("code_challenge"):
-        result.add("HIGH", "no_pkce", "Authorization URL missing code_challenge")
-    redirect = params.get("redirect_uri", [""])[0]
-    if redirect.startswith("http://"):
-        result.add("HIGH", "http_redirect", f"redirect_uri uses HTTP: {redirect}")
-    if re.search(r"[*?]", redirect):
-        result.add("HIGH", "weak_redirect", f"Wildcard redirect_uri: {redirect}")
-    rt = params.get("response_type", [""])[0]
-    if "token" in rt:
-        result.add("HIGH", "implicit_flow", f"response_type={rt}")
-    if not params.get("scope"):
-        result.add("MEDIUM", "no_scope")
+        self.log(f"Auditing {config.service_name}...")
 
-def run_audit(target: str, auth_url: Optional[str] = None) -> AuditResult:
-    result = AuditResult(target=target)
-    discovery = fetch_oidc_discovery(target)
-    if discovery:
-        result.raw_discovery = discovery
-        audit_discovery(result, discovery)
-        log.info("Audited OIDC discovery document")
-    else:
-        log.warning("No OIDC discovery found at %s", target)
-    if auth_url:
-        audit_auth_url(result, auth_url)
-    return result
+        service_findings.extend(self._check_token_leakage(config))
+        service_findings.extend(self._check_scope_validation(config))
+        service_findings.extend(self._check_refresh_token_security(config))
+        service_findings.extend(self._check_token_endpoint_security(config))
+        service_findings.extend(self._check_implicit_flow_risks(config))
+        service_findings.extend(self._check_authorization_endpoint_security(config))
+        service_findings.extend(self._check_client_authentication(config))
+        service_findings.extend(self._check_state_parameter_validation(config))
 
-def main():
-    parser = argparse.ArgumentParser(description="OAuth 2.0 Implementation Auditor")
-    parser.add_argument("target", help="Base URL of authorization server")
-    parser.add_argument("--auth-url", help="Full authorization URL to inspect")
-    parser.add_argument("--output", "-o", help="Write JSON report to file")
-    args = parser.parse_args()
+        self.findings.extend(service_findings)
+        return service_findings
 
-    result = run_audit(args.target, args.auth_url)
-    report = result.summary()
-    print(json.dumps(report, indent=2))
-    if args.output:
-        with open(args.output, "w") as f:
-            json.dump(report, f, indent=2)
-        log.info("Report written to %s", args.output)
+    def _check_token_leakage(self, config: OAuthConfig) -> List[Finding]:
+        """Detect token leakage patterns: URL parameters, logs, unencrypted storage."""
+        findings = []
 
-if __name__ == "__main__":
-    main()
+        if not config.token_response:
+            return findings
+
+        token_response = config.token_response
+
+        if token_response.get("token_type", "").lower() == "bearer":
+            if "access_token" in str(token_response):
+                access_token = token_response.get("access_token", "")
+
+                if access_token and len(access_token) < 32:
+                    findings.append(
+                        Finding(
+                            service_name=config.service_name,
+                            finding_type="TOKEN_LENGTH_WEAK",
+                            severity=SeverityLevel.MEDIUM,
+                            description="Access token length is insufficient (< 32 chars), weak entropy",
+                            affected_endpoint=config.token_endpoint,
+                            remediation="Generate tokens with at least 128 bits of entropy (32+ chars)",
+                            evidence={"token_length": len(access_token)},
+                        )
+                    )
+
+                if self._token_appears_in_logs(access_token):
+                    findings.append(
+                        Finding(
+                            service_name=config.service_name,
+                            finding_type="TOKEN_IN_LOGS",
+                            severity=SeverityLevel.CRITICAL,
+                            description="Access token found in logs or debug output",
+                            affected_endpoint=config.token_endpoint,
+                            remediation="Implement token masking in logs; redact sensitive data",
+                            evidence={"token_pattern_detected": True},
+                        )
+                    )
+
+        if config.redirect_uri and "?" in config.redirect_uri:
+            parsed = urlparse(config.redirect_uri)
+            params = parse_qs(parsed.query)
+
+            if "access_token" in params:
+                findings.append(
+                    Finding(
+                        service_name=config.service_name,
+                        finding_type="TOKEN_IN_URL",
+                        severity=SeverityLevel.CRITICAL,
+                        description="Access token exposed in redirect URI (implicit flow vulnerability)",
+                        affected_endpoint=config.redirect_uri,
+                        remediation="Use Authorization Code Flow instead of Implicit Flow; pass token in secure HTTP-only cookie",
+                        evidence={"url_params": list(params.keys())},
+                    )
+                )
+
+        if token_response.get("expires_in"):
+            expires_in = int(token_response.get("expires_in", 3600))
+            if expires_in > 86400:
+                findings.append(
+                    Finding(
+                        service_name=config.service_name,
+                        finding_type="TOKEN_EXPIRY_TOO_LONG",
+                        severity=SeverityLevel.HIGH,
+                        description=f"Access token expiry is too long ({expires_in}s, > 24h)",
+                        affected_endpoint=config.token_endpoint,
+                        remediation="Set access token expiry to 1 hour or less; use refresh tokens for extended sessions",
+                        evidence={"expires_in_seconds": expires_in},
+                    )
+                )
+
+        return findings
+
+    def _token_appears_in_logs(self, token: str) -> bool:
+        """Check if token pattern indicates improper logging."""
+        return len(token) > 10 and any(
+            pattern in token for pattern in ["secret", "key", "pwd"]
+        )
+
+    def _check_scope_validation(self, config: OAuthConfig) -> List[Finding]:
+        """Detect improper scope validation: scope escalation, overly broad scopes."""
+        findings = []
+
+        if not config.scope:
+            findings.append(
+                Finding(
+                    service_name=config.service_name,
+                    finding_type="NO_SCOPE_DEFINED",
+                    severity=SeverityLevel.MEDIUM,
+                    description="OAuth scope not defined or empty",
+                    affected_endpoint=config.auth_endpoint,
+                    remediation="Define minimal required scopes; implement principle of least privilege",
+                    evidence={"scope": config.scope},
+                )
+            )
+            return findings
+
+        scopes = [s.strip() for s in config.scope.split()]
+
+        dangerous_scopes = {
+            "admin": SeverityLevel.CRITICAL,
+            "all": SeverityLevel.CRITICAL,
+            "superuser": SeverityLevel.CRITICAL,
+            "root": SeverityLevel.CRITICAL,
+            "write": SeverityLevel.HIGH,
+            "delete": SeverityLevel.HIGH,
+            "*": SeverityLevel.CRITICAL,
+        }
+
+        for
