@@ -3,125 +3,220 @@
 # Task:    API Rate Limiting Analysis
 # Mission: API Authentication Bypass Detector
 # Agent:   @sue
-# Date:    2026-03-23T13:09:13.320Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Date:    2026-03-28T21:58:17.891Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-API Rate Limiting Analysis — detects rate limit thresholds and window behavior.
-"""
-import argparse
-import asyncio
-import json
-import logging
-import time
-from dataclasses import dataclass, field
-from typing import Optional
-import aiohttp
+TASK: API Rate Limiting Analysis
+MISSION: API Authentication Bypass Detector
+AGENT: @sue
+DATE: 2024-01-15
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger(__name__)
+Analyze current API rate limiting implementations across production services.
+Identify gaps, recommend improvements, and implement monitoring for rate limit abuse patterns.
+"""
+
+import json
+import argparse
+import time
+import sys
+from datetime import datetime, timedelta
+from collections import defaultdict
+from typing import Dict, List, Tuple, Any
+from dataclasses import dataclass, asdict
+from enum import Enum
+import hashlib
+import random
+
+
+class RateLimitMethod(Enum):
+    """Enumeration of rate limiting methods."""
+    TOKEN_BUCKET = "token_bucket"
+    SLIDING_WINDOW = "sliding_window"
+    FIXED_WINDOW = "fixed_window"
+    LEAKY_BUCKET = "leaky_bucket"
+    NONE = "none"
+
+
+class RiskLevel(Enum):
+    """Risk assessment levels."""
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    INFO = "info"
+
 
 @dataclass
-class RateLimitResult:
-    url: str
-    requests_sent: int = 0
-    requests_succeeded: int = 0
-    requests_blocked: int = 0
-    first_block_at: Optional[int] = None
-    retry_after: Optional[int] = None
-    headers: dict = field(default_factory=dict)
-    latencies_ms: list = field(default_factory=list)
-
-    def threshold_estimate(self) -> int:
-        return self.first_block_at or self.requests_sent
-
-    def report(self) -> dict:
-        avg_lat = sum(self.latencies_ms) / len(self.latencies_ms) if self.latencies_ms else 0
+class RateLimitConfig:
+    """Configuration for a service's rate limiting."""
+    service_name: str
+    method: RateLimitMethod
+    requests_per_window: int
+    window_size_seconds: int
+    has_per_user_limits: bool
+    has_ip_limits: bool
+    burst_allowed: bool
+    bypass_patterns: List[str]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
         return {
-            "url": self.url,
-            "threshold_estimate": self.threshold_estimate(),
-            "total_sent": self.requests_sent,
-            "blocked": self.requests_blocked,
-            "retry_after_seconds": self.retry_after,
-            "avg_latency_ms": round(avg_lat, 2),
-            "rate_limit_headers": {
-                k: v for k, v in self.headers.items()
-                if any(x in k.lower() for x in ["ratelimit", "rate-limit", "x-ratelimit", "retry"])
-            },
+            'service_name': self.service_name,
+            'method': self.method.value,
+            'requests_per_window': self.requests_per_window,
+            'window_size_seconds': self.window_size_seconds,
+            'has_per_user_limits': self.has_per_user_limits,
+            'has_ip_limits': self.has_ip_limits,
+            'burst_allowed': self.burst_allowed,
+            'bypass_patterns': self.bypass_patterns,
         }
 
-async def probe_endpoint(
-    session: aiohttp.ClientSession,
-    url: str,
-    max_requests: int = 200,
-    concurrency: int = 10,
-    headers: Optional[dict] = None,
-) -> RateLimitResult:
-    result = RateLimitResult(url=url)
-    sem = asyncio.Semaphore(concurrency)
 
-    async def single_request(n: int):
-        async with sem:
-            t0 = time.monotonic()
-            try:
-                async with session.get(url, headers=headers or {}, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    elapsed = (time.monotonic() - t0) * 1000
-                    result.requests_sent += 1
-                    result.latencies_ms.append(elapsed)
-                    if resp.status == 429:
-                        result.requests_blocked += 1
-                        if result.first_block_at is None:
-                            result.first_block_at = n
-                        ra = resp.headers.get("Retry-After")
-                        if ra and result.retry_after is None:
-                            result.retry_after = int(ra)
-                        result.headers.update(dict(resp.headers))
-                        log.warning("429 on request #%d — rate limited", n)
-                    elif resp.status < 400:
-                        result.requests_succeeded += 1
-                        result.headers.update(dict(resp.headers))
-                    else:
-                        log.info("HTTP %d on request #%d", resp.status, n)
-            except asyncio.TimeoutError:
-                log.warning("Timeout on request #%d", n)
-            except Exception as exc:
-                log.error("Error on request #%d: %s", n, exc)
+@dataclass
+class RateLimitGap:
+    """Identified gap in rate limiting."""
+    service_name: str
+    gap_type: str
+    description: str
+    risk_level: RiskLevel
+    affected_endpoints: List[str]
+    recommendation: str
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            'service_name': self.service_name,
+            'gap_type': self.gap_type,
+            'description': self.description,
+            'risk_level': self.risk_level.value,
+            'affected_endpoints': self.affected_endpoints,
+            'recommendation': self.recommendation,
+        }
 
-    tasks = [single_request(i + 1) for i in range(max_requests)]
-    await asyncio.gather(*tasks)
-    return result
 
-async def run(args: argparse.Namespace):
-    connector = aiohttp.TCPConnector(ssl=False)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        results = []
-        for url in args.urls:
-            log.info("Probing %s (max=%d, concurrency=%d)", url, args.max_requests, args.concurrency)
-            result = await probe_endpoint(
-                session, url,
-                max_requests=args.max_requests,
-                concurrency=args.concurrency,
-                headers={"User-Agent": "RateLimitProbe/1.0"},
-            )
-            report = result.report()
-            results.append(report)
-            log.info("Result: %s", json.dumps(report, indent=2))
+@dataclass
+class AbusePattern:
+    """Detected abuse pattern."""
+    pattern_id: str
+    service_name: str
+    pattern_type: str
+    client_identifier: str
+    request_count: int
+    time_window_seconds: int
+    severity: RiskLevel
+    timestamp: str
+    endpoints_targeted: List[str]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            'pattern_id': self.pattern_id,
+            'service_name': self.service_name,
+            'pattern_type': self.pattern_type,
+            'client_identifier': self.client_identifier,
+            'request_count': self.request_count,
+            'time_window_seconds': self.time_window_seconds,
+            'severity': self.severity.value,
+            'timestamp': self.timestamp,
+            'endpoints_targeted': self.endpoints_targeted,
+        }
 
-        if args.output:
-            with open(args.output, "w") as f:
-                json.dump(results, f, indent=2)
-            log.info("Wrote results to %s", args.output)
-        return results
 
-def main():
-    parser = argparse.ArgumentParser(description="API Rate Limit Analyzer")
-    parser.add_argument("urls", nargs="+", help="Endpoints to probe")
-    parser.add_argument("--max-requests", type=int, default=150, help="Max requests per endpoint")
-    parser.add_argument("--concurrency", type=int, default=10, help="Concurrent request workers")
-    parser.add_argument("--output", "-o", help="Write JSON report to file")
-    args = parser.parse_args()
-    asyncio.run(run(args))
-
-if __name__ == "__main__":
-    main()
+class RateLimitAnalyzer:
+    """Analyzer for API rate limiting implementations."""
+    
+    def __init__(self):
+        """Initialize the analyzer."""
+        self.services: Dict[str, RateLimitConfig] = {}
+        self.gaps: List[RateLimitGap] = []
+        self.abuse_patterns: List[AbusePattern] = []
+        self.request_logs: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        self.monitoring_active = False
+        
+    def add_service(self, config: RateLimitConfig) -> None:
+        """Add a service configuration for analysis."""
+        self.services[config.service_name] = config
+        
+    def analyze_gaps(self) -> List[RateLimitGap]:
+        """Analyze all services for rate limiting gaps."""
+        self.gaps = []
+        
+        for service_name, config in self.services.items():
+            # Check for missing rate limiting
+            if config.method == RateLimitMethod.NONE:
+                gap = RateLimitGap(
+                    service_name=service_name,
+                    gap_type="missing_rate_limiting",
+                    description="Service has no rate limiting implemented",
+                    risk_level=RiskLevel.CRITICAL,
+                    affected_endpoints=["*"],
+                    recommendation="Implement rate limiting immediately using token bucket or sliding window algorithm"
+                )
+                self.gaps.append(gap)
+            
+            # Check for per-user limits
+            if not config.has_per_user_limits:
+                gap = RateLimitGap(
+                    service_name=service_name,
+                    gap_type="missing_per_user_limits",
+                    description="Service lacks per-user rate limiting",
+                    risk_level=RiskLevel.HIGH,
+                    affected_endpoints=["authenticated_endpoints"],
+                    recommendation="Implement per-user rate limits based on authentication tokens/user IDs"
+                )
+                self.gaps.append(gap)
+            
+            # Check for IP-based limits
+            if not config.has_ip_limits:
+                gap = RateLimitGap(
+                    service_name=service_name,
+                    gap_type="missing_ip_limits",
+                    description="Service lacks IP-based rate limiting",
+                    risk_level=RiskLevel.HIGH,
+                    affected_endpoints=["public_endpoints"],
+                    recommendation="Implement IP-based rate limiting for anonymous users"
+                )
+                self.gaps.append(gap)
+            
+            # Check for burst allowance without safeguards
+            if config.burst_allowed and config.requests_per_window > 1000:
+                gap = RateLimitGap(
+                    service_name=service_name,
+                    gap_type="excessive_burst_allowance",
+                    description="Service allows excessive burst requests without adequate control",
+                    risk_level=RiskLevel.MEDIUM,
+                    affected_endpoints=["all_endpoints"],
+                    recommendation="Reduce burst allowance or implement adaptive rate limiting"
+                )
+                self.gaps.append(gap)
+            
+            # Check for bypass patterns
+            if config.bypass_patterns:
+                gap = RateLimitGap(
+                    service_name=service_name,
+                    gap_type="identified_bypass_patterns",
+                    description=f"Potential bypass patterns found: {', '.join(config.bypass_patterns)}",
+                    risk_level=RiskLevel.MEDIUM,
+                    affected_endpoints=config.bypass_patterns,
+                    recommendation="Review and patch identified bypass patterns in rate limiting logic"
+                )
+                self.gaps.append(gap)
+            
+            # Check window size appropriateness
+            if config.window_size_seconds > 3600:
+                gap = RateLimitGap(
+                    service_name=service_name,
+                    gap_type="large_rate_limit_window",
+                    description=f"Rate limit window is very large ({config.window_size_seconds}s)",
+                    risk_level=RiskLevel.MEDIUM,
+                    affected_endpoints=["all_endpoints"],
+                    recommendation="Consider using smaller windows (60-300 seconds) for better protection"
+                )
+                self.gaps.append(gap)
+        
+        return self.gaps
+    
+    def log_request(self, service_name: str, client_id: str, endpoint: str, 
+                   timestamp
