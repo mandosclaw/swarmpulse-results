@@ -2,186 +2,209 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    Prompt cache layer
 # Mission: LLM Inference Cost Optimizer
-# Agent:   @sue
-# Date:    2026-03-23T18:09:30.530Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Agent:   @quinn
+# Date:    2026-03-28T22:00:43.430Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
-"""LRU cache with semantic similarity deduplication for LLM prompt caching."""
+"""
+TASK: Prompt cache layer
+MISSION: LLM Inference Cost Optimizer
+AGENT: @quinn
+DATE: 2025-01-20
+
+Semantic similarity cache using in-memory vector storage with TTL.
+Caches LLM prompts and responses, returning cached results on semantic match.
+Implements configurable TTL, similarity threshold, and eviction policies.
+"""
 
 import argparse
+import hashlib
 import json
-import logging
 import math
 import sys
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Optional
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
-
-DEFAULT_SIMILARITY_THRESHOLD = 0.95
-DEFAULT_CACHE_SIZE = 1000
+from dataclasses import dataclass, field, asdict
+from datetime import datetime, timedelta
+from typing import Optional, Tuple, List, Dict, Any
 
 
 @dataclass
 class CacheEntry:
-    key: str
+    """Represents a cached prompt-response pair with metadata."""
     prompt: str
     response: str
-    embedding: list[float]
-    created_at: float = field(default_factory=time.time)
+    embedding: List[float]
+    timestamp: float
+    ttl_seconds: int
     hit_count: int = 0
-    last_accessed: float = field(default_factory=time.time)
+    prompt_hash: str = field(default_factory=str)
+    
+    def is_expired(self) -> bool:
+        """Check if entry has exceeded its TTL."""
+        return (time.time() - self.timestamp) > self.ttl_seconds
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "prompt_hash": self.prompt_hash,
+            "prompt_preview": self.prompt[:100],
+            "response_preview": self.response[:100],
+            "timestamp": datetime.fromtimestamp(self.timestamp).isoformat(),
+            "ttl_seconds": self.ttl_seconds,
+            "hit_count": self.hit_count,
+            "age_seconds": round(time.time() - self.timestamp, 2)
+        }
 
 
-def tokenize(text: str) -> list[str]:
-    return [w.lower().strip(".,!?;:\"'()[]") for w in text.split() if len(w) > 1]
+class SimpleEmbedding:
+    """Generate simple embeddings using character frequency analysis."""
+    
+    @staticmethod
+    def embed(text: str, dimension: int = 384) -> List[float]:
+        """
+        Generate embedding by analyzing character frequencies and patterns.
+        Creates a deterministic, reproducible embedding.
+        """
+        text_lower = text.lower()
+        
+        # Initialize embedding vector
+        embedding = [0.0] * dimension
+        
+        # Character frequency component (first 26 dimensions for a-z)
+        for i, char in enumerate(text_lower):
+            if 'a' <= char <= 'z':
+                idx = ord(char) - ord('a')
+                embedding[idx % dimension] += 1.0
+        
+        # Word length distribution (next dimensions)
+        words = text_lower.split()
+        if words:
+            avg_word_len = sum(len(w) for w in words) / len(words)
+            for i in range(min(5, dimension - 26)):
+                embedding[26 + i] = avg_word_len / (i + 1)
+        
+        # Sentence structure (punctuation patterns)
+        punct_count = sum(1 for c in text if c in '.!?,;:')
+        embedding[31 % dimension] = punct_count / max(1, len(words))
+        
+        # Text length normalized component
+        text_len = len(text)
+        embedding[32 % dimension] = math.log(text_len + 1) / 10.0
+        
+        # Hash-based content signature for remaining dimensions
+        hash_val = int(hashlib.sha256(text.encode()).hexdigest(), 16)
+        for i in range(33, dimension):
+            hash_val = (hash_val * 1103515245 + 12345) % (2**31)
+            embedding[i] = (hash_val % 1000) / 1000.0
+        
+        # L2 normalization
+        magnitude = math.sqrt(sum(x**2 for x in embedding))
+        if magnitude > 0:
+            embedding = [x / magnitude for x in embedding]
+        
+        return embedding
+    
+    @staticmethod
+    def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+        """Calculate cosine similarity between two vectors."""
+        if not vec1 or not vec2 or len(vec1) != len(vec2):
+            return 0.0
+        
+        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        mag1 = math.sqrt(sum(a**2 for a in vec1))
+        mag2 = math.sqrt(sum(a**2 for a in vec2))
+        
+        if mag1 == 0 or mag2 == 0:
+            return 0.0
+        
+        return dot_product / (mag1 * mag2)
 
 
-def compute_tfidf_embedding(text: str, dim: int = 128) -> list[float]:
-    """Compute a deterministic TF-IDF-inspired sparse embedding."""
-    import hashlib
-    tokens = tokenize(text)
-    if not tokens:
-        return [0.0] * dim
-    tf: dict[str, float] = {}
-    for t in tokens:
-        tf[t] = tf.get(t, 0) + 1
-    for k in tf:
-        tf[k] = tf[k] / len(tokens)
-    vec = [0.0] * dim
-    for token, weight in tf.items():
-        h = int(hashlib.md5(token.encode()).hexdigest(), 16)
-        for i in range(3):
-            idx = (h >> (i * 10)) % dim
-            vec[idx] += weight * math.log1p(len(tokens))
-    norm = math.sqrt(sum(x * x for x in vec)) + 1e-9
-    return [x / norm for x in vec]
-
-
-def cosine_similarity(a: list[float], b: list[float]) -> float:
-    if len(a) != len(b):
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    return max(-1.0, min(1.0, dot))
-
-
-class SemanticLRUCache:
-    def __init__(self, max_size: int = DEFAULT_CACHE_SIZE, similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD) -> None:
-        self.max_size = max_size
+class PromptCacheLayer:
+    """
+    Semantic similarity cache for LLM prompts.
+    Uses vector embeddings to find similar cached prompts and returns cached responses.
+    """
+    
+    def __init__(self, max_cache_size: int = 1000, 
+                 default_ttl_seconds: int = 3600,
+                 similarity_threshold: float = 0.85,
+                 embedding_dimension: int = 384):
+        """
+        Initialize the prompt cache layer.
+        
+        Args:
+            max_cache_size: Maximum number of entries to keep in cache
+            default_ttl_seconds: Default time-to-live for cached entries (seconds)
+            similarity_threshold: Minimum cosine similarity for cache hit (0.0-1.0)
+            embedding_dimension: Dimension of embedding vectors
+        """
+        self.max_cache_size = max_cache_size
+        self.default_ttl_seconds = default_ttl_seconds
         self.similarity_threshold = similarity_threshold
-        self._lru: OrderedDict[str, CacheEntry] = OrderedDict()
-        self._hits = 0
-        self._misses = 0
-        self._semantic_hits = 0
-
-    def _make_key(self, prompt: str) -> str:
-        import hashlib
-        return hashlib.sha256(prompt.strip().encode()).hexdigest()[:16]
-
-    def get(self, prompt: str) -> Optional[str]:
-        key = self._make_key(prompt)
-        if key in self._lru:
-            entry = self._lru[key]
-            self._lru.move_to_end(key)
-            entry.hit_count += 1
-            entry.last_accessed = time.time()
-            self._hits += 1
-            logger.debug(f"Cache HIT (exact): {prompt[:50]}")
-            return entry.response
-
-        query_emb = compute_tfidf_embedding(prompt)
-        best_sim = 0.0
-        best_key = None
-        for k, entry in self._lru.items():
-            sim = cosine_similarity(query_emb, entry.embedding)
-            if sim > best_sim:
-                best_sim = sim
-                best_key = k
-
-        if best_key and best_sim >= self.similarity_threshold:
-            entry = self._lru[best_key]
-            self._lru.move_to_end(best_key)
-            entry.hit_count += 1
-            entry.last_accessed = time.time()
-            self._hits += 1
-            self._semantic_hits += 1
-            logger.debug(f"Cache HIT (semantic, sim={best_sim:.3f}): {prompt[:50]}")
-            return entry.response
-
-        self._misses += 1
-        logger.debug(f"Cache MISS (best_sim={best_sim:.3f}): {prompt[:50]}")
-        return None
-
-    def put(self, prompt: str, response: str) -> None:
-        key = self._make_key(prompt)
-        embedding = compute_tfidf_embedding(prompt)
-        entry = CacheEntry(key=key, prompt=prompt, response=response, embedding=embedding)
-        if key in self._lru:
-            self._lru.move_to_end(key)
-        self._lru[key] = entry
-        if len(self._lru) > self.max_size:
-            evicted_key, _ = self._lru.popitem(last=False)
-            logger.debug(f"Evicted cache entry: {evicted_key}")
-
-    def get_stats(self) -> dict[str, Any]:
-        total = self._hits + self._misses
-        return {"size": len(self._lru), "max_size": self.max_size, "total_requests": total, "hits": self._hits, "misses": self._misses, "semantic_hits": self._semantic_hits, "hit_rate": round(self._hits / max(total, 1), 3), "similarity_threshold": self.similarity_threshold}
-
-    def clear(self) -> None:
-        self._lru.clear()
-        self._hits = self._misses = self._semantic_hits = 0
-
-
-def simulate_llm_call(prompt: str, cache: SemanticLRUCache) -> tuple[str, bool]:
-    cached = cache.get(prompt)
-    if cached:
-        return cached, True
-    response = f"[LLM Response to: {prompt[:60]}...]"
-    cache.put(prompt, response)
-    return response, False
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Semantic LRU cache for LLM prompts")
-    parser.add_argument("--max-size", type=int, default=1000)
-    parser.add_argument("--similarity-threshold", type=float, default=0.95)
-    parser.add_argument("--output", default="cache_stats.json")
-    parser.add_argument("--demo", action="store_true", default=True)
-    args = parser.parse_args()
-
-    cache = SemanticLRUCache(max_size=args.max_size, similarity_threshold=args.similarity_threshold)
-
-    if args.demo:
-        prompts = [
-            "What is the capital of France?",
-            "Tell me the capital city of France",
-            "What's the capital of France?",
-            "Explain machine learning",
-            "Can you explain machine learning to me?",
-            "What is machine learning?",
-            "How do I sort a list in Python?",
-            "How to sort a Python list?",
-            "Sorting lists in Python",
-            "What is the weather today?",
-        ]
-        logger.info(f"Running cache demo with {len(prompts)} prompts (threshold={args.similarity_threshold})")
-        for prompt in prompts:
-            response, was_cached = simulate_llm_call(prompt, cache)
-            status = "CACHED" if was_cached else "MISS"
-            logger.info(f"  [{status}] {prompt[:60]}")
-
-    stats = cache.get_stats()
-    with open(args.output, "w") as f:
-        json.dump(stats, f, indent=2)
-
-    logger.info(f"Cache stats: {stats['hits']}/{stats['total_requests']} hits ({stats['hit_rate']:.1%}), {stats['semantic_hits']} semantic hits")
-    print(json.dumps(stats, indent=2))
-
-
-if __name__ == "__main__":
-    main()
+        self.embedding_dim = embedding_dimension
+        self.embedder = SimpleEmbedding()
+        
+        # Use OrderedDict to track insertion order for LRU eviction
+        self.cache: OrderedDict[str, CacheEntry] = OrderedDict()
+        
+        # Statistics tracking
+        self.total_queries = 0
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.evictions = 0
+    
+    def _generate_cache_key(self, text: str) -> str:
+        """Generate a unique key for cache entry."""
+        return hashlib.sha256(text.encode()).hexdigest()[:16]
+    
+    def _evict_lru_entry(self) -> None:
+        """Evict least recently used (oldest) entry from cache."""
+        if self.cache:
+            oldest_key = next(iter(self.cache))
+            del self.cache[oldest_key]
+            self.evictions += 1
+    
+    def _cleanup_expired(self) -> None:
+        """Remove all expired entries from cache."""
+        expired_keys = [k for k, v in self.cache.items() if v.is_expired()]
+        for key in expired_keys:
+            del self.cache[key]
+    
+    def put(self, prompt: str, response: str, ttl_seconds: Optional[int] = None) -> None:
+        """
+        Add a prompt-response pair to the cache.
+        
+        Args:
+            prompt: The input prompt text
+            response: The LLM response text
+            ttl_seconds: Time-to-live in seconds (uses default if not specified)
+        """
+        if ttl_seconds is None:
+            ttl_seconds = self.default_ttl_seconds
+        
+        # Generate embedding
+        embedding = self.embedder.embed(prompt, self.embedding_dim)
+        
+        # Create cache entry
+        cache_key = self._generate_cache_key(prompt)
+        entry = CacheEntry(
+            prompt=prompt,
+            response=response,
+            embedding=embedding,
+            timestamp=time.time(),
+            ttl_seconds=ttl_seconds,
+            prompt_hash=cache_key
+        )
+        
+        # Check if we need to evict
+        self._cleanup_expired()
+        if len(self.cache) >= self.max_cache_size:
+            self._evict_lru_entry()
+        
+        # Store in cache
+        self.cache[cache_key] = entry
+    
+    def get
