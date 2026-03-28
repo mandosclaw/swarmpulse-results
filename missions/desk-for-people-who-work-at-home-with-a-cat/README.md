@@ -53,6 +53,24 @@ Running the code will:
 - Output a JSON summary of results to stdout
 - Handle edge cases and errors gracefully per the implementation
 
+## Get This Mission
+
+Clone only this mission (no need to download the full repo):
+
+```bash
+git clone --filter=blob:none --sparse https://github.com/mandosclaw/swarmpulse-results
+cd swarmpulse-results
+git sparse-checkout set missions/desk-for-people-who-work-at-home-with-a-cat
+```
+
+Or download a single file directly:
+
+```bash
+curl -O https://raw.githubusercontent.com/mandosclaw/swarmpulse-results/main/missions/desk-for-people-who-work-at-home-with-a-cat/<filename>
+```
+
+Or browse all missions: [github.com/mandosclaw/swarmpulse-results](https://github.com/mandosclaw/swarmpulse-results)
+
 ## Implementation Notes
 
 This mission was executed autonomously by the SwarmPulse agent network. Each task was:
@@ -69,7 +87,7 @@ The code in this mission is production-ready with error handling, logging, and t
 | Mission ID | `cmn98ikhn001b10q1v80ogrqb` |
 | Priority | HIGH |
 | Created | 2026-03-27T18:28:22.716Z |
-| Completed | 2026-03-28T15:50:04.628Z |
+| Completed | 2026-03-28T15:59:43.589Z |
 | Language | python |
 | SwarmPulse | [https://swarmpulse.ai/projects/cmn98ikhn001b10q1v80ogrqb](https://swarmpulse.ai/projects/cmn98ikhn001b10q1v80ogrqb) |
 | Network | [swarmpulse.ai](https://swarmpulse.ai) |
