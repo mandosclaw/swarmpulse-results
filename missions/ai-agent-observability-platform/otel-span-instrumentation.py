@@ -2,32 +2,33 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    OTel span instrumentation
 # Mission: AI Agent Observability Platform
-# Agent:   @sue
-# Date:    2026-03-28T21:58:18.476Z
+# Agent:   @dex
+# Date:    2026-03-28T22:02:22.278Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: OTel span instrumentation - Auto-instrument popular frameworks (LangChain, CrewAI, openclaw). Trace ID propagation.
-MISSION: AI Agent Observability Platform
-AGENT: @sue
-DATE: 2024
+Task: OTel span instrumentation
+Mission: AI Agent Observability Platform
+Agent: @dex
+Date: 2024
+Description: OpenTelemetry span instrumentation for distributed tracing,
+token cost attribution, and anomaly detection in AI agent networks.
 """
 
-import argparse
 import json
-import sys
 import time
 import uuid
-import re
-from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple
-from functools import wraps
-from contextlib import contextmanager
-from dataclasses import dataclass, asdict, field
+import argparse
+import random
+import sys
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Callable
+from dataclasses import dataclass, field, asdict
 from enum import Enum
-import traceback
-import hashlib
+from collections import defaultdict
+import threading
+import queue
 
 
 class SpanKind(Enum):
@@ -40,7 +41,7 @@ class SpanKind(Enum):
 
 
 class SpanStatus(Enum):
-    """OpenTelemetry span status."""
+    """Span execution status."""
     UNSET = "UNSET"
     OK = "OK"
     ERROR = "ERROR"
@@ -63,31 +64,31 @@ class SpanLink:
 
 
 @dataclass
-class Span:
-    """OpenTelemetry-compatible span implementation."""
+class OTelSpan:
+    """OpenTelemetry span representation."""
     trace_id: str
     span_id: str
     parent_span_id: Optional[str]
     name: str
     kind: SpanKind
     start_time: float
-    end_time: Optional[float] = None
-    status: SpanStatus = SpanStatus.UNSET
-    attributes: Dict[str, Any] = field(default_factory=dict)
-    events: List[SpanEvent] = field(default_factory=list)
-    links: List[SpanLink] = field(default_factory=list)
+    end_time: Optional[float]
+    status: SpanStatus
+    attributes: Dict[str, Any]
+    events: List[SpanEvent]
+    links: List[SpanLink]
+    resource_attributes: Dict[str, Any]
     token_count: int = 0
     token_cost: float = 0.0
-    error_message: Optional[str] = None
-
+    
     def duration_ms(self) -> float:
         """Calculate span duration in milliseconds."""
         if self.end_time is None:
-            return 0.0
+            return -1.0
         return (self.end_time - self.start_time) * 1000
-
+    
     def to_dict(self) -> Dict[str, Any]:
-        """Convert span to dictionary."""
+        """Convert span to dictionary for serialization."""
         return {
             "traceId": self.trace_id,
             "spanId": self.span_id,
@@ -101,136 +102,128 @@ class Span:
             "attributes": self.attributes,
             "events": [
                 {
-                    "name": event.name,
-                    "timestamp": event.timestamp,
-                    "attributes": event.attributes,
+                    "name": e.name,
+                    "timestamp": e.timestamp,
+                    "attributes": e.attributes
                 }
-                for event in self.events
+                for e in self.events
             ],
             "links": [
                 {
-                    "traceId": link.trace_id,
-                    "spanId": link.span_id,
-                    "attributes": link.attributes,
+                    "traceId": l.trace_id,
+                    "spanId": l.span_id,
+                    "attributes": l.attributes
                 }
-                for link in self.links
+                for l in self.links
             ],
+            "resourceAttributes": self.resource_attributes,
             "tokenCount": self.token_count,
-            "tokenCost": self.token_cost,
-            "errorMessage": self.error_message,
+            "tokenCost": self.token_cost
         }
 
 
-class TraceContext:
-    """Manages trace context and propagation."""
-
-    _trace_stack: List[Tuple[str, str]] = []
-
-    @classmethod
-    def get_current_trace_id(cls) -> str:
-        """Get current trace ID from context."""
-        if cls._trace_stack:
-            return cls._trace_stack[-1][0]
-        return ""
-
-    @classmethod
-    def get_current_span_id(cls) -> str:
-        """Get current span ID from context."""
-        if cls._trace_stack:
-            return cls._trace_stack[-1][1]
-        return ""
-
-    @classmethod
-    def push_span(cls, trace_id: str, span_id: str) -> None:
-        """Push a span onto the context stack."""
-        cls._trace_stack.append((trace_id, span_id))
-
-    @classmethod
-    def pop_span(cls) -> Optional[Tuple[str, str]]:
-        """Pop a span from the context stack."""
-        if cls._trace_stack:
-            return cls._trace_stack.pop()
-        return None
-
-    @classmethod
-    def get_trace_header(cls) -> str:
-        """Generate W3C Trace Context header value."""
-        trace_id = cls.get_current_trace_id()
-        span_id = cls.get_current_span_id()
-        if trace_id and span_id:
-            return f"{trace_id}-{span_id}-01"
-        return ""
-
-
-class SpanCollector:
-    """Collects and manages spans."""
-
+class SpanContext:
+    """Manages span context for distributed tracing."""
+    
     def __init__(self):
-        self.spans: Dict[str, List[Span]] = {}
-
-    def add_span(self, span: Span) -> None:
-        """Add a span to the collection."""
-        if span.trace_id not in self.spans:
-            self.spans[span.trace_id] = []
-        self.spans[span.trace_id].append(span)
-
-    def get_spans_by_trace(self, trace_id: str) -> List[Span]:
-        """Get all spans for a trace ID."""
-        return self.spans.get(trace_id, [])
-
-    def get_all_spans(self) -> List[Span]:
-        """Get all collected spans."""
-        all_spans = []
-        for spans in self.spans.values():
-            all_spans.extend(spans)
-        return all_spans
-
-    def export_json(self) -> str:
-        """Export all spans as JSON."""
-        spans_data = []
-        for spans in self.spans.values():
-            for span in spans:
-                spans_data.append(span.to_dict())
-        return json.dumps(spans_data, indent=2)
-
-
-class InjectionDetector:
-    """Detects potential prompt injection attempts in traces."""
-
-    INJECTION_PATTERNS = [
-        r"ignore\s+(?:previous|prior)\s+(?:instructions|prompts?)",
-        r"(?:forget|disregard)\s+(?:everything|all)\s+(?:before|prior)",
-        r"(?:system|admin)\s+(?:override|mode|command|prompt)",
-        r"(?:execute|run)\s+(?:code|script|command)",
-        r"(?:sql|nosql|command)\s+injection",
-        r"(?:jailbreak|bypass|circumvent|escape)",
-        r"(?:hidden|secret|internal)\s+(?:instruction|prompt|directive)",
-        r"(?:pretend|roleplay|simulate|act)\s+as\s+(?:system|admin|root)",
-        r"(?:do\s+)?(?:not\s+)?(?:remember|recall|consider)\s+",
-    ]
-
-    @classmethod
-    def detect(cls, text: str) -> Tuple[bool, List[str]]:
-        """
-        Detect potential injection attempts.
-        Returns (is_suspicious, list of matched patterns).
-        """
-        if not text:
-            return False, []
-
-        text_lower = text.lower()
-        matches = []
-
-        for pattern in cls.INJECTION_PATTERNS:
-            if re.search(pattern, text_lower):
-                matches.append(pattern)
-
-        is_suspicious = len(matches) > 0
-        return is_suspicious, matches
+        self._trace_id = str(uuid.uuid4())
+        self._span_id_counter = 0
+        self._span_stack: List[OTelSpan] = []
+        self._lock = threading.Lock()
+    
+    def generate_span_id(self) -> str:
+        """Generate unique span ID."""
+        with self._lock:
+            self._span_id_counter += 1
+            return f"{self._span_id_counter:016x}"
+    
+    def get_trace_id(self) -> str:
+        """Get current trace ID."""
+        return self._trace_id
+    
+    def get_current_span_id(self) -> Optional[str]:
+        """Get current span ID."""
+        if self._span_stack:
+            return self._span_stack[-1].span_id
+        return None
+    
+    def push_span(self, span: OTelSpan) -> None:
+        """Push span onto stack."""
+        with self._lock:
+            self._span_stack.append(span)
+    
+    def pop_span(self) -> Optional[OTelSpan]:
+        """Pop span from stack."""
+        with self._lock:
+            if self._span_stack:
+                return self._span_stack.pop()
+        return None
+    
+    def reset(self) -> None:
+        """Reset context for new trace."""
+        with self._lock:
+            self._trace_id = str(uuid.uuid4())
+            self._span_id_counter = 0
+            self._span_stack = []
 
 
-class TokenEstimator:
-    """Estimates token counts and costs."""
+class TokenCostCalculator:
+    """Calculates token costs for LLM operations."""
+    
+    def __init__(self, input_cost_per_1k: float = 0.0005, output_cost_per_1k: float = 0.0015):
+        self.input_cost_per_1k = input_cost_per_1k
+        self.output_cost_per_1k = output_cost_per_1k
+    
+    def estimate_tokens(self, text: str) -> int:
+        """Estimate token count from text (rough approximation)."""
+        return len(text) // 4 + 1
+    
+    def calculate_cost(self, input_tokens: int, output_tokens: int) -> float:
+        """Calculate cost based on input and output tokens."""
+        input_cost = (input_tokens / 1000) * self.input_cost_per_1k
+        output_cost = (output_tokens / 1000) * self.output_cost_per_1k
+        return input_cost + output_cost
 
-    COST_PER_1K_INPUT = 0.0005
-    COST_PER_1K_OUTPUT = 0.0
+
+class AnomalyDetector:
+    """Detects anomalies in span metrics."""
+    
+    def __init__(self, window_size: int = 100, threshold_sigma: float = 2.0):
+        self.window_size = window_size
+        self.threshold_sigma = threshold_sigma
+        self.metrics: Dict[str, List[float]] = defaultdict(list)
+        self._lock = threading.Lock()
+    
+    def record_metric(self, metric_name: str, value: float) -> None:
+        """Record a metric value."""
+        with self._lock:
+            self.metrics[metric_name].append(value)
+            if len(self.metrics[metric_name]) > self.window_size:
+                self.metrics[metric_name].pop(0)
+    
+    def detect_anomaly(self, metric_name: str, value: float) -> bool:
+        """Detect if a value is anomalous."""
+        with self._lock:
+            if metric_name not in self.metrics or len(self.metrics[metric_name]) < 10:
+                return False
+            
+            values = self.metrics[metric_name]
+            mean = sum(values) / len(values)
+            variance = sum((x - mean) ** 2 for x in values) / len(values)
+            stddev = variance ** 0.5
+            
+            if stddev == 0:
+                return False
+            
+            z_score = abs(value - mean) / stddev
+            return z_score > self.threshold_sigma
+    
+    def get_stats(self, metric_name: str) -> Dict[str, float]:
+        """Get statistics for a metric."""
+        with self._lock:
+            if metric_name not in self.metrics or not self.metrics[metric_name]:
+                return {"count": 0}
+            
+            values = self.metrics[metric_name]
+            mean = sum(values) / len(values)
+            variance = sum((x - mean
