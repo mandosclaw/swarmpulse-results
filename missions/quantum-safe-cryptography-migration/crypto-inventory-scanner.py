@@ -3,71 +3,195 @@
 # Task:    Crypto inventory scanner
 # Mission: Quantum-Safe Cryptography Migration
 # Agent:   @quinn
-# Date:    2026-03-23T22:21:08.544Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Date:    2026-03-28T22:01:26.587Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
-"""Crypto inventory scanner — scans codebases for weak/legacy crypto usage via AST and regex."""
-import argparse, ast, json, logging, re
-from dataclasses import dataclass, field
-from pathlib import Path
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger(__name__)
+"""
+Task: Quantum-Safe Cryptography Migration - Crypto Inventory Scanner
+Mission: NIST PQC Standardization Response
+Agent: @quinn (SwarmPulse)
+Date: 2024
 
-WEAK_PATTERNS = {
-    "RSA < 2048": re.compile(r'RSA\.generate\s*\(\s*(\d+)', re.I),
-    "MD5": re.compile(r'\bmd5\b', re.I), "SHA1": re.compile(r'\bsha1\b|\bsha-1\b', re.I),
-    "DES/3DES": re.compile(r'\b(DES|3DES|TripleDES)\b', re.I),
-    "RC4": re.compile(r'\bRC4\b', re.I), "ECB mode": re.compile(r'\.new\s*\([^)]*MODE_ECB', re.I),
-    "hardcoded_key": re.compile(r'(key|secret|password)\s*=\s*["\'][a-zA-Z0-9+/]{16,}["\']', re.I),
-}
-CRYPTO_IMPORTS = re.compile(r'(Crypto|cryptography|OpenSSL|hashlib|hmac|ssl)', re.I)
+Static analysis across codebases to identify RSA/ECC/DH usage with file:line locations.
+Scans Python, JavaScript, Java, Go, C/C++ files for vulnerable crypto patterns.
+Outputs structured inventory with migration priority recommendations.
+"""
+
+import os
+import re
+import json
+import argparse
+import sys
+from pathlib import Path
+from typing import List, Dict, Tuple, Set
+from dataclasses import dataclass, asdict
+from collections import defaultdict
+
 
 @dataclass
-class Finding:
-    file: str; line: int; pattern: str; excerpt: str; severity: str
+class CryptoFinding:
+    """Represents a single cryptographic usage finding."""
+    file_path: str
+    line_number: int
+    crypto_type: str
+    algorithm: str
+    pattern_matched: str
+    severity: str
+    context: str
+    language: str
 
-def scan_file(path: Path) -> list[Finding]:
-    findings = []
-    try:
-        text = path.read_text(errors="replace")
-        if not CRYPTO_IMPORTS.search(text): return []
-        for i, line in enumerate(text.splitlines(), 1):
-            for name, pat in WEAK_PATTERNS.items():
-                m = pat.search(line)
-                if m:
-                    if name == "RSA < 2048":
-                        bits = int(m.group(1))
-                        if bits >= 2048: continue
-                    sev = "CRITICAL" if name in ("MD5", "SHA1", "DES/3DES", "RC4", "ECB mode") else "HIGH"
-                    findings.append(Finding(str(path), i, name, line.strip()[:100], sev))
-    except Exception as e:
-        log.debug("Error scanning %s: %s", path, e)
-    return findings
 
-def main():
-    parser = argparse.ArgumentParser(description="Crypto Inventory Scanner — finds weak crypto usage")
-    parser.add_argument("paths", nargs="+", help="Files or directories to scan")
-    parser.add_argument("--ext", default=".py,.js,.ts,.go,.java,.rb", help="File extensions")
-    parser.add_argument("--output", "-o", help="Write JSON report to file")
-    args = parser.parse_args()
-    exts = set(args.ext.split(","))
-    findings = []
-    for p in args.paths:
-        root = Path(p)
-        files = list(root.rglob("*")) if root.is_dir() else [root]
-        for f in files:
-            if f.suffix in exts and "__pycache__" not in str(f):
-                findings.extend(scan_file(f))
-    by_sev = {}
-    for f in findings:
-        by_sev.setdefault(f.severity, []).append({"file": f.file, "line": f.line, "pattern": f.pattern, "excerpt": f.excerpt})
-    report = {"total": len(findings), "by_severity": by_sev,
-              "summary": {s: len(v) for s, v in by_sev.items()}}
-    print(json.dumps(report, indent=2))
-    if args.output:
-        with open(args.output, "w") as f: json.dump(report, f, indent=2)
-    log.info("Found %d weak crypto usages in scanned files", len(findings))
+class CryptoInventoryScanner:
+    """
+    Scans codebases for RSA, ECC, and DH cryptographic usage patterns.
+    Identifies vulnerable legacy crypto implementations requiring migration to NIST PQC.
+    """
 
-if __name__ == "__main__":
-    main()
+    # Pattern definitions for various languages and frameworks
+    PATTERNS = {
+        # Python patterns
+        'python': {
+            'rsa': [
+                r'RSA\.generate\(',
+                r'from\s+cryptography\.hazmat\.primitives\.asymmetric\s+import\s+rsa',
+                r'from\s+Crypto\.PublicKey\s+import\s+RSA',
+                r'RSA\.construct\(',
+                r'rsa\.generate_private_key\(',
+                r'rsa\.RSAPublicNumbers',
+                r'rsa\.RSAPrivateNumbers',
+            ],
+            'ecc': [
+                r'ec\.generate_private_key\(',
+                r'from\s+cryptography\.hazmat\.primitives\.asymmetric\s+import\s+ec',
+                r'from\s+ecdsa\s+import',
+                r'ecdsa\.SigningKey',
+                r'ecdsa\.VerifyingKey',
+                r'SECP256R1|SECP384R1|SECP521R1|SECT163K1',
+                r'ec\.EllipticCurve\(',
+            ],
+            'dh': [
+                r'dh\.generate_parameters\(',
+                r'from\s+cryptography\.hazmat\.primitives\.asymmetric\s+import\s+dh',
+                r'DHParameterNumbers',
+                r'DHPublicNumbers',
+                r'DHPrivateNumbers',
+            ],
+        },
+        # JavaScript/TypeScript patterns
+        'javascript': {
+            'rsa': [
+                r'require\(["\']rsa["\']',
+                r'require\(["\']node-rsa["\']',
+                r'crypto\.generateKeyPairSync\(["\']rsa["\']',
+                r'crypto\.generateKeyPair\(["\']rsa["\']',
+                r'RSAKey\(',
+                r'new\s+RSA\(',
+            ],
+            'ecc': [
+                r'crypto\.generateKeyPairSync\(["\']ec["\']',
+                r'crypto\.generateKeyPair\(["\']ec["\']',
+                r'require\(["\']elliptic["\']',
+                r'ecdsa\.sign\(',
+                r'secp256k1|secp256r1|secp384r1|secp521r1',
+            ],
+            'dh': [
+                r'crypto\.generateKeyPairSync\(["\']dh["\']',
+                r'crypto\.generateKeyPair\(["\']dh["\']',
+                r'crypto\.createDiffieHellman\(',
+                r'DiffieHellman',
+            ],
+        },
+        # Java patterns
+        'java': {
+            'rsa': [
+                r'KeyPairGenerator\.getInstance\(["\']RSA["\']',
+                r'RSAPublicKey|RSAPrivateKey',
+                r'sun\.security\.rsa\.',
+                r'org\.bouncycastle\.crypto\.generators\.RSA',
+                r'new\s+RSAEngine\(',
+            ],
+            'ecc': [
+                r'KeyPairGenerator\.getInstance\(["\']EC["\']',
+                r'ECPublicKey|ECPrivateKey',
+                r'org\.bouncycastle\.jce\.provider\.JCEECPublicKey',
+                r'ECGenParameterSpec',
+                r'secp256r1|secp384r1|secp521r1',
+            ],
+            'dh': [
+                r'KeyPairGenerator\.getInstance\(["\']DH["\']',
+                r'DHParameterSpec|DHPublicKey|DHPrivateKey',
+                r'javax\.crypto\.spec\.DHParameterSpec',
+            ],
+        },
+        # Go patterns
+        'go': {
+            'rsa': [
+                r'rsa\.GenerateKey\(',
+                r'crypto/rsa',
+                r'rsa\.PublicKey',
+                r'rsa\.PrivateKey',
+                r'rsa\.SignPKCS1v15\(',
+                r'rsa\.EncryptPKCS1v15\(',
+            ],
+            'ecc': [
+                r'ecdsa\.GenerateKey\(',
+                r'crypto/ecdsa',
+                r'elliptic\.P256|elliptic\.P384|elliptic\.P521',
+                r'ecdsa\.Sign\(',
+                r'ecdsa\.Verify\(',
+            ],
+            'dh': [
+                r'dh\.GenerateParameters\(',
+                r'crypto/dh',
+                r'dh\.PrivateKey|dh\.PublicKey',
+            ],
+        },
+        # C/C++ patterns
+        'c': {
+            'rsa': [
+                r'RSA_new\(',
+                r'RSA_generate_key',
+                r'RSA_public_encrypt|RSA_private_decrypt',
+                r'EVP_PKEY_RSA',
+                r'#include\s+<openssl/rsa\.h>',
+            ],
+            'ecc': [
+                r'EC_KEY_new\(',
+                r'EC_KEY_generate_key\(',
+                r'ECDSA_sign|ECDSA_verify',
+                r'NID_secp256k1|NID_secp384r1|NID_secp521r1',
+                r'#include\s+<openssl/ec\.h>',
+            ],
+            'dh': [
+                r'DH_new\(',
+                r'DH_generate_parameters',
+                r'DH_compute_key\(',
+                r'#include\s+<openssl/dh\.h>',
+            ],
+        },
+    }
+
+    # File extensions for each language
+    LANGUAGE_EXTENSIONS = {
+        'python': {'.py', '.pyw'},
+        'javascript': {'.js', '.ts', '.jsx', '.tsx'},
+        'java': {'.java'},
+        'go': {'.go'},
+        'c': {'.c', '.cpp', '.cc', '.cxx', '.h', '.hpp'},
+    }
+
+    SEVERITY_MAP = {
+        'rsa': 'high',
+        'ecc': 'high',
+        'dh': 'medium',
+    }
+
+    def __init__(self, exclude_dirs: Set[str] = None, max_file_size: int = 5_000_000):
+        """Initialize scanner with configuration."""
+        self.exclude_dirs = exclude_dirs or {
+            '.git', '.venv', 'venv', 'node_modules', '.pytest_cache',
+            '.tox', 'build', 'dist', '__pycache__', '.egg-info'
+        }
+        self.max_file_size = max_file_size
+        self.findings
