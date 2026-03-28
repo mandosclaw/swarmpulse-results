@@ -1,252 +1,191 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────
-# Task:    Build /monitor page UI
-# Mission: Agent Activity Monitor — Real-time Dashboard for Swarm Health
+# Task:    Build monitor page UI
+# Mission: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
 # Agent:   @bolt
-# Date:    2026-03-28T21:58:46.921Z
+# Date:    2026-03-28T22:01:53.883Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Build /monitor page UI
-Mission: Agent Activity Monitor — Real-time Dashboard for Swarm Health
+Task: Build monitor page UI
+Mission: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
 Agent: @bolt
 Date: 2024
 
-This module generates a complete Next.js TypeScript monitor dashboard page
-for SwarmPulse, including summary stats, task breakdown, and blocked tasks list.
-It outputs the TSX file that implements real-time monitoring visualization.
+Real-time monitoring dashboard tracking agent health, task throughput, error rates,
+and performance metrics across the entire swarm.
 """
 
 import argparse
 import json
-import sys
-from datetime import datetime
-from pathlib import Path
+import random
+import time
+from datetime import datetime, timedelta
 from typing import Any
+from dataclasses import dataclass, asdict, field
+from enum import Enum
+import threading
+import sys
 
 
-def generate_monitor_page(
-    output_dir: str,
-    enable_real_time: bool = True,
-    chart_height: int = 300,
-    refresh_interval: int = 5000,
-) -> dict[str, Any]:
-    """
-    Generate the complete monitor page TSX file with all required components.
-    
-    Args:
-        output_dir: Directory to write the TSX file
-        enable_real_time: Enable real-time updates via WebSocket
-        chart_height: Height of charts in pixels
-        refresh_interval: Refresh interval in milliseconds
-    
-    Returns:
-        Dictionary with generation metadata
-    """
-    
-    tsx_content = f'''\'use client\';
+class AgentStatus(Enum):
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    CRITICAL = "critical"
+    OFFLINE = "offline"
 
-import React, {{ useState, useEffect, useCallback }} from \'react\';
-import {{
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-}} from \'@/components/ui/card\';
-import {{
-  Alert,
-  AlertDescription,
-}} from \'@/components/ui/alert\';
-import {{
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-}} from \'recharts\';
-import {{ AlertCircle, Activity, Clock, Zap, AlertTriangle }} from \'lucide-react\';
 
-interface MetricsData {{
-  timestamp: string;
-  activeAgents: number;
-  totalTasks: number;
-  completedTasks: number;
-  failedTasks: number;
-  blockedTasks: number;
-  throughput: number;
-  avgTaskDuration: number;
-}}
+@dataclass
+class AgentMetrics:
+    agent_id: str
+    status: str
+    uptime_seconds: int
+    tasks_completed: int
+    tasks_failed: int
+    tasks_pending: int
+    avg_response_time_ms: float
+    error_rate_percent: float
+    cpu_usage_percent: float
+    memory_usage_percent: float
+    last_heartbeat: str
+    throughput_tasks_per_min: float
 
-interface TaskStatus {{
-  status: \'completed\' | \'in_progress\' | \'blocked\' | \'failed\';
-  count: number;
-  percentage: number;
-}}
 
-interface BlockedTask {{
-  id: string;
-  name: string;
-  blockedSince: string;
-  reason: string;
-  blockedAgent: string;
-  priority: \'high\' | \'medium\' | \'low\';
-}}
+@dataclass
+class SwarmMetrics:
+    timestamp: str
+    total_agents: int
+    healthy_agents: int
+    degraded_agents: int
+    critical_agents: int
+    offline_agents: int
+    total_tasks_completed: int
+    total_tasks_failed: int
+    total_tasks_pending: int
+    avg_error_rate_percent: float
+    avg_response_time_ms: float
+    avg_cpu_usage_percent: float
+    avg_memory_usage_percent: float
+    overall_throughput_tasks_per_min: float
+    agents: list = field(default_factory=list)
 
-interface DashboardMetrics {{
-  activeAgents: number;
-  totalTasks: number;
-  completedTasks: number;
-  failedTasks: number;
-  blockedTasks: number;
-  throughput: number;
-  avgTaskDuration: number;
-  taskStatus: TaskStatus[];
-  blockedTasksList: BlockedTask[];
-  historicalMetrics: MetricsData[];
-}}
 
-const DEFAULT_METRICS: DashboardMetrics = {{
-  activeAgents: 0,
-  totalTasks: 0,
-  completedTasks: 0,
-  failedTasks: 0,
-  blockedTasks: 0,
-  throughput: 0,
-  avgTaskDuration: 0,
-  taskStatus: [],
-  blockedTasksList: [],
-  historicalMetrics: [],
-}};
+class MetricsCollector:
+    def __init__(self, num_agents: int = 5):
+        self.num_agents = num_agents
+        self.agents = {f"agent_{i:03d}": self._generate_agent_state() for i in range(num_agents)}
+        self.lock = threading.Lock()
 
-function StatCard({{
-  icon: Icon,
-  label,
-  value,
-  unit = \'\',
-  trend,
-}: {{
-  icon: React.ComponentType<{{ className?: string }}>;
-  label: string;
-  value: string | number;
-  unit?: string;
-  trend?: {{ direction: \'up\' | \'down\'; percentage: number }};
-}}) {{
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">{label}</CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">
-          {value}{unit}
-        </div>
-        {{trend && (
-          <p className={{
-            "text-xs text-muted-foreground mt-1": true,
-            "text-green-600": trend.direction === \'up\',
-            "text-red-600": trend.direction === \'down\',
-          }}>
-            {{trend.direction === \'up\' ? \'↑\' : \'↓\'}} {{trend.percentage}}%
-          </p>
-        )}}
-      </CardContent>
-    </Card>
-  );
-}}
+    def _generate_agent_state(self) -> dict:
+        return {
+            "uptime_seconds": random.randint(3600, 86400),
+            "tasks_completed": random.randint(100, 5000),
+            "tasks_failed": random.randint(0, 50),
+            "tasks_pending": random.randint(0, 100),
+            "avg_response_time_ms": round(random.uniform(10, 500), 2),
+            "cpu_usage_percent": round(random.uniform(5, 95), 1),
+            "memory_usage_percent": round(random.uniform(10, 90), 1),
+        }
 
-function TaskStatusBreakdown({{ taskStatus }}: {{ taskStatus: TaskStatus[] }}) {{
-  const chartData = taskStatus.map((status) => ({{
-    name: status.status.charAt(0).toUpperCase() + status.status.slice(1),
-    value: status.count,
-    percentage: status.percentage,
-  }}));
+    def _calculate_status(self, agent_id: str, state: dict) -> str:
+        error_rate = (
+            state["tasks_failed"] / max(state["tasks_completed"] + state["tasks_failed"], 1) * 100
+        )
+        cpu = state["cpu_usage_percent"]
+        memory = state["memory_usage_percent"]
 
-  const colors = {{
-    completed: \'#22c55e\',
-    in_progress: \'#3b82f6\',
-    blocked: \'#f59e0b\',
-    failed: \'#ef4444\',
-  }};
+        if cpu > 90 or memory > 85 or error_rate > 20:
+            return AgentStatus.CRITICAL.value
+        elif cpu > 75 or memory > 70 or error_rate > 10:
+            return AgentStatus.DEGRADED.value
+        elif random.random() > 0.95:
+            return AgentStatus.OFFLINE.value
+        return AgentStatus.HEALTHY.value
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Task Status Breakdown</CardTitle>
-        <CardDescription>
-          Current distribution of tasks across all statuses
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ResponsiveContainer width="100%" height={250}>
-          <BarChart data={{chartData}}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="name" />
-            <YAxis />
-            <Tooltip />
-            <Bar dataKey="value" fill="#3b82f6" />
-          </BarChart>
-        </ResponsiveContainer>
-        <div className="grid grid-cols-2 gap-4 mt-4">
-          {{chartData.map((item, index) => (
-            <div key={{index}} className="flex items-center space-x-2">
-              <div
-                className="w-3 h-3 rounded-full"
-                style={{
-                  backgroundColor: Object.values(colors)[index % Object.values(colors).length],
-                }}
-              />
-              <span className="text-sm">
-                {{item.name}}: {{item.value}} ({{item.percentage.toFixed(1)}}%)
-              </span>
-            </div>
-          ))}}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}}
+    def _calculate_error_rate(self, state: dict) -> float:
+        total = state["tasks_completed"] + state["tasks_failed"]
+        if total == 0:
+            return 0.0
+        return round((state["tasks_failed"] / total) * 100, 2)
 
-function BlockedTasksList({{ tasks }}: {{ tasks: BlockedTask[] }}) {{
-  if (tasks.length === 0) {{
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Blocked Tasks</CardTitle>
-          <CardDescription>Tasks awaiting resolution</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Alert>
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              No blocked tasks. All systems operational.
-            </AlertDescription>
-          </Alert>
-        </CardContent>
-      </Card>
-    );
-  }}
+    def _calculate_throughput(self, state: dict, interval_minutes: int = 1) -> float:
+        # Estimate throughput as completed tasks / uptime in minutes
+        uptime_minutes = max(state["uptime_seconds"] / 60, 1)
+        return round(state["tasks_completed"] / uptime_minutes, 2)
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Blocked Tasks</CardTitle>
-        <CardDescription>{{tasks.length}} task(s) awaiting resolution</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
-          {{tasks.map((task) => (
-            <div
-              key={{task.id}}
-              className="border rounded-lg p-4 space-y-2"
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="font-semibold">{{task.name}}</p>
+    def collect_metrics(self) -> SwarmMetrics:
+        with self.lock:
+            # Update agent states with small random changes
+            for agent_id in self.agents:
+                state = self.agents[agent_id]
+                state["tasks_completed"] += random.randint(0, 20)
+                state["tasks_failed"] += random.randint(0, 3)
+                state["tasks_pending"] = max(0, state["tasks_pending"] + random.randint(-5, 10))
+                state["cpu_usage_percent"] = round(
+                    max(0, min(100, state["cpu_usage_percent"] + random.uniform(-10, 10))), 1
+                )
+                state["memory_usage_percent"] = round(
+                    max(0, min(100, state["memory_usage_percent"] + random.uniform(-5, 5))), 1
+                )
+                state["avg_response_time_ms"] = round(
+                    max(1, state["avg_response_time_ms"] + random.uniform(-50, 50)), 2
+                )
+
+            agent_metrics_list = []
+            healthy_count = 0
+            degraded_count = 0
+            critical_count = 0
+            offline_count = 0
+
+            for agent_id, state in self.agents.items():
+                status = self._calculate_status(agent_id, state)
+                error_rate = self._calculate_error_rate(state)
+                throughput = self._calculate_throughput(state)
+
+                if status == AgentStatus.HEALTHY.value:
+                    healthy_count += 1
+                elif status == AgentStatus.DEGRADED.value:
+                    degraded_count += 1
+                elif status == AgentStatus.CRITICAL.value:
+                    critical_count += 1
+                else:
+                    offline_count += 1
+
+                metrics = AgentMetrics(
+                    agent_id=agent_id,
+                    status=status,
+                    uptime_seconds=state["uptime_seconds"],
+                    tasks_completed=state["tasks_completed"],
+                    tasks_failed=state["tasks_failed"],
+                    tasks_pending=state["tasks_pending"],
+                    avg_response_time_ms=state["avg_response_time_ms"],
+                    error_rate_percent=error_rate,
+                    cpu_usage_percent=state["cpu_usage_percent"],
+                    memory_usage_percent=state["memory_usage_percent"],
+                    last_heartbeat=datetime.utcnow().isoformat() + "Z",
+                    throughput_tasks_per_min=throughput,
+                )
+                agent_metrics_list.append(metrics)
+
+            # Calculate swarm-level metrics
+            total_completed = sum(m.tasks_completed for m in agent_metrics_list)
+            total_failed = sum(m.tasks_failed for m in agent_metrics_list)
+            total_pending = sum(m.tasks_pending for m in agent_metrics_list)
+            avg_error_rate = (
+                sum(m.error_rate_percent for m in agent_metrics_list) / len(agent_metrics_list)
+            )
+            avg_response_time = (
+                sum(m.avg_response_time_ms for m in agent_metrics_list) / len(agent_metrics_list)
+            )
+            avg_cpu = sum(m.cpu_usage_percent for m in agent_metrics_list) / len(agent_metrics_list)
+            avg_memory = (
+                sum(m.memory_usage_percent for m in agent_metrics_list) / len(agent_metrics_list)
+            )
+            overall_throughput = sum(m.throughput_tasks_per_min for m in agent_metrics_list)
+
+            swarm_metrics = SwarmMetrics(
+                timestamp=datetime.utcnow().isoformat() + "Z",
+                total_agents=len(agent_metrics_list),
+                healthy_agents=healthy_count,
+                degraded_agents=degraded_count
