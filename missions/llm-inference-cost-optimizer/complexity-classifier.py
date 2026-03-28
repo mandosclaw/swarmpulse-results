@@ -2,165 +2,176 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    Complexity classifier
 # Mission: LLM Inference Cost Optimizer
-# Agent:   @sue
-# Date:    2026-03-23T18:09:28.459Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Agent:   @quinn
+# Date:    2026-03-28T22:00:28.250Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
-"""Classify prompts as simple/medium/complex using token count, regex patterns, keyword density."""
+"""
+Task: Complexity classifier for LLM inference cost optimization
+Mission: LLM Inference Cost Optimizer
+Agent: @quinn
+Date: 2024
+"""
 
 import argparse
 import json
-import logging
+import math
 import re
 import sys
-from dataclasses import dataclass, field
-from typing import Any
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
-
-COMPLEX_KEYWORDS = {"analyze", "compare", "evaluate", "synthesize", "critique", "design", "implement", "architect", "research", "comprehensive", "detailed", "in-depth", "multi-step", "reasoning", "prove", "derive", "algorithm", "optimize", "explain why", "how does", "what are the implications", "step by step"}
-
-MEDIUM_KEYWORDS = {"summarize", "describe", "explain", "list", "what is", "how to", "define", "outline", "pros and cons", "difference between", "advantages", "disadvantages", "overview", "example"}
-
-SIMPLE_KEYWORDS = {"translate", "fix", "format", "convert", "calculate", "spell", "grammar", "rewrite", "shorter", "longer", "complete", "fill in"}
-
-CODE_INDICATORS = re.compile(r'```|def |class |function |import |require\(|<\w+>|SELECT |CREATE |ALTER ')
-MATH_INDICATORS = re.compile(r'\b(?:integral|derivative|matrix|vector|probability|statistics|regression|calculus|differential|eigenvalue)\b', re.I)
-MULTI_PART = re.compile(r'\b(?:also|additionally|furthermore|moreover|first|second|third|finally|step \d)\b', re.I)
+from collections import Counter
+from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Tuple, List, Dict, Any
+import random
+import string
 
 
 @dataclass
-class ClassificationResult:
+class ComplexityScore:
+    """Complexity analysis result."""
     prompt: str
-    classification: str
-    confidence: float
-    token_estimate: int
-    complexity_score: float
-    signals: list[str]
-    recommended_model: str
+    score: float
+    category: str
+    reasoning: Dict[str, Any]
+    recommendation: str
 
 
-def estimate_tokens(text: str) -> int:
-    return max(1, len(text.split()) * 4 // 3 + len(text) // 6)
+class LexicalAnalyzer:
+    """Analyzes lexical properties of text."""
+    
+    def __init__(self):
+        self.technical_keywords = {
+            'algorithm', 'regression', 'neural', 'tensor', 'gradient',
+            'optimization', 'convergence', 'probability', 'distribution',
+            'matrix', 'eigenvalue', 'derivative', 'integral', 'topology',
+            'cryptography', 'blockchain', 'quantum', 'entropy', 'hash',
+            'microservice', 'kubernetes', 'docker', 'pipeline', 'etl',
+            'api', 'database', 'schema', 'normalization', 'denormalization',
+            'byzantine', 'consensus', 'protocol', 'handshake', 'ssl',
+            'regression', 'classification', 'clustering', 'anomaly',
+            'reinforcement', 'supervised', 'unsupervised', 'transfer',
+            'framework', 'middleware', 'abstraction', 'inheritance',
+            'polymorphism', 'encapsulation', 'refactoring', 'lint'
+        }
+        
+        self.domain_patterns = {
+            'medical': ['diagnosis', 'treatment', 'symptom', 'disease', 'clinical', 'patient', 'therapy'],
+            'legal': ['contract', 'litigation', 'statute', 'jurisdiction', 'precedent', 'compliance', 'regulation'],
+            'financial': ['portfolio', 'derivative', 'hedge', 'arbitrage', 'valuation', 'yield', 'liquidity'],
+            'scientific': ['hypothesis', 'experiment', 'methodology', 'peer-review', 'statistical', 'control'],
+            'code': ['function', 'class', 'loop', 'variable', 'method', 'return', 'import', 'module']
+        }
+    
+    def count_sentences(self, text: str) -> int:
+        """Count sentences in text."""
+        return len(re.split(r'[.!?]+', text.strip())) - 1
+    
+    def count_words(self, text: str) -> int:
+        """Count words in text."""
+        return len(text.split())
+    
+    def average_word_length(self, text: str) -> float:
+        """Calculate average word length."""
+        words = text.split()
+        if not words:
+            return 0.0
+        return sum(len(w) for w in words) / len(words)
+    
+    def detect_technical_terms(self, text: str) -> float:
+        """Score based on technical term density."""
+        text_lower = text.lower()
+        words = set(text_lower.split())
+        matches = len(words & self.technical_keywords)
+        total = len(words)
+        return matches / max(total, 1)
+    
+    def detect_domain_specificity(self, text: str) -> Dict[str, float]:
+        """Detect domain-specific terminology."""
+        text_lower = text.lower()
+        scores = {}
+        for domain, terms in self.domain_patterns.items():
+            matches = sum(1 for term in terms if term in text_lower)
+            scores[domain] = matches / len(terms)
+        return scores
+    
+    def calculate_lexical_diversity(self, text: str) -> float:
+        """Calculate type-token ratio (vocabulary diversity)."""
+        words = text.lower().split()
+        if not words:
+            return 0.0
+        unique_words = len(set(words))
+        return unique_words / len(words)
+    
+    def count_special_tokens(self, text: str) -> Dict[str, int]:
+        """Count special tokens and structures."""
+        return {
+            'brackets': len(re.findall(r'[\[\]{}<>()]', text)),
+            'numbers': len(re.findall(r'\d+', text)),
+            'urls': len(re.findall(r'https?://\S+', text)),
+            'emails': len(re.findall(r'\S+@\S+', text)),
+            'code_blocks': len(re.findall(r'```|`[^`]*`', text)),
+            'math_notation': len(re.findall(r'[∑∏∫√∞±≤≥=≠]|\\[a-z]+', text)),
+        }
 
 
-def compute_keyword_density(text: str, keyword_set: set[str]) -> float:
-    text_lower = text.lower()
-    words = text_lower.split()
-    if not words:
-        return 0.0
-    hits = sum(1 for phrase in keyword_set if phrase in text_lower)
-    return hits / max(len(words) * 0.1, 1)
+class StructuralAnalyzer:
+    """Analyzes structural complexity of prompts."""
+    
+    def detect_nested_structures(self, text: str) -> int:
+        """Detect nesting depth in brackets/parentheses."""
+        max_depth = 0
+        current_depth = 0
+        for char in text:
+            if char in '([{':
+                current_depth += 1
+                max_depth = max(max_depth, current_depth)
+            elif char in ')]}':
+                current_depth = max(0, current_depth - 1)
+        return max_depth
+    
+    def count_logical_operators(self, text: str) -> int:
+        """Count logical operators and connectors."""
+        operators = ['and', 'or', 'not', 'if', 'then', 'else', 'elif', 'unless', 'while', 'for']
+        text_lower = text.lower()
+        count = sum(len(re.findall(r'\b' + op + r'\b', text_lower)) for op in operators)
+        return count
+    
+    def count_questions(self, text: str) -> int:
+        """Count question marks and interrogative structures."""
+        return len(re.findall(r'\?', text))
+    
+    def count_instructions(self, text: str) -> int:
+        """Count imperative/instruction patterns."""
+        imperatives = ['calculate', 'find', 'solve', 'analyze', 'explain', 'list', 'describe',
+                      'compare', 'contrast', 'summarize', 'evaluate', 'predict', 'generate']
+        text_lower = text.lower()
+        count = sum(len(re.findall(r'\b' + imp + r'\b', text_lower)) for imp in imperatives)
+        return count
+    
+    def count_constraints(self, text: str) -> int:
+        """Count constraint patterns."""
+        constraints = ['must', 'should', 'cannot', 'only', 'exactly', 'at least', 'no more than',
+                      'within', 'between', 'require', 'constraint', 'limit', 'maximum', 'minimum']
+        text_lower = text.lower()
+        count = sum(len(re.findall(r'\b' + c + r'\b', text_lower)) for c in constraints)
+        return count
 
 
-def classify_prompt(prompt: str) -> ClassificationResult:
-    signals: list[str] = []
-    score = 0.0
-
-    tokens = estimate_tokens(prompt)
-    if tokens > 500:
-        score += 3.0
-        signals.append(f"long_prompt:{tokens}_tokens")
-    elif tokens > 200:
-        score += 1.5
-        signals.append(f"medium_prompt:{tokens}_tokens")
-    elif tokens < 30:
-        score -= 0.5
-        signals.append(f"short_prompt:{tokens}_tokens")
-
-    complex_density = compute_keyword_density(prompt, COMPLEX_KEYWORDS)
-    if complex_density > 0.5:
-        score += 3.0
-        signals.append(f"complex_keywords:density={complex_density:.2f}")
-    elif complex_density > 0.2:
-        score += 1.5
-        signals.append(f"moderate_complex_keywords")
-
-    medium_density = compute_keyword_density(prompt, MEDIUM_KEYWORDS)
-    if medium_density > 0.3:
-        score += 1.0
-        signals.append(f"medium_keywords")
-
-    simple_density = compute_keyword_density(prompt, SIMPLE_KEYWORDS)
-    if simple_density > 0.3:
-        score -= 1.0
-        signals.append(f"simple_keywords")
-
-    if CODE_INDICATORS.search(prompt):
-        score += 2.0
-        signals.append("code_indicators")
-
-    if MATH_INDICATORS.search(prompt):
-        score += 2.5
-        signals.append("math_indicators")
-
-    multi_parts = len(MULTI_PART.findall(prompt))
-    if multi_parts >= 3:
-        score += 2.0
-        signals.append(f"multi_part:{multi_parts}_connectors")
-    elif multi_parts >= 1:
-        score += 0.5
-
-    question_marks = prompt.count("?")
-    if question_marks >= 3:
-        score += 1.0
-        signals.append(f"multi_question:{question_marks}_questions")
-
-    if score >= 4.0:
-        classification = "complex"
-        model = "gpt-4"
-        confidence = min(0.95, 0.7 + score * 0.02)
-    elif score >= 1.5:
-        classification = "medium"
-        model = "gpt-3.5-turbo"
-        confidence = min(0.90, 0.65 + abs(score - 2.5) * 0.05)
-    else:
-        classification = "simple"
-        model = "gpt-3.5-turbo"
-        confidence = min(0.95, 0.75 - score * 0.05)
-
-    return ClassificationResult(prompt=prompt[:100] + "..." if len(prompt) > 100 else prompt, classification=classification, confidence=round(confidence, 3), token_estimate=tokens, complexity_score=round(score, 2), signals=signals, recommended_model=model)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Prompt complexity classifier for LLM routing")
-    parser.add_argument("--prompt", default=None, help="Single prompt to classify")
-    parser.add_argument("--input", default=None, help="JSON file with list of prompts")
-    parser.add_argument("--output", default="classifications.json")
-    parser.add_argument("--verbose", action="store_true")
-    args = parser.parse_args()
-
-    if args.prompt:
-        prompts = [args.prompt]
-    elif args.input:
-        with open(args.input) as f:
-            prompts = json.load(f)
-    else:
-        prompts = [
-            "What is 2+2?",
-            "Translate 'hello' to French",
-            "Summarize this article in 3 bullet points",
-            "Explain how neural networks work",
-            "Write a comprehensive analysis comparing transformer architectures, including attention mechanisms, positional encoding, and multi-head attention. Also discuss the computational complexity and compare BERT vs GPT approaches with examples.",
-            "Fix this Python syntax error: print 'hello'",
-            "Design a distributed system for real-time event processing at 1M events/second, considering fault tolerance, exactly-once delivery semantics, and horizontal scaling strategies.",
-        ]
-
-    results = []
-    for prompt in prompts:
-        result = classify_prompt(prompt)
-        results.append({"prompt": result.prompt, "classification": result.classification, "confidence": result.confidence, "complexity_score": result.complexity_score, "token_estimate": result.token_estimate, "recommended_model": result.recommended_model, "signals": result.signals})
-        logger.info(f"[{result.classification.upper()}] {result.prompt[:60]}... (score={result.complexity_score}, model={result.recommended_model})")
-
-    summary = {"total": len(results), "simple": sum(1 for r in results if r["classification"] == "simple"), "medium": sum(1 for r in results if r["classification"] == "medium"), "complex": sum(1 for r in results if r["classification"] == "complex")}
-
-    with open(args.output, "w") as f:
-        json.dump({"summary": summary, "results": results}, f, indent=2)
-
-    print(json.dumps({"summary": summary, "output": args.output}, indent=2))
-
-
-if __name__ == "__main__":
-    main()
+class ComplexityClassifier:
+    """BERT-tiny-inspired lightweight complexity classifier."""
+    
+    def __init__(self, model_weights: Dict[str, float] = None):
+        """Initialize with optional custom weights."""
+        self.lexical = LexicalAnalyzer()
+        self.structural = StructuralAnalyzer()
+        
+        self.weights = model_weights or {
+            'word_count': 0.08,
+            'sentence_count': 0.07,
+            'avg_word_length': 0.06,
+            'technical_terms': 0.15,
+            'domain_specificity': 0.12,
+            'lexical_diversity': 0.08,
+            'nested_structures': 0.10,
+            'logical_operators':
