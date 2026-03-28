@@ -3,264 +3,214 @@
 # Task:    Package maintainer change alerter
 # Mission: OSS Supply Chain Compromise Monitor
 # Agent:   @quinn
-# Date:    2026-03-23T22:27:32.336Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Date:    2026-03-28T22:01:39.446Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Package maintainer change alerter for PyPI and npm.
+Task: Package maintainer change alerter
+Mission: OSS Supply Chain Compromise Monitor
+Agent: @quinn
+Date: 2025-01-15
 
-Monitors critical dependencies for maintainer ownership changes,
-fetches current metadata, compares against baseline, and reports diffs.
-
-Usage:
-    python3 maintainer_alerter.py --registry pypi --packages requests,urllib3 --output report.json
-    python3 maintainer_alerter.py --registry npm --packages react,lodash --baseline baseline.json
+Monitor PyPI and npm for maintainer ownership changes on critical dependencies,
+sending diff reports.
 """
 
 import argparse
-import asyncio
-import dataclasses
 import json
-import logging
 import sys
-from datetime import datetime
-from typing import Optional
-
-try:
-    import aiohttp
-except ImportError:
-    print("Error: aiohttp required. Install with: pip install aiohttp", file=sys.stderr)
-    sys.exit(1)
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
-
-
-@dataclasses.dataclass
-class MaintainerInfo:
-    """Current maintainer data for a package."""
-    name: str
-    registry: str
-    version: str
-    maintainers: list
-    last_updated: str
-    homepage: Optional[str] = None
-    description: Optional[str] = None
+import time
+import hashlib
+import sqlite3
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional, Dict, List, Any
+from dataclasses import dataclass, asdict
+import urllib.request
+import urllib.error
+import email.utils
 
 
-@dataclasses.dataclass
-class MaintainerChange:
-    """Represents a detected change in maintainers."""
-    package: str
-    registry: str
-    added: list
-    removed: list
+@dataclass
+class MaintainerSnapshot:
+    """Represents a snapshot of package maintainers at a point in time."""
+    package_name: str
+    registry: str  # 'pypi' or 'npm'
     timestamp: str
-    previous_version: str
-    current_version: str
+    maintainers: List[str]
+    snapshot_hash: str
 
 
-class PackageMonitor:
-    """Monitor PyPI and npm for maintainer changes."""
+@dataclass
+class MaintainerAlert:
+    """Alert for maintainer changes."""
+    package_name: str
+    registry: str
+    timestamp: str
+    alert_type: str  # 'added', 'removed', 'transfer'
+    old_maintainers: List[str]
+    new_maintainers: List[str]
+    changes: Dict[str, Any]
+    severity: str  # 'info', 'warning', 'critical'
 
-    def __init__(self, registry: str = "pypi"):
-        self.registry = registry.lower()
-        self.base_url = self._get_base_url()
-        self.timeout = aiohttp.ClientTimeout(total=10)
 
-    def _get_base_url(self) -> str:
-        """Return API base URL for registry."""
-        if self.registry == "npm":
-            return "https://registry.npmjs.org"
-        elif self.registry == "pypi":
-            return "https://pypi.org/pypi"
+class PyPIFetcher:
+    """Fetch package information from PyPI API."""
+
+    def __init__(self, timeout: int = 30):
+        self.timeout = timeout
+        self.base_url = "https://pypi.org/pypi"
+
+    def get_package_info(self, package_name: str) -> Optional[Dict[str, Any]]:
+        """Fetch package info from PyPI."""
+        try:
+            url = f"{self.base_url}/{package_name}/json"
+            req = urllib.request.Request(url)
+            req.add_header('User-Agent', 'SwarmPulse-OSS-Monitor/1.0')
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                return json.loads(response.read().decode('utf-8'))
+        except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError):
+            return None
+
+    def extract_maintainers(self, package_info: Dict[str, Any]) -> List[str]:
+        """Extract maintainer emails from PyPI package info."""
+        maintainers = set()
+        if 'info' in package_info:
+            maintainer = package_info['info'].get('maintainer_email', '')
+            if maintainer:
+                maintainers.add(maintainer)
+        if 'releases' in package_info:
+            for release_info in package_info['releases'].values():
+                for file_info in release_info:
+                    if 'upload_time_iso_8601' in file_info:
+                        if file_info.get('yanked', False):
+                            continue
+                        uploader = file_info.get('filename', '').split('-')[0]
+                        if uploader:
+                            maintainers.add(uploader)
+        return sorted(list(maintainers))
+
+
+class NPMFetcher:
+    """Fetch package information from npm registry."""
+
+    def __init__(self, timeout: int = 30):
+        self.timeout = timeout
+        self.base_url = "https://registry.npmjs.org"
+
+    def get_package_info(self, package_name: str) -> Optional[Dict[str, Any]]:
+        """Fetch package info from npm registry."""
+        try:
+            url = f"{self.base_url}/{urllib.parse.quote(package_name)}"
+            req = urllib.request.Request(url)
+            req.add_header('User-Agent', 'SwarmPulse-OSS-Monitor/1.0')
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                return json.loads(response.read().decode('utf-8'))
+        except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError):
+            return None
+
+    def extract_maintainers(self, package_info: Dict[str, Any]) -> List[str]:
+        """Extract maintainer identities from npm package info."""
+        maintainers = set()
+        if 'maintainers' in package_info:
+            for maintainer in package_info['maintainers']:
+                if isinstance(maintainer, dict) and 'name' in maintainer:
+                    maintainers.add(maintainer['name'])
+        if 'contributors' in package_info:
+            for contributor in package_info['contributors']:
+                if isinstance(contributor, dict) and 'name' in contributor:
+                    maintainers.add(contributor['name'])
+        return sorted(list(maintainers))
+
+
+import urllib.parse
+
+
+class MaintainerChangeMonitor:
+    """Monitor maintainer changes across registries."""
+
+    def __init__(self, db_path: str = ".maintainer_snapshots.db"):
+        self.db_path = db_path
+        self.pypi_fetcher = PyPIFetcher()
+        self.npm_fetcher = NPMFetcher()
+        self._init_db()
+
+    def _init_db(self) -> None:
+        """Initialize SQLite database for snapshots."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS maintainer_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                package_name TEXT NOT NULL,
+                registry TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                maintainers TEXT NOT NULL,
+                snapshot_hash TEXT NOT NULL,
+                UNIQUE(package_name, registry, snapshot_hash)
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def _compute_hash(self, maintainers: List[str]) -> str:
+        """Compute hash of maintainer list."""
+        content = '|'.join(maintainers)
+        return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+    def _save_snapshot(self, snapshot: MaintainerSnapshot) -> None:
+        """Save snapshot to database."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO maintainer_snapshots
+                (package_name, registry, timestamp, maintainers, snapshot_hash)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                snapshot.package_name,
+                snapshot.registry,
+                snapshot.timestamp,
+                json.dumps(snapshot.maintainers),
+                snapshot.snapshot_hash
+            ))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            pass
+        finally:
+            conn.close()
+
+    def _get_last_snapshot(self, package_name: str, registry: str) -> Optional[MaintainerSnapshot]:
+        """Retrieve last snapshot for a package."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT package_name, registry, timestamp, maintainers, snapshot_hash
+            FROM maintainer_snapshots
+            WHERE package_name = ? AND registry = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """, (package_name, registry))
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return None
+        return MaintainerSnapshot(
+            package_name=row[0],
+            registry=row[1],
+            timestamp=row[2],
+            maintainers=json.loads(row[3]),
+            snapshot_hash=row[4]
+        )
+
+    def monitor_package(self, package_name: str, registry: str) -> Optional[MaintainerAlert]:
+        """Monitor a package for maintainer changes."""
+        if registry.lower() == 'pypi':
+            fetcher = self.pypi_fetcher
+        elif registry.lower() == 'npm':
+            fetcher = self.npm_fetcher
         else:
-            raise ValueError(f"Unsupported registry: {self.registry}")
-
-    async def fetch_pypi_package(self, session: aiohttp.ClientSession, package: str) -> Optional[MaintainerInfo]:
-        """Fetch PyPI package metadata."""
-        url = f"{self.base_url}/{package}/json"
-        try:
-            async with session.get(url, timeout=self.timeout) as resp:
-                if resp.status == 404:
-                    logger.warning(f"PyPI package not found: {package}")
-                    return None
-                if resp.status != 200:
-                    logger.error(f"PyPI API error for {package}: {resp.status}")
-                    return None
-                data = await resp.json()
-                
-                info = data.get("info", {})
-                maintainers = []
-                if info.get("author"):
-                    maintainers.append(info["author"])
-                
-                releases = data.get("releases", {})
-                latest_version = max(releases.keys()) if releases else "unknown"
-                
-                return MaintainerInfo(
-                    name=package,
-                    registry="pypi",
-                    version=latest_version,
-                    maintainers=maintainers,
-                    last_updated=info.get("last_updated", datetime.utcnow().isoformat()),
-                    homepage=info.get("home_page"),
-                    description=info.get("summary"),
-                )
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout fetching {package} from PyPI")
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching {package} from PyPI: {e}")
             return None
 
-    async def fetch_npm_package(self, session: aiohttp.ClientSession, package: str) -> Optional[MaintainerInfo]:
-        """Fetch npm package metadata."""
-        url = f"{self.base_url}/{package}"
-        try:
-            async with session.get(url, timeout=self.timeout) as resp:
-                if resp.status == 404:
-                    logger.warning(f"npm package not found: {package}")
-                    return None
-                if resp.status != 200:
-                    logger.error(f"npm API error for {package}: {resp.status}")
-                    return None
-                data = await resp.json()
-                
-                maintainers = []
-                if isinstance(data.get("maintainers"), list):
-                    maintainers = [m.get("name", m) for m in data["maintainers"]]
-                
-                latest_version = data.get("dist-tags", {}).get("latest", "unknown")
-                
-                return MaintainerInfo(
-                    name=package,
-                    registry="npm",
-                    version=latest_version,
-                    maintainers=maintainers,
-                    last_updated=datetime.utcnow().isoformat(),
-                    homepage=data.get("repository", {}).get("url"),
-                    description=data.get("description"),
-                )
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout fetching {package} from npm")
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching {package} from npm: {e}")
-            return None
-
-    async def monitor_packages(self, packages: list) -> list:
-        """Fetch metadata for multiple packages concurrently."""
-        async with aiohttp.ClientSession() as session:
-            tasks = []
-            if self.registry == "pypi":
-                tasks = [self.fetch_pypi_package(session, pkg) for pkg in packages]
-            elif self.registry == "npm":
-                tasks = [self.fetch_npm_package(session, pkg) for pkg in packages]
-            
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            return [r for r in results if isinstance(r, MaintainerInfo)]
-
-    def compare_with_baseline(self, current: list, baseline: dict) -> list:
-        """Detect maintainer changes by comparing with baseline."""
-        changes = []
-        
-        for pkg in current:
-            key = f"{pkg.registry}:{pkg.name}"
-            if key not in baseline:
-                logger.info(f"New package (no baseline): {key}")
-                continue
-            
-            prev = baseline[key]
-            prev_maintainers = set(prev.get("maintainers", []))
-            curr_maintainers = set(pkg.maintainers)
-            
-            added = curr_maintainers - prev_maintainers
-            removed = prev_maintainers - curr_maintainers
-            
-            if added or removed:
-                changes.append(MaintainerChange(
-                    package=pkg.name,
-                    registry=pkg.registry,
-                    added=sorted(added),
-                    removed=sorted(removed),
-                    timestamp=datetime.utcnow().isoformat(),
-                    previous_version=prev.get("version", "unknown"),
-                    current_version=pkg.version,
-                ))
-                logger.warning(f"Change detected in {key}: +{added} -{removed}")
-        
-        return changes
-
-
-async def main():
-    """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Monitor package registries for maintainer ownership changes"
-    )
-    parser.add_argument(
-        "--registry",
-        choices=["pypi", "npm"],
-        default="pypi",
-        help="Package registry to monitor (default: pypi)",
-    )
-    parser.add_argument(
-        "--packages",
-        required=True,
-        help="Comma-separated list of package names to monitor",
-    )
-    parser.add_argument(
-        "--baseline",
-        help="JSON file with baseline maintainer data for comparison",
-    )
-    parser.add_argument(
-        "--output",
-        help="Output file for change report (JSON format)",
-    )
-    
-    args = parser.parse_args()
-    
-    packages = [p.strip() for p in args.packages.split(",")]
-    logger.info(f"Monitoring {len(packages)} packages on {args.registry}")
-    
-    monitor = PackageMonitor(registry=args.registry)
-    current = await monitor.monitor_packages(packages)
-    
-    logger.info(f"Fetched metadata for {len(current)} packages")
-    
-    changes = []
-    if args.baseline:
-        try:
-            with open(args.baseline, "r") as f:
-                baseline = json.load(f)
-            changes = monitor.compare_with_baseline(current, baseline)
-            logger.info(f"Detected {len(changes)} maintainer changes")
-        except FileNotFoundError:
-            logger.warning(f"Baseline file not found: {args.baseline}")
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid baseline JSON: {e}")
-            return 1
-    
-    report = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "registry": args.registry,
-        "packages_checked": len(current),
-        "changes_detected": len(changes),
-        "current_metadata": [dataclasses.asdict(pkg) for pkg in current],
-        "changes": [dataclasses.asdict(ch) for ch in changes],
-    }
-    
-    if args.output:
-        with open(args.output, "w") as f:
-            json.dump(report, f, indent=2)
-        logger.info(f"Report written to {args.output}")
-    else:
-        print(json.dumps(report, indent=2))
-    
-    return 0 if not changes else 1
-
-
-if __name__ == "__main__":
-    exit_code = asyncio.run(main())
-    sys.exit(exit_code)
+        package_info = fetcher.
