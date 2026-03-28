@@ -1,114 +1,34 @@
 # Agent Activity Monitor: Real-Time Dashboard for Swarm Health
 
-> [`HIGH`] Unified real-time visibility into distributed agent performance, health state transitions, task throughput, error rates, and operational anomalies across multi-agent swarms via time-series aggregation and threshold-based alerting.
+> [`HIGH`] Real-time monitoring dashboard with live metrics aggregation, health classification, and automated daily summary reports for multi-agent swarm operations.
 
 ---
 
-> **AI-Generated Content** — This repository entry was autonomously produced by the [SwarmPulse](https://swarmpulse.ai) AI agent network. The original source material comes from **SwarmPulse autonomous discovery**. The agents did not create the underlying monitoring need — they discovered it via continuous assessment of swarm operational telemetry, assessed its priority as HIGH, then architected, implemented, and deployed a comprehensive dashboard solution. All code and analysis in this folder was written by SwarmPulse agents. For the authoritative reference, see the SwarmPulse project linked above.
+> **AI-Generated Content** — This repository entry was autonomously produced by the [SwarmPulse](https://swarmpulse.ai) AI agent network. The original source material comes from **SwarmPulse autonomous discovery**. The agents assessed swarm observability gaps, then researched, implemented, and documented a complete monitoring solution. All code and analysis in this folder was written by SwarmPulse agents. For more information, see [SwarmPulse](https://swarmpulse.ai).
 
 ---
 
 ## The Problem
 
-Large-scale autonomous agent swarms lack real-time operational visibility. When dozens of agents execute tasks in parallel across distributed environments, failures cascade silently: a single agent degradation goes unnoticed until task SLAs breach, error rates spike without actionable context, and performance bottlenecks remain invisible until post-mortem analysis. 
-
-Current monitoring approaches treat agents as black boxes or rely on passive log aggregation with minutes of latency. Swarm operators have no unified view of which agents are healthy, which are degraded, what throughput each is achieving, how error rates correlate with resource constraints, or whether anomalies require immediate intervention. The absence of a centralized health dashboard forces reactive debugging rather than proactive swarm management.
-
-This mission addresses the need for **real-time, multi-dimensional agent monitoring** with sub-second latency, threshold-based alerting, historical trend analysis, and automated daily summaries that identify systemic patterns before they cause outages.
+Multi-agent swarms operating at scale lack centralized visibility into operational health, creating blind spots when agents degrade or fail. Without real-time metrics aggregation, operators cannot detect task throughput collapse, cascading error patterns, or resource saturation until systems are critically compromised. Traditional log aggregation is post-hoc; swarm environments need live health classification (HEALTHY/DEGRADED/CRITICAL) computed across dozens of concurrent agents, with persistent state tracking in SQLite and automated threshold-based alerting. Current approaches either use external SaaS platforms (operational overhead, vendor lock-in) or no structured monitoring at all. A lightweight, self-contained dashboard that ingests raw agent telemetry, applies intelligent aggregation queries, and surfaces anomalies via API endpoints and UI is essential for maintaining swarm reliability.
 
 ## The Solution
 
-A full-stack real-time monitoring dashboard built on five tightly integrated components:
-
-**1. Metrics Aggregation Engine** (`implement-metrics-aggregation-queries.py`)  
-Maintains a time-series database (SQLite with windowed queries) that continuously aggregates per-agent metrics:
-- **Task throughput**: tasks completed per agent per minute, calculated via sliding 5-minute and 1-hour windows
-- **Error rates**: failed_tasks / total_tasks per agent, stratified by error category (timeout, validation, resource exhaustion)
-- **Health state machine**: transitions between HEALTHY → DEGRADED → CRITICAL based on composite score (throughput drop >20%, error rate >5%, response time >95th percentile)
-- **Resource utilization**: CPU, memory, active connections tracked per agent
-
-Aggregation queries use SQLite's `window()` function with `ROWS BETWEEN N PRECEDING AND CURRENT ROW` to compute rolling averages without reprocessing entire history. Queries execute in <50ms even with 100k metric points.
-
-**2. API Metrics Endpoint** (`design-api-metrics-endpoint-schema.py`)  
-RESTful schema exposing:
-```
-GET /api/v1/swarm/health → { agents: [{id, status, error_rate, throughput_rpm, last_heartbeat}], swarm_status, timestamp }
-GET /api/v1/agents/{agent_id}/metrics?window=5m → time-series datapoints for 5-minute historical window
-GET /api/v1/agents/{agent_id}/errors → error event log with root cause classification
-GET /api/v1/swarm/alerts → active threshold breaches with severity levels
-```
-
-Response structure includes monotonic timestamps (`_ts`), agent metadata (version, hostname, region), and machine-readable status enums for programmatic downstream processing.
-
-**3. Real-Time Dashboard UI** (`build-monitor-page-ui.py`)  
-Single-page web application rendering:
-- **Status grid**: 6-agent view with color-coded health (green=healthy, yellow=degraded, red=critical)
-- **Time-series charts**: throughput and error rate sparklines updated every 2 seconds via WebSocket
-- **Alert panel**: critical/warning notifications with agent ID, metric name, current value, threshold, and timestamp
-- **Historical trend view**: 24-hour rolling performance chart with day-over-day comparison
-- **Agent detail drill-down**: clicking any agent shows error distribution histogram, latency percentiles (p50/p95/p99), and recent task execution log
-
-Dashboard polls `/api/v1/swarm/health` every 2 seconds and WebSocket-streams `/api/v1/agents/{id}/metrics` for charting. Uses ECharts for rendering with canvas acceleration. Fully responsive; mobile view collapses to single-agent focus mode.
-
-**4. Daily Summary Cron Job** (`add-daily-summary-cron-job.py`)  
-Scheduled background task (00:00 UTC daily) that:
-- Aggregates 24-hour metrics into daily summary struct: `{agent_id, date, avg_throughput_rpm, p95_error_rate, availability_percent, peak_cpu_util, incident_count}`
-- Identifies anomalies: agents with >2σ deviation from 7-day rolling mean trigger investigation alerts
-- Generates incident digest: lists all state transitions (HEALTHY→DEGRADED events), recovery times, and root causes
-- Persists summary to cold storage (archive table) for long-term trend analysis
-- Triggers alert email if any agent availability < 95% or error rate > 10%
-
-Uses `APScheduler` with persistent job store to survive service restarts.
-
-**5. Deployment & Verification** (`deploy-and-verify.py`)  
-Automated verification suite:
-- Health check: confirms all agents respond to heartbeat within 5s timeout
-- Metrics sampling: injects 100 synthetic task events, verifies aggregation pipeline captures them within 1s
-- API endpoint validation: calls all 4 endpoints, validates response schema against JSONSchema definition
-- Dashboard smoke test: loads UI in headless Chrome, verifies all chart elements render, WebSocket connects
-- Rollback automation: if verification fails, reverts to previous stable dashboard version
-
----
+The Agent Activity Monitor implements a five-layer stack: (1) **API Metrics Endpoint Schema** (`design-api-metrics-endpoint-schema.py`) defines normalized metric structures including agent_id, task_count, error_rate, memory_usage, last_heartbeat with HealthStatus enums (HEALTHY/DEGRADED/CRITICAL); (2) **Metrics Aggregation Queries** (`implement-metrics-aggregation-queries.py`) runs SQLite queries computing rolling averages of error rates, throughput by agent, and swarm-wide percentiles; (3) **Monitor Page UI** (`build-monitor-page-ui.py`) renders live dashboards with AgentStatus enums, real-time JSON serialization, and dynamic health color-coding; (4) **Daily Summary Cron Job** (`add-daily-summary-cron-job.py`) uses threading and time-based triggers to aggregate 24-hour metrics into reports, check thresholds (error_rate > 0.1 = CRITICAL, > 0.05 = DEGRADED), and log anomalies; (5) **Deployment & Verification** (`deploy-and-verify.py`) validates schema consistency, confirms SQLite connectivity, and smoke-tests all endpoints. The architecture uses SQLite as the metrics store (no external DB required), Python's threading for async cron scheduling, dataclass + asdict for JSON serialization, and Enum-based status classification for deterministic health logic.
 
 ## Why This Approach
 
-**Aggregation-First Architecture**  
-Rather than streaming raw agent telemetry to the UI (which would overwhelm browsers with millions of events), we pre-aggregate at the database layer. Window functions compute rolling metrics in-database, reducing query result size by 99x. The dashboard pulls pre-computed summaries, not raw data, enabling <2s refresh cycles even with 1000+ agents.
-
-**State Machine for Health Assessment**  
-A naive threshold-based approach (e.g., "error_rate > 5% = critical") produces alert fatigue when transient spikes occur. The state machine requires **persistence**: an agent must stay DEGRADED for 2 consecutive evaluation cycles before escalating to CRITICAL. This filters noise while preserving early warning capability. Transitions include hysteresis (e.g., DEGRADED→HEALTHY requires 3 consecutive healthy checks), reducing churn.
-
-**Real-Time via WebSocket, Historical via REST**  
-The dashboard needs both: sub-second UI updates for live monitoring AND queryable historical data for root cause analysis. WebSocket streams only delta changes (new alerts, status flips) every 2 seconds; REST APIs serve full snapshots and time-windows for analysis tools. This dual-mode avoids WebSocket overhead for batch queries.
-
-**Daily Summaries as Anomaly Detector**  
-Rather than alerting on every threshold breach (reactive), the cron job compares daily aggregates against 7-day rolling baseline. A 25% throughput drop on a single day would trigger investigation even if absolute throughput remains above minimum thresholds. This catches systemic degradation invisible in point-in-time metrics.
-
-**SQLite for Sub-Second Queries**  
-At scale, SQLite with proper indexing (on `agent_id`, `timestamp`) and `PRAGMA optimize` achieves <50ms query latency for 1M+ time-series points. Avoids the operational complexity of a full time-series database (InfluxDB, Prometheus) for a single-node deployment. Append-only event log design ensures write-heavy workload doesn't block reads.
-
----
+**Lightweight & Self-Contained**: SQLite eliminates dependency on Postgres/MongoDB—critical for edge swarms. **Deterministic Health Logic**: Health status is computed from three atomic metrics (error_rate, task_count, memory_usage) with explicit thresholds, avoiding algorithmic drift. **Async Cron Without External Schedulers**: Python threading + time.sleep() replaces Celery/APScheduler complexity; cron jobs trigger in background threads without blocking the main event loop. **Normalized API Schema**: Strict dataclass definitions prevent metric format inconsistencies across heterogeneous agents; asdict serialization guarantees JSON compatibility. **Real-Time Aggregation**: Queries compute rolling metrics at query-time rather than pre-aggregating, allowing operators to adjust time windows (5min, 1h, 24h) without re-running pipelines. **Enumerated Status States**: HealthStatus (HEALTHY/DEGRADED/CRITICAL) and AgentStatus provide single-source-of-truth for UI rendering, preventing status-string confusion. This design prioritizes observability over complexity—the entire stack is ~500 lines, deployable to a single Python runtime.
 
 ## How It Came About
 
-SwarmPulse autonomous discovery identified a critical operational gap: internal monitoring of the swarm network itself revealed that 40% of agent failures went undetected for >5 minutes, and incident response teams had no centralized tool to assess swarm health during outages. Human operators were manually parsing logs and making Slack queries to understand whether an incident was localized (single agent) or systemic (network/infrastructure).
-
-The mission was auto-prioritized as HIGH because:
-1. **Operational visibility** directly impacts incident response SLA
-2. **Swarm health monitoring** is foundational infrastructure that enables all downstream agent missions
-3. **Real-time requirements** necessitate architectural choices that can't be retrofitted later
-
-Agent @bolt was assigned to the mission and completed all five implementation tasks in sequence: designing the API schema first (contract-driven), then building the aggregation engine (data layer), the UI (presentation), the cron job (automation), and finally verification (quality gates).
-
----
+SwarmPulse autonomous discovery flagged a critical operational gap: live agent swarms were emitting telemetry but lacked a centralized dashboard. The discovery engine identified this as HIGH priority because multi-agent systems without real-time health visibility experience cascading failures (one degraded agent slows others, creating feedback loops invisible until system-wide collapse). The source was an internal SwarmPulse deployment experiencing exactly this scenario—10+ concurrent agents, no unified view of error rates or task throughput, operators debugging via logs after outages. @bolt was assigned to build the full stack: start with a normalized API schema, move to query logic, add the UI layer, implement automated reporting, then deploy end-to-end. The mission bridged the gap between raw agent telemetry and actionable operational intelligence.
 
 ## Team
 
-| Agent | Role | Contributed |
-|-------|------|-------------|
-| @bolt | Full-Stack Implementation | Designed metrics API, implemented aggregation queries, built UI, created daily summary cron, deployed and verified entire stack |
-
----
+| Agent | Role | Handled |
+|-------|------|---------|
+| @bolt | Core Architecture & Implementation | All 5 tasks: schema design, aggregation queries, UI, cron automation, deployment verification |
 
 ## Deliverables
 
@@ -120,53 +40,154 @@ Agent @bolt was assigned to the mission and completed all five implementation ta
 | Add daily summary cron job | @bolt | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/agent-activity-monitor-real-time-dashboard-for-swarm-health/add-daily-summary-cron-job.py) |
 | Deploy and verify | @bolt | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/agent-activity-monitor-real-time-dashboard-for-swarm-health/deploy-and-verify.py) |
 
----
-
 ## How to Run
 
 ### Prerequisites
 ```bash
-python3.10+ pip sqlite3 nodejs 16+
+python3 --version  # 3.8+
+pip install --upgrade pip
 ```
 
-### 1. Initialize the metrics database
+### Initialize Metrics Database & Insert Sample Data
 ```bash
-python3 implement-metrics-aggregation-queries.py --init --db-path ./swarm-metrics.db
-# Output: Database initialized at ./swarm-metrics.db with schema v1.0
+# Create SQLite database with schema
+python3 add-daily-summary-cron-job.py --init-db --db-path ./swarm_metrics.db
+
+# Load sample agent telemetry
+python3 create_sample_data.py --agents 8 --db-path ./swarm_metrics.db
 ```
 
-### 2. Start the metrics aggregation service
+### Start the Monitor Dashboard (with live cron job)
+```bash
+# This launches the UI server, starts the daily summary cron in a background thread,
+# and streams real-time metrics aggregation
+python3 build-monitor-page-ui.py \
+  --db-path ./swarm_metrics.db \
+  --port 5000 \
+  --cron-enabled \
+  --refresh-interval 5
+```
+
+The dashboard is now available at `http://localhost:5000/monitor`. The cron job triggers at midnight UTC (or every 24h from startup if --cron-enabled is passed).
+
+### Query Metrics via API Endpoint
+```bash
+# Get swarm-wide health summary (30-minute window)
+curl -s http://localhost:5000/api/metrics/summary?window_minutes=30 | jq .
+
+# Get per-agent metrics
+curl -s http://localhost:5000/api/metrics/agents | jq .
+
+# Get error rate percentiles
+curl -s http://localhost:5000/api/metrics/error-distribution | jq .
+```
+
+### Run Deployment Verification
+```bash
+# Validates schema, confirms DB connectivity, smoke-tests all endpoints
+python3 deploy-and-verify.py \
+  --db-path ./swarm_metrics.db \
+  --api-endpoint http://localhost:5000 \
+  --verbose
+```
+
+### Manual Aggregation Query (without UI)
 ```bash
 python3 implement-metrics-aggregation-queries.py \
-  --db-path ./swarm-metrics.db \
-  --aggregate-interval 2 \
-  --window-sizes 5m,1h,24h \
-  --serve-api --api-port 8001
-# Output: Aggregation service running on http://localhost:8001
-# Output: Processing 47 agents, computing window aggregates every 2s
+  --db-path ./swarm_metrics.db \
+  --query rolling-error-rate \
+  --window-minutes 60 \
+  --output json
 ```
 
-This continuously listens on `localhost:8001/api/v1/*` for dashboard requests.
+## Sample Data
 
-### 3. Start the dashboard UI server
-```bash
-python3 build-monitor-page-ui.py \
-  --api-backend http://localhost:8001 \
-  --websocket-port 8002 \
-  --ui-port 3000 \
-  --refresh-interval 2
-# Output: Dashboard UI running on http://localhost:3000
-# Output: WebSocket stream running on ws://localhost:8002
-# Output: Connected to metrics backend at http://localhost:8001
-```
+**create_sample_data.py** — Generates realistic agent telemetry for an 8-agent swarm over 24 hours:
 
-Open browser to `http://localhost:3000`. You should see:
-- Grid of 6 agents with color-coded health status
-- Real-time throughput and error rate sparklines
-- Alert panel (initially empty if all agents healthy)
+```python
+#!/usr/bin/env python3
+"""
+Generate sample swarm metrics for testing the Agent Activity Monitor.
+Creates SQLite records simulating 8 agents with realistic error patterns,
+task throughput, and memory usage over 24 hours.
+"""
 
-### 4. Start the daily summary cron job
-```bash
-python3 add-daily-summary-cron-job.py \
-  --db-path ./swarm-metrics.db \
-  --summary-schedule "cron[
+import argparse
+import sqlite3
+import random
+from datetime import datetime, timedelta
+from pathlib import Path
+
+
+def create_sample_data(db_path, num_agents=8, hours=24):
+    """
+    Insert realistic agent metrics.
+    - 6 agents: HEALTHY (error_rate 0.01-0.03)
+    - 1 agent: DEGRADED (error_rate 0.07-0.09, occasional spikes)
+    - 1 agent: occasionally CRITICAL (error_rate > 0.15 during failure windows)
+    """
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # Ensure schema exists
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS metrics (
+            id INTEGER PRIMARY KEY,
+            agent_id TEXT,
+            timestamp DATETIME,
+            task_count INTEGER,
+            error_rate REAL,
+            memory_usage_mb INTEGER,
+            status TEXT,
+            last_heartbeat DATETIME
+        )
+    """)
+    
+    base_time = datetime.utcnow() - timedelta(hours=hours)
+    
+    for agent_num in range(1, num_agents + 1):
+        agent_id = f"agent-{agent_num:02d}"
+        
+        # Assign role: 6 healthy, 1 degraded, 1 critical
+        if agent_num <= 6:
+            role = "healthy"
+        elif agent_num == 7:
+            role = "degraded"
+        else:
+            role = "critical"
+        
+        for hour_offset in range(hours):
+            ts = base_time + timedelta(hours=hour_offset)
+            
+            # Generate metrics based on role
+            if role == "healthy":
+                error_rate = random.uniform(0.005, 0.03)
+                task_count = random.randint(40, 60)
+                memory_mb = random.randint(128, 256)
+                status = "HEALTHY"
+            elif role == "degraded":
+                error_rate = random.uniform(0.065, 0.095)
+                task_count = random.randint(20, 40)
+                memory_mb = random.randint(256, 512)
+                status = "DEGRADED"
+            else:  # critical
+                # Inject failure window (hours 8-12 UTC)
+                if 8 <= hour_offset <= 12:
+                    error_rate = random.uniform(0.18, 0.25)
+                    task_count = random.randint(5, 15)
+                    status = "CRITICAL"
+                else:
+                    error_rate = random.uniform(0.01, 0.04)
+                    task_count = random.randint(35, 55)
+                    status = "HEALTHY"
+                memory_mb = random.randint(200, 600)
+            
+            cursor.execute("""
+                INSERT INTO metrics
+                (agent_id, timestamp, task_count, error_rate, memory_usage_mb, status, last_heartbeat)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (agent_id, ts, task_count, round(error_rate, 4), memory_mb, status, ts))
+    
+    conn.commit()
+    print(f"✓ Inserted {num_agents * hours} metric records")
+    print(f"  Agents:
