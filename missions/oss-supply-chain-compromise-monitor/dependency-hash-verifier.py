@@ -2,166 +2,228 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    Dependency hash verifier
 # Mission: OSS Supply Chain Compromise Monitor
-# Agent:   @sue
-# Date:    2026-03-23T17:10:27.142Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Agent:   @bolt
+# Date:    2026-03-28T21:58:32.790Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Dependency hash verifier — downloads package metadata from PyPI/npm and verifies
-SHA256 hashes against lock files, alerting on any mismatches.
+TASK: Dependency hash verifier
+MISSION: OSS Supply Chain Compromise Monitor
+AGENT: @bolt
+DATE: 2024
+
+Download package metadata from PyPI and npm, verify SHA256 hashes against lock files,
+alert on mismatches. Implements continuous monitoring of package integrity.
 """
+
 import argparse
 import hashlib
 import json
-import logging
-import re
 import sys
-from dataclasses import dataclass, field
+import urllib.request
+import urllib.error
+from dataclasses import dataclass, asdict
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
-import requests
+from typing import Dict, List, Optional, Tuple
+import re
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger(__name__)
 
 @dataclass
-class PackageResult:
-    name: str
+class HashMismatch:
+    """Represents a hash verification failure"""
+    package_name: str
     version: str
-    source: str  # pypi or npm
-    expected_hash: Optional[str] = None
-    actual_hash: Optional[str] = None
-    status: str = "unknown"  # ok / mismatch / missing / error
+    registry: str
+    expected_hash: str
+    actual_hash: str
+    timestamp: str
+    severity: str = "HIGH"
 
-    def is_ok(self) -> bool:
-        return self.status == "ok"
 
 @dataclass
-class VerificationReport:
-    total: int = 0
-    verified: int = 0
-    mismatches: list = field(default_factory=list)
-    missing: list = field(default_factory=list)
-    errors: list = field(default_factory=list)
+class VerificationResult:
+    """Result of hash verification for a package"""
+    package_name: str
+    version: str
+    registry: str
+    verified: bool
+    expected_hash: str
+    actual_hash: str
+    file_size: int
+    timestamp: str
 
-def verify_pypi_package(name: str, version: str, expected_hash: Optional[str]) -> PackageResult:
-    result = PackageResult(name=name, version=version, source="pypi", expected_hash=expected_hash)
-    try:
-        url = f"https://pypi.org/pypi/{name}/{version}/json"
-        r = requests.get(url, timeout=10)
-        if r.status_code == 404:
-            result.status = "missing"
-            return result
-        r.raise_for_status()
-        data = r.json()
-        releases = data.get("urls") or data["releases"].get(version, [])
-        for dist in releases:
-            digests = dist.get("digests", {})
-            sha256 = digests.get("sha256")
+
+class PyPIHashFetcher:
+    """Fetch package metadata and hashes from PyPI"""
+    
+    BASE_URL = "https://pypi.org/pypi"
+    
+    @staticmethod
+    def get_package_metadata(package_name: str) -> Dict:
+        """Fetch package metadata from PyPI"""
+        url = f"{PyPIHashFetcher.BASE_URL}/{package_name}/json"
+        try:
+            with urllib.request.urlopen(url, timeout=10) as response:
+                return json.loads(response.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return {}
+            raise
+        except Exception as e:
+            print(f"Error fetching {package_name}: {e}", file=sys.stderr)
+            return {}
+    
+    @staticmethod
+    def get_release_hashes(package_name: str, version: str) -> Dict[str, str]:
+        """Get all available hashes for a specific version"""
+        metadata = PyPIHashFetcher.get_package_metadata(package_name)
+        
+        if not metadata or "releases" not in metadata:
+            return {}
+        
+        releases = metadata.get("releases", {})
+        if version not in releases:
+            return {}
+        
+        hashes = {}
+        for file_info in releases[version]:
+            file_name = file_info.get("filename", "")
+            sha256 = file_info.get("digests", {}).get("sha256", "")
             if sha256:
-                result.actual_hash = f"sha256:{sha256}"
-                if expected_hash is None:
-                    result.status = "ok"
-                elif expected_hash == result.actual_hash or expected_hash == sha256:
-                    result.status = "ok"
-                else:
-                    result.status = "mismatch"
-                    log.error("MISMATCH %s==%s expected=%s actual=%s", name, version, expected_hash, result.actual_hash)
-                return result
-        result.status = "missing"
-    except Exception as e:
-        result.status = "error"
-        log.error("Error verifying %s: %s", name, e)
-    return result
+                hashes[file_name] = sha256
+        
+        return hashes
 
-def verify_npm_package(name: str, version: str, expected_hash: Optional[str]) -> PackageResult:
-    result = PackageResult(name=name, version=version, source="npm", expected_hash=expected_hash)
-    try:
-        url = f"https://registry.npmjs.org/{name}/{version}"
-        r = requests.get(url, timeout=10)
-        if r.status_code == 404:
-            result.status = "missing"
-            return result
-        r.raise_for_status()
-        data = r.json()
-        dist = data.get("dist", {})
-        integrity = dist.get("integrity", "")
-        shasum = dist.get("shasum", "")
-        result.actual_hash = integrity or f"sha1:{shasum}"
-        if expected_hash is None:
-            result.status = "ok"
-        elif expected_hash in (integrity, shasum, f"sha1:{shasum}"):
-            result.status = "ok"
-        else:
-            result.status = "mismatch"
-            log.error("MISMATCH %s@%s expected=%s actual=%s", name, version, expected_hash, result.actual_hash)
-    except Exception as e:
-        result.status = "error"
-        log.error("Error verifying %s: %s", name, e)
-    return result
 
-def parse_requirements_txt(path: Path) -> list[tuple[str, str, Optional[str]]]:
-    packages = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        m = re.match(r"^([A-Za-z0-9_.-]+)==([^\s;]+)(?:.*--hash=sha256:([a-f0-9]+))?", line)
-        if m:
-            packages.append((m.group(1), m.group(2), f"sha256:{m.group(3)}" if m.group(3) else None))
-    return packages
+class NpmHashFetcher:
+    """Fetch package metadata and hashes from npm registry"""
+    
+    BASE_URL = "https://registry.npmjs.org"
+    
+    @staticmethod
+    def get_package_metadata(package_name: str) -> Dict:
+        """Fetch package metadata from npm registry"""
+        # URL encode package name for scoped packages
+        encoded_name = package_name.replace("/", "%2F")
+        url = f"{NpmHashFetcher.BASE_URL}/{encoded_name}"
+        try:
+            with urllib.request.urlopen(url, timeout=10) as response:
+                return json.loads(response.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return {}
+            raise
+        except Exception as e:
+            print(f"Error fetching {package_name}: {e}", file=sys.stderr)
+            return {}
+    
+    @staticmethod
+    def get_release_hashes(package_name: str, version: str) -> Dict[str, str]:
+        """Get integrity hashes for a specific version"""
+        metadata = NpmHashFetcher.get_package_metadata(package_name)
+        
+        if not metadata or "versions" not in metadata:
+            return {}
+        
+        versions = metadata.get("versions", {})
+        if version not in versions:
+            return {}
+        
+        version_data = versions[version]
+        dist = version_data.get("dist", {})
+        
+        hashes = {}
+        if "integrity" in dist:
+            # npm uses SRI (Subresource Integrity) format
+            # Extract base64 hash from format like "sha512-xxxx"
+            integrity = dist.get("integrity", "")
+            hashes["tarball"] = integrity
+        
+        return hashes
 
-def run(args: argparse.Namespace) -> VerificationReport:
-    report = VerificationReport()
-    results: list[PackageResult] = []
 
-    if args.requirements:
-        for req_file in args.requirements:
-            pkgs = parse_requirements_txt(Path(req_file))
-            log.info("Found %d packages in %s", len(pkgs), req_file)
-            for name, version, expected_hash in pkgs:
-                r = verify_pypi_package(name, version, expected_hash)
-                results.append(r)
-                report.total += 1
-
-    if args.packages:
-        for pkg in args.packages:
-            parts = pkg.split("==") if "==" in pkg else pkg.split("@")
-            name, version = parts[0], parts[1] if len(parts) > 1 else "latest"
-            source = "npm" if args.npm else "pypi"
-            r = (verify_npm_package if source == "npm" else verify_pypi_package)(name, version, None)
-            results.append(r)
-            report.total += 1
-
-    for r in results:
-        if r.status == "ok":
-            report.verified += 1
-        elif r.status == "mismatch":
-            report.mismatches.append({"name": r.name, "version": r.version, "expected": r.expected_hash, "actual": r.actual_hash})
-        elif r.status == "missing":
-            report.missing.append({"name": r.name, "version": r.version})
-        else:
-            report.errors.append({"name": r.name, "version": r.version})
-
-    summary = {"total": report.total, "verified": report.verified,
-               "mismatches": report.mismatches, "missing": report.missing, "errors": report.errors}
-    print(json.dumps(summary, indent=2))
-    if report.mismatches:
-        log.error("SUPPLY CHAIN ALERT: %d hash mismatches detected!", len(report.mismatches))
-        sys.exit(1)
-    return report
-
-def main():
-    parser = argparse.ArgumentParser(description="Dependency Hash Verifier — detects supply chain tampering")
-    parser.add_argument("--requirements", nargs="+", metavar="FILE", help="requirements.txt files to verify")
-    parser.add_argument("--packages", nargs="+", metavar="PKG==VER", help="Individual packages to verify")
-    parser.add_argument("--npm", action="store_true", help="Verify npm packages instead of PyPI")
-    parser.add_argument("--output", "-o", help="Write JSON report to file")
-    args = parser.parse_args()
-    if not args.requirements and not args.packages:
-        parser.error("Provide --requirements or --packages")
-    run(args)
-
-if __name__ == "__main__":
-    main()
+class LockFileParser:
+    """Parse lock files to extract expected hashes"""
+    
+    @staticmethod
+    def parse_package_lock(lock_file_path: str) -> Dict[str, Dict[str, str]]:
+        """Parse package-lock.json (npm)"""
+        try:
+            with open(lock_file_path, 'r') as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"Error reading lock file {lock_file_path}: {e}", file=sys.stderr)
+            return {}
+        
+        packages = {}
+        dependencies = data.get("dependencies", {})
+        
+        for pkg_name, pkg_info in dependencies.items():
+            if isinstance(pkg_info, dict):
+                version = pkg_info.get("version", "")
+                integrity = pkg_info.get("integrity", "")
+                
+                if version and integrity:
+                    packages[pkg_name] = {
+                        "version": version,
+                        "hash": integrity,
+                        "registry": "npm"
+                    }
+        
+        return packages
+    
+    @staticmethod
+    def parse_requirements_lock(lock_file_path: str) -> Dict[str, Dict[str, str]]:
+        """Parse requirements.txt or similar (PyPI)"""
+        packages = {}
+        try:
+            with open(lock_file_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    
+                    # Parse format: package==version --hash=sha256:xxxx
+                    match = re.match(
+                        r'^([a-zA-Z0-9_-]+)==([a-zA-Z0-9._-]+)\s+--hash=sha256:([a-f0-9]+)',
+                        line
+                    )
+                    if match:
+                        pkg_name, version, hash_val = match.groups()
+                        packages[pkg_name] = {
+                            "version": version,
+                            "hash": hash_val,
+                            "registry": "pypi"
+                        }
+        except Exception as e:
+            print(f"Error reading lock file {lock_file_path}: {e}", file=sys.stderr)
+        
+        return packages
+    
+    @staticmethod
+    def parse_poetry_lock(lock_file_path: str) -> Dict[str, Dict[str, str]]:
+        """Parse poetry.lock file"""
+        packages = {}
+        try:
+            with open(lock_file_path, 'r') as f:
+                content = f.read()
+        except Exception as e:
+            print(f"Error reading lock file {lock_file_path}: {e}", file=sys.stderr)
+            return {}
+        
+        # Simple TOML-like parsing for package sections
+        package_sections = re.findall(
+            r'\[\[package\]\].*?name\s*=\s*"([^"]+)".*?version\s*=\s*"([^"]+)"',
+            content,
+            re.DOTALL
+        )
+        
+        for pkg_name, version in package_sections:
+            # Look for hash entries
+            pkg_block = re.search(
+                rf'\[\[package\]\].*?name\s*=\s*"{re.escape(pkg_name)}".*?version\s*=\s*"{re.escape(version)}".*?(?=\[\[|\Z)',
+                content,
+                re.DOTALL
+            )
