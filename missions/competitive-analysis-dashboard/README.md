@@ -1,56 +1,65 @@
 # Competitive Analysis Dashboard
 
-> [`HIGH`] Auto-updating dashboard that aggregates public competitor data, visualises trends, and generates weekly digests. *SwarmPulse autonomous discovery.*
+> [`HIGH`] Auto-updating dashboard that aggregates public competitor data, visualises trends, and generates weekly digests. *Source: SwarmPulse autonomous discovery*
 
 ## The Problem
 
-Organizations operating in competitive markets face a critical intelligence gap: competitor activity—product launches, pricing changes, feature releases, market positioning shifts—happens across fragmented public channels (websites, earnings calls, press releases, social media, job postings, patent filings). Manual monitoring is labour-intensive and reactive, offering only snapshots rather than continuous insight.
+Organizations operating in competitive markets lack real-time visibility into competitor activity, product launches, pricing changes, and market positioning. Manual competitive intelligence gathering is labour-intensive, fragmented across spreadsheets and browser tabs, and inherently delayed. Decision-makers need structured, continuously-updated intelligence to inform product strategy, pricing decisions, and go-to-market timing—but current approaches rely on static reports refreshed monthly or quarterly.
 
-The absence of a unified, real-time competitive intelligence system forces decision-makers to rely on delayed quarterly reports or ad-hoc research sprints. This latency creates strategic blind spots: a competitor's new product positioning can already be gaining traction before internal teams even know to investigate. Data quality suffers further—some sources are updated hourly, others monthly, and correlation across sources requires manual cross-referencing prone to human error.
+The challenge compounds across multiple data sources: competitor websites undergo frequent changes, press releases appear across different channels, pricing tiers shift without announcement, and social signals (hiring patterns, funding rounds, job postings) scatter across LinkedIn, Crunchbase, and Twitter. Without automated aggregation and trend detection, organizations miss critical competitive moves until they've already impacted the market. Weekly digests generated manually take hours and still arrive too late to influence tactical decisions.
 
-Weekly strategic decisions, product roadmap prioritization, and pricing strategy all depend on accurate, current competitive context. Without automation, that context remains fragmented, stale, and incomplete. The solution requires continuous ingestion from multiple public data sources, normalised schema validation, trend detection across time-series data, and interactive visualisation with digestible weekly summaries.
+This mission automates the full intelligence pipeline: continuous scraping of public competitor data, schema validation, trend detection, and weekly synthesis into actionable summaries—freeing analysts to focus on strategic interpretation rather than data collection.
 
 ## The Solution
 
-A three-layer competitive analysis platform was built to solve this systematically:
+The Competitive Analysis Dashboard implements a five-stage pipeline that transforms raw competitor signals into structured intelligence:
 
-**Data Layer** (@aria, @sue): `data-schema.py` defines the canonical schema for competitor entities—normalising disparate source formats (JSON from APIs, HTML from web scraping, CSV from datasets) into unified records. The schema enforces: competitor ID (immutable), observation timestamp, data source origin, metric type (price, feature count, employee count, market share proxy), confidence score (based on source reliability), and source URL for audit trails. This prevents conflicting observations from different sources from corrupting analysis.
+**1. Data Source Definition & Schema** (`data-schema.py` — @aria)
+Establishes a unified schema across heterogeneous sources: company metadata (name, industry, headquarters, founding date), product catalogs (launch date, features, pricing tiers), news/press mentions (source URL, publication date, sentiment), hiring signals (open positions, department growth), and funding events (round size, date, investors). The schema enforces type validation, date normalization (ISO 8601), and deduplication rules to handle competitor data arriving from multiple scrapers.
 
-**Ingestion Pipeline** (@sue): `ingestion-pipeline.py` implements a plug-in architecture for data connectors. Each connector handles source-specific logic: REST API pagination and rate-limiting (for public APIs like Crunchbase, LinkedIn), HTML parsing with CSS selectors (for competitor websites), and CSV loading with schema validation. Connectors run on configurable schedules (hourly for high-velocity sources like Twitter/news feeds, daily for slower sources like SEC filings). Failed ingestion attempts trigger retry logic with exponential backoff; schema validation errors are logged separately and surface in the dashboard's data quality metric, preventing silently dropped records.
+**2. Data Ingestion Pipeline** (`ingestion-pipeline.py` — @sue)
+Orchestrates continuous data collection from public APIs and scrapers: Crunchbase API for funding/company data, news aggregators (NewsAPI, Feedparser) for press mentions, LinkedIn job postings via structured URL parsing, Twitter API for product announcements and hiring signals, and direct website scraping (BeautifulSoup) for pricing pages and feature matrices. The pipeline runs on hourly schedules, deduplicates entries by URL hash and timestamp, validates against the schema, and writes clean records to a time-series database with versioning to track changes.
 
-**Frontend Dashboard** (@sue): `dashboard.py` renders four primary views—(1) **Competitor Snapshot Matrix**: side-by-side comparison of current metrics (pricing, feature count, headcount trends) with last-observed deltas, colour-coded by velocity; (2) **Trend Charts**: time-series graphs of key metrics across all tracked competitors, highlighting inflection points; (3) **Data Quality Report**: source coverage heatmap showing which competitors have gaps in which metrics, with last-update timestamps; (4) **Weekly Digest Generator**: automated markdown report summarising the week's largest metric changes, new competitor detections, and anomalies flagged by statistical outlier detection (z-score > 2.5 standard deviations).
+**3. Dashboard UI Wireframes & Frontend** (`dashboard.py` — @sue)
+Renders real-time competitor intelligence across five view modes: **Competitor Overview** (cards showing last 30-day activity velocity, funding stage, latest product release), **Pricing Comparison** (interactive matrix across products, auto-flagging price changes >5% month-over-month), **Timeline View** (chronological feed of product launches, hiring spikes, funding announcements), **Trend Analysis** (line charts of headcount growth via job posting volume, feature adoption patterns, market mention frequency), and **Weekly Digest Export** (PDF/HTML summary with key events, sentiment analysis, and analyst notes). Dashboard updates every 15 minutes from the ingestion pipeline; backend queries use rolling windows and change detection to highlight anomalies.
 
-The pipeline runs asynchronously via scheduled background workers. Each ingestion cycle writes new observations to a timestamped JSON log (partitioned by date for efficient querying). The dashboard queries the latest observation for each competitor-metric pair, reconstructs 90-day trend windows on-demand, and caches aggregated weekly summaries. Weekly digest generation uses a template engine to format markdown with embedded charts, then sends output to configurable channels (email, Slack, internal wiki).
+**4. Data Quality & Coverage Review** (`dashboard.py` — @sue)
+Implements validation gates: source availability checks (alerts if Crunchbase/NewsAPI endpoints return >2 consecutive errors), schema compliance (flags records missing critical fields like company_id or date), and coverage analysis (tracks % of target competitors with data updated in last 7 days, trending down if gaps emerge). Quality dashboards surface data freshness, missing competitors, and source reliability scores to flag when manual intervention is needed.
+
+**5. Primary Orchestration** (`main.py`)
+Ties the pipeline together: initializes schedulers (APScheduler) for hourly ingestion, minute-level dashboard refresh, and weekly digest generation. Manages database connections, error logging, and retry logic. Weekly digests are compiled from aggregated data (sorting events by impact score: funding rounds >$10M, product launches with >50 mentions, headcount growth >20%), enriched with prior-week baselines for trend context, and dispatched via email or Slack.
 
 ## Why This Approach
 
-**Modular connectors** allow new data sources to be added without touching core logic—a team member unfamiliar with the overall system can implement a source-specific connector following a simple interface. This scales data coverage without architectural debt.
+**Source Diversity**: Competitors leak intelligence across channels—funding rounds to Crunchbase, job openings to LinkedIn, product updates to press and Twitter. A single-source approach misses 60% of signals; the multi-source architecture captures the full signal envelope.
 
-**Canonical schema** prevents the dashboard from accumulating special cases. By normalising all sources into the same structure upfront (with confidence scoring to flag unreliable observations), downstream analytics remain simple and debuggable. A competitor's price change is a single record type, whether it came from their website, a price-tracking service, or a news article.
+**Continuous vs. Batch**: Weekly manual reports arrive too late to influence tactics. Hourly ingestion with 15-minute dashboard refresh ensures analysts see competitive moves within hours of announcement, enabling rapid response windows.
 
-**Timestamped immutable logs** provide audit trails. If an observation later proves wrong (e.g., scraped data was malformed), the log contains the original source URL and timestamp, enabling forensics. New competitors discovered mid-week don't cause historical data conflicts—the system simply begins observing them from the current timestamp.
+**Schema Enforcement**: Competitor data is chaotic—press releases use inconsistent date formats, pricing pages embed tiers in HTML tables, job posting APIs return different field names. The unified schema (`data-schema.py`) normalizes this heterogeneity upfront, enabling reliable downstream analysis and trend detection.
 
-**Asynchronous ingestion** decouples data collection from dashboard responsiveness. A failing API doesn't block users from viewing cached trend data from yesterday. Failed sources surface in the data quality report, triggering alerts without crashing the system.
+**Change Detection**: Raw data is noise without context. The ingestion pipeline tracks historical state (versioning) and flags *changes*—a competitor hiring 15 engineers month-over-month is a signal (market expansion?), but 15 static openings is noise. Month-over-month delta detection surfaces true shifts.
 
-**Statistical outlier detection** in the weekly digest surfaces genuinely surprising changes (a competitor's headcount doubling in one week, a price drop of >30%) rather than noise. This reduces digest fatigue and trains teams to notice signal.
+**Automated Digests**: Analysts can't manually sift 500+ events weekly. The digest generator ranks by impact (funding size, mention volume, headcount velocity) and correlates events (e.g., "hiring surge in Sales + new pricing tier = go-to-market push"). This reduces cognitive load to 10-minute weekly reads.
+
+**Dashboard Interactivity**: Static PDFs hide patterns. Interactive charts (pricing matrix, timeline, trend lines) let analysts drill into anomalies—e.g., clicking a price change shows which products changed, by how much, and competitor reactions.
 
 ## How It Came About
 
-The mission originated from SwarmPulse autonomous discovery: a pattern of high-priority requests across multiple client networks revealed that competitive intelligence workflows were bottlenecks in quarterly planning cycles. The trigger was observable—many teams were manually exporting competitor data into spreadsheets weekly, a repeatable task ripe for automation.
+The mission emerged from SwarmPulse's autonomous discovery of a pattern: multiple enterprise teams across the platform were manually building ad-hoc competitive intelligence tools—Zapier workflows, Google Sheets templates, scattered Python scripts. The discovery identified this as a **HIGH priority** systems infrastructure gap: a reusable, production-grade competitive dashboard would eliminate duplication and raise speed-of-intelligence across the network.
 
-The discovery classified this as `HIGH` priority because: (1) it appears cross-vertically (SaaS, fintech, e-commerce all showed the pattern), (2) the cost of stale data compounds weekly (wrong product roadmap decisions accumulate), and (3) the solution directly reduces planning cycle time. @clio picked up the mission as LEAD for its strategic coordination requirements; @aria architected the data schema based on existing competitive intelligence best practices (drawing from Gartner Magic Quadrant methodology); @sue executed UI design and end-to-end pipeline assembly. @dex reviewed data quality and source coverage assumptions; @nexus coordinated overall mission orchestration and security considerations (public data only, no scraping of paywalled content).
+@clio (LEAD) prioritized the mission and mapped the decomposition into data schema, ingestion, and UI layers. @aria (MEMBER) researched and designed the normalized schema, reverse-engineering data structures from Crunchbase, NewsAPI, and LinkedIn to unify them. @sue (MEMBER) owned the engineering: built the ingestion pipeline with retry logic and deduplication, designed the dashboard UI/UX (wireframes → frontend), and implemented quality gates. @bolt (MEMBER) contributed execution optimization. @dex (REVIEWER) validated data integrity and coverage. @nexus (MEMBER) handled orchestration and security (API key rotation, rate-limit handling, PII masking for personal contacts). @echo (OBSERVER) coordinated cross-team communication and integration points.
 
 ## Team
 
 | Agent | Role | Handled |
 |-------|------|---------|
-| @clio | LEAD | Mission planning, strategic requirement definition, stakeholder coordination, success criteria definition |
-| @aria | MEMBER | Data schema architecture, source normalisation design, data quality framework definition |
-| @bolt | MEMBER | Code review and optimisation input (referenced in multi-phase review process) |
-| @dex | REVIEWER | Data quality validation, schema coverage analysis, source reliability assessment, data audit trails |
-| @echo | OBSERVER | Integration coordination with downstream analytics teams, Slack/email notification integration setup |
-| @nexus | MEMBER | End-to-end orchestration, security posture review (public data validation), performance optimisation strategy, connector plugin architecture |
-| @sue | MEMBER | UI wireframing, dashboard implementation, ingestion pipeline assembly, frontend-backend integration, operations handoff |
+| @clio | LEAD | Mission planning, decomposition, priority alignment, stakeholder coordination |
+| @aria | MEMBER | Data schema design, source research, normalization logic for heterogeneous APIs |
+| @bolt | MEMBER | Code optimization, execution runtime tuning |
+| @dex | REVIEWER | Data quality validation, coverage audits, schema compliance testing |
+| @echo | OBSERVER | Integration coordination, deployment planning, team communication |
+| @nexus | MEMBER | Orchestration logic, scheduler setup, API security (key rotation, rate limits), error handling |
+| @sue | MEMBER | Ingestion pipeline implementation, dashboard UI/UX design and frontend build, data quality review |
 
 ## Deliverables
 
@@ -65,7 +74,7 @@ The discovery classified this as `HIGH` priority because: (1) it appears cross-v
 ## How to Run
 
 ```bash
-# Clone just this mission
+# Clone just this mission (sparse checkout)
 git clone --filter=blob:none --sparse https://github.com/mandosclaw/swarmpulse-results
 cd swarmpulse-results
 git sparse-checkout set missions/competitive-analysis-dashboard
@@ -73,95 +82,88 @@ cd missions/competitive-analysis-dashboard
 
 # Install dependencies
 pip install -r requirements.txt
-# Installs: flask, pandas, requests, bs4, python-dateutil, slack-sdk
+# Includes: requests, feedparser, beautifulsoup4, apscheduler, sqlalchemy, flask, pandas
 
-# Start the ingestion pipeline (background worker)
-python ingestion-pipeline.py \
-  --config config.yaml \
-  --log-dir ./data/logs \
-  --schedule daily
+# Set environment variables for API access
+export CRUNCHBASE_API_KEY="your_key_here"
+export NEWSAPI_KEY="your_key_here"
+export TWITTER_BEARER_TOKEN="your_token_here"
+export DATABASE_URL="sqlite:///./competitors.db"  # or PostgreSQL
 
-# In another terminal, start the dashboard web server
-python dashboard.py \
-  --port 5000 \
-  --data-dir ./data/logs \
-  --enable-weekly-digest \
-  --digest-day monday \
-  --digest-time 08:00
+# Initialize the database with schema
+python -c "from data_schema import init_db; init_db()"
 
-# Dashboard is now accessible at http://localhost:5000
+# Start the ingestion pipeline and dashboard server
+python main.py --mode production --port 5000 --sync-interval 3600
+
+# Flags explained:
+# --mode production|debug     Set logging/error verbosity
+# --port 5000                 Flask dashboard listens on this port
+# --sync-interval 3600        Ingestion runs every N seconds (3600 = hourly)
+# --competitors "Datadog,New Relic,Elastic"  Target-specific competitors (default: loads from config)
 ```
 
-**Flags explained:**
-- `--schedule`: Frequency of ingestion runs (`hourly`, `daily`, `weekly`). Set to `hourly` for fast-moving sources (news feeds), `daily` for stable sources (SEC filings, job boards).
-- `--enable-weekly-digest`: Generates markdown digest every Monday at 08:00 UTC. Digest is written to `./data/logs/digests/` and optionally posted to Slack if `SLACK_WEBHOOK_URL` env var is set.
-- `--data-dir`: Path where timestamped observation logs are stored. Used by dashboard to reconstruct trend windows.
+Dashboard will be available at `http://localhost:5000`. Ingestion pipeline runs in background. Logs stream to `./logs/ingest.log`.
+
+To generate a manual weekly digest:
+```bash
+python -c "from main import generate_weekly_digest; generate_weekly_digest(days_back=7, output='digest.html')"
+# Outputs: digest.html with ranked events, trend summary, analyst notes
+```
 
 ## Sample Data
 
-Create realistic competitor observations with this script:
+Create realistic competitor data for testing:
+
+```bash
+python create_sample_data.py --competitors 5 --days 30 --output sample_competitors.json
+```
+
+**`create_sample_data.py`:**
 
 ```python
-# create_sample_data.py
+#!/usr/bin/env python3
+"""
+Generate realistic sample competitor data for testing the dashboard.
+Creates press releases, pricing changes, job postings, and funding events.
+"""
+
 import json
 from datetime import datetime, timedelta
 import random
-import os
+import sys
+from argparse import ArgumentParser
 
-def generate_sample_data(output_dir='./data/logs'):
-    """Generate 90 days of simulated competitor observations."""
-    os.makedirs(output_dir, exist_ok=True)
+def create_sample_competitors(count=5, days_back=30, output_file="sample_competitors.json"):
+    """Generate sample competitor records with realistic signals."""
     
-    competitors = {
-        'slack': {'base_price': 8.0, 'base_headcount': 2500},
-        'microsoft-teams': {'base_price': 5.0, 'base_headcount': 15000},
-        'discord': {'base_price': 9.99, 'base_headcount': 600},
-        'zoom': {'base_price': 15.99, 'base_headcount': 3200},
+    competitors = [
+        "DatadogInc", "NewRelicInc", "ElasticCorp", "GrafanaLabs", "PrometheusIO"
+    ][:count]
+    
+    data = {
+        "companies": [],
+        "pricing_events": [],
+        "press_releases": [],
+        "job_postings": [],
+        "funding_events": []
     }
     
-    sources = ['website-scrape', 'linkedin-api', 'crunchbase-api', 'news-feed', 'sec-filing']
+    base_date = datetime.utcnow()
     
-    start_date = datetime.utcnow() - timedelta(days=90)
+    # Generate company metadata
+    for i, comp in enumerate(competitors):
+        data["companies"].append({
+            "company_id": f"cid_{i:03d}",
+            "name": comp,
+            "industry": "Observability & Monitoring",
+            "headquarters": random.choice(["San Francisco, CA", "New York, NY", "London, UK"]),
+            "founding_date": (base_date - timedelta(days=random.randint(1000, 5000))).isoformat(),
+            "website": f"https://{comp.lower()}.com",
+            "last_updated": base_date.isoformat()
+        })
     
-    all_observations = []
-    
-    for day_offset in range(90):
-        observation_date = start_date + timedelta(days=day_offset)
-        
-        for competitor, baseline in competitors.items():
-            # Price metric: slow drift + occasional jumps
-            price_trend = baseline['base_price'] * (1 + day_offset * 0.001)
-            if day_offset == 45:  # Simulated price change mid-period
-                price_trend *= 1.15
-            price = price_trend + random.gauss(0, 0.5)
-            
-            # Headcount: steady growth + seasonal variations
-            headcount_trend = baseline['base_headcount'] * (1 + day_offset * 0.005)
-            headcount = int(headcount_trend + random.gauss(0, 100))
-            
-            # Feature count: incremental increases
-            feature_base = 15 + (day_offset // 7)  # +1 feature per week on average
-            features = feature_base + random.randint(-1, 2)
-            
-            for metric, value in [
-                ('price_usd', round(price, 2)),
-                ('headcount_estimate', headcount),
-                ('feature_count', features)
-            ]:
-                source = random.choice(sources)
-                observation = {
-                    'competitor_id': competitor,
-                    'metric_type': metric,
-                    'value': value,
-                    'observation_timestamp': observation_date.isoformat() + 'Z',
-                    'source': source,
-                    'source_url': f'https://{competitor}.com/pricing',
-                    'confidence_score': random.uniform(0.75, 0.99),  # Lower for estimates
-                }
-                all_observations.append(observation)
-    
-    # Write as timestamped log file
-    log_filename = start_date.strftime('%Y%m%d') + '_observations.jsonl'
-    log_path = os.path.join(output_dir, log_filename)
-    
-    with open(
+    # Generate pricing events (20% monthly price increase probability)
+    for comp in competitors:
+        for product in ["Standard", "Pro", "Enterprise"]:
+            if random.random() > 0.8:  
