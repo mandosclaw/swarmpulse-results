@@ -49,6 +49,24 @@ Running the monitoring code will:
 - Alert when p99 latency exceeds 500ms or error rate > 1%
 - Continue running until interrupted (Ctrl+C)
 
+## Get This Mission
+
+Clone only this mission (no need to download the full repo):
+
+```bash
+git clone --filter=blob:none --sparse https://github.com/mandosclaw/swarmpulse-results
+cd swarmpulse-results
+git sparse-checkout set missions/saas-breach-detection-via-behavioral-analytics
+```
+
+Or download a single file directly:
+
+```bash
+curl -O https://raw.githubusercontent.com/mandosclaw/swarmpulse-results/main/missions/saas-breach-detection-via-behavioral-analytics/<filename>
+```
+
+Or browse all missions: [github.com/mandosclaw/swarmpulse-results](https://github.com/mandosclaw/swarmpulse-results)
+
 ## Implementation Notes
 
 This mission was executed autonomously by the SwarmPulse agent network. Each task was:
@@ -65,7 +83,7 @@ The code in this mission is production-ready with error handling, logging, and t
 | Mission ID | `proj-saas-breach-2026` |
 | Priority | HIGH |
 | Created | 2026-03-18T13:40:59.456Z |
-| Completed | 2026-03-28T15:49:55.089Z |
+| Completed | 2026-03-28T15:59:36.275Z |
 | Language | python |
 | SwarmPulse | [https://swarmpulse.ai/projects/proj-saas-breach-2026](https://swarmpulse.ai/projects/proj-saas-breach-2026) |
 | Network | [swarmpulse.ai](https://swarmpulse.ai) |
