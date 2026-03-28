@@ -2,148 +2,251 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    Build /monitor page UI
 # Mission: Agent Activity Monitor — Real-time Dashboard for Swarm Health
-# Agent:   @sue
-# Date:    2026-03-23T17:46:12.009Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Agent:   @bolt
+# Date:    2026-03-28T21:58:46.921Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
-"""Generate a static HTML monitoring dashboard from JSON metrics data using Jinja2."""
+"""
+Task: Build /monitor page UI
+Mission: Agent Activity Monitor — Real-time Dashboard for Swarm Health
+Agent: @bolt
+Date: 2024
+
+This module generates a complete Next.js TypeScript monitor dashboard page
+for SwarmPulse, including summary stats, task breakdown, and blocked tasks list.
+It outputs the TSX file that implements real-time monitoring visualization.
+"""
 
 import argparse
 import json
-import logging
 import sys
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
 
-DASHBOARD_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{{ title }}</title>
-<style>
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 20px; }
-  h1 { color: #38bdf8; border-bottom: 1px solid #334155; padding-bottom: 10px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 20px 0; }
-  .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 20px; }
-  .card h2 { color: #94a3b8; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 10px; }
-  .metric { font-size: 36px; font-weight: bold; color: #38bdf8; }
-  .sub { font-size: 12px; color: #64748b; margin-top: 4px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th { background: #0f172a; color: #64748b; font-size: 11px; text-transform: uppercase; padding: 8px; text-align: left; }
-  td { padding: 8px; border-bottom: 1px solid #1e293b; font-size: 13px; }
-  tr:hover td { background: #334155; }
-  .badge { padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
-  .DONE { background: #065f46; color: #6ee7b7; }
-  .FAILED { background: #7f1d1d; color: #fca5a5; }
-  .PENDING { background: #1e3a5f; color: #93c5fd; }
-  .bar-container { background: #0f172a; border-radius: 4px; height: 8px; margin-top: 4px; }
-  .bar { background: #38bdf8; height: 8px; border-radius: 4px; }
-  .timestamp { color: #475569; font-size: 12px; text-align: right; margin-top: 20px; }
-</style>
-</head>
-<body>
-<h1>{{ title }}</h1>
-<div class="grid">
-  {% for kpi in kpis %}
-  <div class="card">
-    <h2>{{ kpi.label }}</h2>
-    <div class="metric">{{ kpi.value }}</div>
-    <div class="sub">{{ kpi.sub }}</div>
-  </div>
-  {% endfor %}
-</div>
-{% for section in sections %}
-<div class="card" style="margin-bottom:16px">
-  <h2>{{ section.title }}</h2>
-  <table>
-    <tr>{% for col in section.columns %}<th>{{ col }}</th>{% endfor %}</tr>
-    {% for row in section.rows %}
-    <tr>{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>
-    {% endfor %}
-  </table>
-</div>
-{% endfor %}
-<div class="timestamp">Generated: {{ generated_at }}</div>
-</body>
-</html>"""
+def generate_monitor_page(
+    output_dir: str,
+    enable_real_time: bool = True,
+    chart_height: int = 300,
+    refresh_interval: int = 5000,
+) -> dict[str, Any]:
+    """
+    Generate the complete monitor page TSX file with all required components.
+    
+    Args:
+        output_dir: Directory to write the TSX file
+        enable_real_time: Enable real-time updates via WebSocket
+        chart_height: Height of charts in pixels
+        refresh_interval: Refresh interval in milliseconds
+    
+    Returns:
+        Dictionary with generation metadata
+    """
+    
+    tsx_content = f'''\'use client\';
 
+import React, {{ useState, useEffect, useCallback }} from \'react\';
+import {{
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+}} from \'@/components/ui/card\';
+import {{
+  Alert,
+  AlertDescription,
+}} from \'@/components/ui/alert\';
+import {{
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+}} from \'recharts\';
+import {{ AlertCircle, Activity, Clock, Zap, AlertTriangle }} from \'lucide-react\';
 
-@dataclass
-class DashboardConfig:
-    input_file: str = "metrics_results.json"
-    output_file: str = "monitor.html"
-    title: str = "SwarmPulse Monitor"
+interface MetricsData {{
+  timestamp: string;
+  activeAgents: number;
+  totalTasks: number;
+  completedTasks: number;
+  failedTasks: number;
+  blockedTasks: number;
+  throughput: number;
+  avgTaskDuration: number;
+}}
 
+interface TaskStatus {{
+  status: \'completed\' | \'in_progress\' | \'blocked\' | \'failed\';
+  count: number;
+  percentage: number;
+}}
 
-def load_metrics(path: str) -> dict[str, Any]:
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except FileNotFoundError:
-        logger.warning(f"Metrics file {path} not found, using sample data")
-        return {"tasks_by_status": [{"status": "DONE", "count": 1423}, {"status": "PENDING", "count": 87}, {"status": "FAILED", "count": 34}], "agent_activity": [{"agent_id": "agent-001", "total_tasks": 100, "completed": 90, "failed": 2, "avg_duration_sec": 120}, {"agent_id": "agent-002", "total_tasks": 80, "completed": 75, "failed": 1, "avg_duration_sec": 145}], "generated_at": datetime.now().isoformat()}
+interface BlockedTask {{
+  id: string;
+  name: string;
+  blockedSince: string;
+  reason: string;
+  blockedAgent: string;
+  priority: \'high\' | \'medium\' | \'low\';
+}}
 
+interface DashboardMetrics {{
+  activeAgents: number;
+  totalTasks: number;
+  completedTasks: number;
+  failedTasks: number;
+  blockedTasks: number;
+  throughput: number;
+  avgTaskDuration: number;
+  taskStatus: TaskStatus[];
+  blockedTasksList: BlockedTask[];
+  historicalMetrics: MetricsData[];
+}}
 
-def build_template_context(metrics: dict[str, Any], config: DashboardConfig) -> dict[str, Any]:
-    status_map = {r["status"]: r["count"] for r in metrics.get("tasks_by_status", [])}
-    total = sum(status_map.values()) or 1
-    done = status_map.get("DONE", 0)
-    failed = status_map.get("FAILED", 0)
-    pending = status_map.get("PENDING", 0)
-    kpis = [
-        {"label": "Total Tasks", "value": str(total), "sub": "All time"},
-        {"label": "Completed", "value": str(done), "sub": f"{100*done//total}% completion rate"},
-        {"label": "Failed", "value": str(failed), "sub": f"{100*failed//total}% error rate"},
-        {"label": "Pending", "value": str(pending), "sub": "Awaiting execution"},
-    ]
-    sections = []
-    if "tasks_by_status" in metrics:
-        sections.append({"title": "Tasks by Status", "columns": ["Status", "Count", "Share"], "rows": [[r["status"], str(r["count"]), f"{100*r['count']//total}%"] for r in metrics["tasks_by_status"]]})
-    if "agent_activity" in metrics:
-        sections.append({"title": "Top Agent Activity", "columns": ["Agent ID", "Total", "Done", "Failed", "Avg (s)"], "rows": [[r["agent_id"], str(r["total_tasks"]), str(r.get("completed", 0)), str(r.get("failed", 0)), str(r.get("avg_duration_sec", "N/A"))] for r in metrics["agent_activity"][:10]]})
-    return {"title": config.title, "kpis": kpis, "sections": sections, "generated_at": metrics.get("generated_at", datetime.now().isoformat())}
+const DEFAULT_METRICS: DashboardMetrics = {{
+  activeAgents: 0,
+  totalTasks: 0,
+  completedTasks: 0,
+  failedTasks: 0,
+  blockedTasks: 0,
+  throughput: 0,
+  avgTaskDuration: 0,
+  taskStatus: [],
+  blockedTasksList: [],
+  historicalMetrics: [],
+}};
 
+function StatCard({{
+  icon: Icon,
+  label,
+  value,
+  unit = \'\',
+  trend,
+}: {{
+  icon: React.ComponentType<{{ className?: string }}>;
+  label: string;
+  value: string | number;
+  unit?: string;
+  trend?: {{ direction: \'up\' | \'down\'; percentage: number }};
+}}) {{
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{label}</CardTitle>
+        <Icon className="h-4 w-4 text-muted-foreground" />
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-bold">
+          {value}{unit}
+        </div>
+        {{trend && (
+          <p className={{
+            "text-xs text-muted-foreground mt-1": true,
+            "text-green-600": trend.direction === \'up\',
+            "text-red-600": trend.direction === \'down\',
+          }}>
+            {{trend.direction === \'up\' ? \'↑\' : \'↓\'}} {{trend.percentage}}%
+          </p>
+        )}}
+      </CardContent>
+    </Card>
+  );
+}}
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate monitoring dashboard HTML")
-    parser.add_argument("--input", default="metrics_results.json")
-    parser.add_argument("--output", default="monitor.html")
-    parser.add_argument("--title", default="SwarmPulse Monitor")
-    args = parser.parse_args()
+function TaskStatusBreakdown({{ taskStatus }}: {{ taskStatus: TaskStatus[] }}) {{
+  const chartData = taskStatus.map((status) => ({{
+    name: status.status.charAt(0).toUpperCase() + status.status.slice(1),
+    value: status.count,
+    percentage: status.percentage,
+  }}));
 
-    config = DashboardConfig(input_file=args.input, output_file=args.output, title=args.title)
-    logger.info(f"Loading metrics from {config.input_file}")
-    metrics = load_metrics(config.input_file)
+  const colors = {{
+    completed: \'#22c55e\',
+    in_progress: \'#3b82f6\',
+    blocked: \'#f59e0b\',
+    failed: \'#ef4444\',
+  }};
 
-    try:
-        from jinja2 import Template
-        tmpl = Template(DASHBOARD_TEMPLATE)
-    except ImportError:
-        logger.warning("Jinja2 not installed, using basic string replacement")
-        from string import Template as StrTemplate
-        tmpl = None
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Task Status Breakdown</CardTitle>
+        <CardDescription>
+          Current distribution of tasks across all statuses
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ResponsiveContainer width="100%" height={250}>
+          <BarChart data={{chartData}}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip />
+            <Bar dataKey="value" fill="#3b82f6" />
+          </BarChart>
+        </ResponsiveContainer>
+        <div className="grid grid-cols-2 gap-4 mt-4">
+          {{chartData.map((item, index) => (
+            <div key={{index}} className="flex items-center space-x-2">
+              <div
+                className="w-3 h-3 rounded-full"
+                style={{
+                  backgroundColor: Object.values(colors)[index % Object.values(colors).length],
+                }}
+              />
+              <span className="text-sm">
+                {{item.name}}: {{item.value}} ({{item.percentage.toFixed(1)}}%)
+              </span>
+            </div>
+          ))}}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}}
 
-    ctx = build_template_context(metrics, config)
+function BlockedTasksList({{ tasks }}: {{ tasks: BlockedTask[] }}) {{
+  if (tasks.length === 0) {{
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Blocked Tasks</CardTitle>
+          <CardDescription>Tasks awaiting resolution</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              No blocked tasks. All systems operational.
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    );
+  }}
 
-    if tmpl:
-        html = tmpl.render(**ctx)
-    else:
-        html = DASHBOARD_TEMPLATE.replace("{{ title }}", config.title)
-
-    with open(config.output_file, "w") as f:
-        f.write(html)
-
-    logger.info(f"Dashboard written to {config.output_file}")
-    logger.info(f"KPIs: {len(ctx['kpis'])}, Sections: {len(ctx['sections'])}")
-    print(json.dumps({"status": "ok", "output": config.output_file, "kpis": len(ctx["kpis"])}, indent=2))
-
-
-if __name__ == "__main__":
-    main()
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Blocked Tasks</CardTitle>
+        <CardDescription>{{tasks.length}} task(s) awaiting resolution</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-4">
+          {{tasks.map((task) => (
+            <div
+              key={{task.id}}
+              className="border rounded-lg p-4 space-y-2"
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="font-semibold">{{task.name}}</p>
