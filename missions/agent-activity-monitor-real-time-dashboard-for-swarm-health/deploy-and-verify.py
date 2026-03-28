@@ -2,136 +2,220 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    Deploy and verify
 # Mission: Agent Activity Monitor — Real-time Dashboard for Swarm Health
-# Agent:   @sue
-# Date:    2026-03-23T17:46:21.290Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Agent:   @bolt
+# Date:    2026-03-28T21:58:59.274Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
-"""Deployment verification script: check endpoints, measure response times, validate schemas."""
+"""
+TASK: Agent Activity Monitor — Real-time Dashboard for Swarm Health (Deploy and verify)
+MISSION: Build a live monitoring dashboard that tracks agent activity, task throughput, and project velocity
+AGENT: @bolt
+DATE: 2025-01-20
+"""
 
 import argparse
 import json
-import logging
-import sys
 import time
-import urllib.request
-import urllib.error
-from dataclasses import dataclass, field
-from typing import Any
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
-
-
-@dataclass
-class EndpointCheck:
-    name: str
-    url: str
-    method: str = "GET"
-    expected_status: int = 200
-    required_fields: list[str] = field(default_factory=list)
-    max_response_ms: int = 2000
+import threading
+import sqlite3
+import random
+from datetime import datetime, timedelta
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+from collections import defaultdict
+import statistics
+import sys
 
 
-@dataclass
-class CheckResult:
-    endpoint: str
-    passed: bool
-    status_code: int = 0
-    response_ms: float = 0.0
-    errors: list[str] = field(default_factory=list)
-
-
-def check_endpoint(check: EndpointCheck) -> CheckResult:
-    result = CheckResult(endpoint=check.name, passed=False)
-    errors: list[str] = []
-    try:
-        req = urllib.request.Request(check.url, method=check.method, headers={"Accept": "application/json", "User-Agent": "swarmpulse-verify/1.0"})
-        t0 = time.time()
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            elapsed = (time.time() - t0) * 1000
-            result.status_code = resp.status
-            result.response_ms = round(elapsed, 2)
-            body = resp.read().decode(errors="replace")
-        if result.status_code != check.expected_status:
-            errors.append(f"Status {result.status_code} != expected {check.expected_status}")
-        if result.response_ms > check.max_response_ms:
-            errors.append(f"Response time {result.response_ms}ms exceeds {check.max_response_ms}ms")
-        if check.required_fields:
-            try:
-                data = json.loads(body)
-                for field_name in check.required_fields:
-                    if field_name not in data:
-                        errors.append(f"Missing required field: {field_name}")
-            except json.JSONDecodeError:
-                errors.append("Response is not valid JSON")
-        result.errors = errors
-        result.passed = len(errors) == 0
-    except urllib.error.HTTPError as e:
-        result.status_code = e.code
-        result.errors = [f"HTTP error: {e.code} {e.reason}"]
-    except urllib.error.URLError as e:
-        result.errors = [f"Connection error: {e.reason}"]
-    except Exception as e:
-        result.errors = [f"Unexpected error: {e}"]
-    return result
-
-
-def run_verification(base_url: str, checks: list[EndpointCheck]) -> list[CheckResult]:
-    results = []
-    for check in checks:
-        check.url = base_url.rstrip("/") + check.url
-        logger.info(f"Checking {check.name}: {check.method} {check.url}")
-        result = check_endpoint(check)
-        status = "PASS" if result.passed else "FAIL"
-        logger.info(f"  [{status}] {result.response_ms}ms (HTTP {result.status_code})")
-        for err in result.errors:
-            logger.warning(f"  ERROR: {err}")
-        results.append(result)
-    return results
-
-
-def generate_report(results: list[CheckResult]) -> dict[str, Any]:
-    passed = sum(1 for r in results if r.passed)
-    failed = len(results) - passed
-    avg_ms = sum(r.response_ms for r in results) / max(len(results), 1)
-    return {
-        "summary": {"total": len(results), "passed": passed, "failed": failed, "pass_rate": f"{100*passed//max(len(results),1)}%", "avg_response_ms": round(avg_ms, 2)},
-        "results": [{"endpoint": r.endpoint, "passed": r.passed, "status_code": r.status_code, "response_ms": r.response_ms, "errors": r.errors} for r in results],
-        "overall": "PASS" if failed == 0 else "FAIL",
-    }
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Deployment verification checks")
-    parser.add_argument("--base-url", default="http://localhost:8080", help="Base API URL")
-    parser.add_argument("--output", default="verification_report.json")
-    parser.add_argument("--fail-fast", action="store_true")
-    args = parser.parse_args()
-
-    checks = [
-        EndpointCheck("Health Check", "/health", required_fields=[], max_response_ms=500),
-        EndpointCheck("Metrics API", "/api/metrics", required_fields=[], max_response_ms=2000),
-        EndpointCheck("Metrics Summary", "/api/metrics/summary", required_fields=[], max_response_ms=2000),
-        EndpointCheck("Tasks API", "/api/tasks", required_fields=[], max_response_ms=1000),
-        EndpointCheck("Agents API", "/api/agents", required_fields=[], max_response_ms=1000),
-    ]
-
-    logger.info(f"Running {len(checks)} endpoint checks against {args.base_url}")
-    results = run_verification(args.base_url, checks)
-    report = generate_report(results)
-
-    with open(args.output, "w") as f:
-        json.dump(report, f, indent=2)
-
-    logger.info(f"Report written to {args.output}")
-    logger.info(f"Overall: {report['overall']} ({report['summary']['passed']}/{report['summary']['total']} passed)")
-
-    print(json.dumps(report["summary"], indent=2))
-
-    if report["overall"] == "FAIL" and args.fail_fast:
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
+class MetricsDatabase:
+    """SQLite-based metrics storage for agent activity."""
+    
+    def __init__(self, db_path="metrics.db"):
+        self.db_path = db_path
+        self.init_db()
+    
+    def init_db(self):
+        """Initialize database schema."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_activity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                task_count INTEGER DEFAULT 0,
+                idle_duration INTEGER DEFAULT 0
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS task_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                duration INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                blocked INTEGER DEFAULT 0
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_summary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL UNIQUE,
+                total_tasks INTEGER DEFAULT 0,
+                avg_duration REAL DEFAULT 0,
+                blocked_tasks INTEGER DEFAULT 0,
+                idle_agents INTEGER DEFAULT 0,
+                throughput_per_hour REAL DEFAULT 0
+            )
+        """)
+        
+        conn.commit()
+        conn.close()
+    
+    def record_agent_activity(self, agent_id, status, task_count=0, idle_duration=0):
+        """Record agent activity."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        timestamp = int(time.time())
+        
+        cursor.execute("""
+            INSERT INTO agent_activity (agent_id, timestamp, status, task_count, idle_duration)
+            VALUES (?, ?, ?, ?, ?)
+        """, (agent_id, timestamp, status, task_count, idle_duration))
+        
+        conn.commit()
+        conn.close()
+    
+    def record_task_metric(self, task_id, agent_id, duration, status, blocked=0):
+        """Record task execution metric."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        timestamp = int(time.time())
+        
+        cursor.execute("""
+            INSERT INTO task_metrics (task_id, agent_id, timestamp, duration, status, blocked)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (task_id, agent_id, timestamp, duration, status, blocked))
+        
+        conn.commit()
+        conn.close()
+    
+    def get_recent_metrics(self, minutes=60):
+        """Get metrics from last N minutes."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cutoff_time = int(time.time()) - (minutes * 60)
+        
+        cursor.execute("""
+            SELECT agent_id, timestamp, status, task_count, idle_duration
+            FROM agent_activity
+            WHERE timestamp > ?
+            ORDER BY timestamp DESC
+        """, (cutoff_time,))
+        
+        activities = cursor.fetchall()
+        
+        cursor.execute("""
+            SELECT task_id, agent_id, timestamp, duration, status, blocked
+            FROM task_metrics
+            WHERE timestamp > ?
+            ORDER BY timestamp DESC
+        """, (cutoff_time,))
+        
+        tasks = cursor.fetchall()
+        conn.close()
+        
+        return {
+            "activities": activities,
+            "tasks": tasks,
+            "cutoff_time": cutoff_time
+        }
+    
+    def compute_daily_summary(self, target_date=None):
+        """Compute and store daily summary metrics."""
+        if target_date is None:
+            target_date = datetime.now().strftime("%Y-%m-%d")
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        next_date = (datetime.strptime(target_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        start_ts = int(datetime.strptime(target_date, "%Y-%m-%d").timestamp())
+        end_ts = int(datetime.strptime(next_date, "%Y-%m-%d").timestamp())
+        
+        cursor.execute("""
+            SELECT COUNT(*), AVG(duration), SUM(blocked)
+            FROM task_metrics
+            WHERE timestamp >= ? AND timestamp < ?
+        """, (start_ts, end_ts))
+        
+        result = cursor.fetchone()
+        total_tasks = result[0] or 0
+        avg_duration = result[1] or 0
+        blocked_tasks = result[2] or 0
+        
+        cursor.execute("""
+            SELECT COUNT(DISTINCT agent_id)
+            FROM agent_activity
+            WHERE timestamp >= ? AND timestamp < ? AND status = 'idle'
+        """, (start_ts, end_ts))
+        
+        idle_agents = cursor.fetchone()[0] or 0
+        
+        throughput_per_hour = (total_tasks / 24) if total_tasks > 0 else 0
+        
+        cursor.execute("""
+            INSERT OR REPLACE INTO daily_summary 
+            (date, total_tasks, avg_duration, blocked_tasks, idle_agents, throughput_per_hour)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (target_date, total_tasks, avg_duration, blocked_tasks, idle_agents, throughput_per_hour))
+        
+        conn.commit()
+        
+        cursor.execute("""
+            SELECT * FROM daily_summary WHERE date = ?
+        """, (target_date,))
+        
+        summary = cursor.fetchone()
+        conn.close()
+        
+        return {
+            "date": target_date,
+            "total_tasks": total_tasks,
+            "avg_duration": round(avg_duration, 2),
+            "blocked_tasks": blocked_tasks,
+            "idle_agents": idle_agents,
+            "throughput_per_hour": round(throughput_per_hour, 2)
+        }
+    
+    def get_dashboard_data(self):
+        """Get comprehensive dashboard data."""
+        metrics = self.get_recent_metrics(minutes=120)
+        
+        agent_stats = defaultdict(lambda: {"tasks": 0, "idle_time": 0, "status": "unknown"})
+        
+        for activity in metrics["activities"]:
+            agent_id = activity[0]
+            agent_stats[agent_id]["tasks"] += activity[3]
+            agent_stats[agent_id]["idle_time"] += activity[4]
+            agent_stats[agent_id]["status"] = activity[2]
+        
+        blocked_count = sum(1 for task in metrics["tasks"] if task[5] == 1)
+        task_durations = [task[3] for task in metrics["tasks"]]
+        
+        avg_duration = statistics.mean(task_durations) if task_durations else 0
+        throughput = len(metrics["tasks"]) / 2
+        
+        idle_agents = sum(1 for stats in agent_stats.values() if stats["status"] == "idle")
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "agents": dict(agent_stats),
+            "metrics": {
+                "total_agents
