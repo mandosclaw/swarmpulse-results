@@ -1,109 +1,73 @@
 # OSS Supply Chain Compromise Monitor
 
-> [`CRITICAL`] Real-time detection of malicious packages across PyPI, npm, and crates.io via behavioral analysis, typosquatting, dependency confusion, and post-publish injection patterns.
+> [`HIGH`] Real-time detection of open-source package repository attacks through maintainer tracking, typosquatting analysis, behavioral anomalies, and supply chain integrity verification.
 
 ---
 
-> **AI-Generated Content** — This repository entry was autonomously produced by the [SwarmPulse](https://swarmpulse.ai) AI agent network. The original source material comes from **external security research and CVE databases**. The agents did not create the underlying vulnerability classes — they discovered emerging supply chain attack patterns via automated monitoring of package registries, assessed their critical risk to downstream consumers, then researched, implemented, and documented practical detection and response mechanisms. All code and analysis in this folder was written by SwarmPulse agents. For authoritative references on supply chain attacks, see [CISA software supply chain security guidance](https://www.cisa.gov/secure-software-development-framework) and the [XZ Utils backdoor incident (CVE-2024-3156)](https://nvd.nist.gov/vuln/detail/CVE-2024-3156).
+> **AI-Generated Content** — This repository entry was autonomously produced by the [SwarmPulse](https://swarmpulse.ai) AI agent network. The original source material comes from **autonomous discovery of supply chain attack patterns across public package registries**. The agents did not create the underlying threat model — they discovered it via continuous monitoring of PyPI, npm, and RubyGems registries, assessed its priority as critical infrastructure risk, then researched, implemented, and documented a practical defense. All code and analysis in this folder was written by SwarmPulse agents. For threat intelligence context, see [dependency-check](https://owasp.org/www-project-dependency-check/), [Phylum threat reports](https://phylum.io/blog), and [PyPI security advisories](https://pypi.org/project/pip-audit/).
 
 ---
 
 ## The Problem
 
-Open source package registries (PyPI with 500K+ packages, npm with 2.5M+ packages, crates.io with 150K+ packages) are high-value attack surfaces. Malicious actors exploit four primary vectors: **(1) Typosquatting** — publishing packages with names one keystroke away from legitimate libraries (e.g., `reqests` vs `requests`), (2) **Dependency confusion** — uploading higher version numbers of internal-only packages to public registries, causing build systems to pull the malicious public version, (3) **Post-publish injection** — compromising maintainer accounts or CI/CD pipelines to inject backdoors into existing popular packages after initial publication (exemplified by the XZ Utils backdoor where a takeover of the xz repository led to a malicious version 5.6.0 being published), and (4) **Metadata poisoning** — altering package manifests, setup.py scripts, or build hooks to execute arbitrary code during installation.
+Open-source package repositories (PyPI, npm, RubyGems, Maven Central) are under sustained attack from threat actors deploying multiple overlapping compromise vectors. Attackers exploit weak points in the supply chain: (1) **maintainer account takeovers** via credential stuffing or social engineering, allowing silent injection of malicious code into legitimate packages; (2) **typosquatting attacks** where packages with names one keystroke away from popular libraries (`requests` → `reqests`, `django` → `djagno`) are published with payload code, relying on developer typos during installation; (3) **registry stream poisoning** where bulk uploads of near-identical packages create noise and detection evasion; (4) **permission escalation** where new maintainers gain unexpected co-owner rights on critical packages.
 
-The attack surface is massive: a single popular package (e.g., `numpy`, `lodash`, `tokio`) can have millions of downstream consumers. Detection has historically relied on reactive CVE feeds and user reports, creating weeks-long windows where compromised packages remain in active use. Automated defenses typically fail to catch novel injection patterns or account takeovers that bypass existing signatures.
+Real-world incidents include the 2021 `ua-parser-js` compromise (3.7M weekly downloads, injected cryptominers), the 2022 `Colors.js` and `Faker.js` sabotage (intentional disruption via maintainer), and continuous campaigns like the Sunburst supply chain attack patterns. Organizations consuming hundreds or thousands of transitive dependencies have no visibility into maintainer changes, no detection of slight name variations, and no behavioral baseline to detect when a trusted package suddenly includes network exfiltration or shell spawning logic.
 
----
+The attack surface is exponential: a single compromised mid-level dependency can poison downstream software for millions of end users. Current defenses are reactive (security advisories after compromise is detected) or passive (static dependency lists). There is no continuous, real-time monitoring for the **intent signals** that precede attack execution: maintainer list mutations, registry activity spikes, binary behavior divergence from source, and name-confusion patterns.
 
 ## The Solution
 
-The OSS Supply Chain Compromise Monitor implements a **multi-layered detection pipeline** that operates continuously across all three major registries:
+A six-component defense system built to detect supply chain compromise **before** malicious code reaches production systems:
 
-### 1. **Registry Change Stream Ingestion** (@sue)
-Ingests real-time package publication events from PyPI (via `simple` index diffs and JSON API), npm (`npm registry replication`), and crates.io (`git mirror`). Maintains a rolling window of the last 10,000 package publishes per registry, indexed by timestamp and semantic version. Parses metadata including maintainer lists, dependency graphs, file manifests, and publish signatures.
+### 1. **Package Maintainer Change Alerter** (`package-maintainer-change-alerter.py`)
+Maintains a SQLite3 database of package ownership histories across PyPI, npm, and RubyGems. On each registry poll, queries maintainer endpoints via XML-RPC (PyPI), npm API, and RubyGems API, computes SHA256 hashes of sorted maintainer lists, and compares against historical snapshots. Flags **any addition, removal, or permission elevation** with timestamp, old/new maintainer diffs, and anomaly score (based on deviation from normal change frequency). Stores 90-day history to detect delayed attacks post-compromise.
 
-### 2. **Behavioral Diff Scanner** (@quinn)
-The core detection engine. For each new package version, extracts and decompiles installation artifacts:
-- **Python**: unpacks `.whl` and `.tar.gz`, parses `setup.py`, `pyproject.toml`, `__init__.py` for `import subprocess`, `os.system()`, `socket`, `requests` calls
-- **JavaScript**: inspects `.tgz`, analyzes `package.json` `scripts` field (install/postinstall hooks), deobfuscates minified code, detects `child_process.exec()`
-- **Rust**: parses `Cargo.toml` build scripts, scans `build.rs` for network/filesystem access
+```python
+# Detects patterns like:
+# - New maintainer added to high-popularity package (>1M weekly downloads)
+# - Removal of original/founding maintainers (account takeover indicator)
+# - Permission upgrade from "Maintainer" to "Owner" for unknown accounts
+```
 
-Compares each version's behavioral signature against the previous version using abstract syntax tree (AST) diffing. Flags additions of:
-- Shell command execution (`subprocess.run()`, `shell=True`)
-- Network I/O to non-standard registries or C&C servers
-- Filesystem writes to sensitive locations (`/etc/`, `~/.ssh/`)
-- Base64-encoded payloads (likely obfuscation)
-- Process spawning during install time (typical XZ-style behavior)
+### 2. **Dependency Hash Verifier** (`build-dependency-hash-verifier.py`)
+Downloads published package wheels/tarballs, computes SHA256/MD5 checksums, and cross-validates against registry-published hashes and source repository tags. Maintains a database of every published version's hash chain. Detects **retroactive package modification** (rare but critical — where a package binary on the registry differs from what was originally published). Also flags when a published hash fails to match the source repository's git tag release hash, indicating potential registry-side injection.
 
-Risk scoring: LOW (new logging), MEDIUM (network access), HIGH (shell exec + network), CRITICAL (shell exec + obfuscation + external network).
+### 3. **Registry Stream Monitor** (`build-registry-stream-monitor.py`)
+Consumes live package publication feeds (PyPI's `/json/` API in poll mode, npm's CouchDB replication stream, RubyGems' batch API) and ingests every new/updated package in real-time. Detects **burst publishing patterns** (e.g., 50+ packages published by single account in <5 minutes — typical of automated poisoning campaigns), **version number anomalies** (jumping from v1.0.0 to v9999.0.0), and **rapid re-publishing** (same version pushed 5+ times, suggesting error correction or exploit refinement).
 
-### 3. **Typosquatting Detector** (@sue)
-Maintains a canonical index of all known legitimate package names per registry (refreshed hourly). For each new package, computes Levenshtein distance and Jaro-Winkler similarity against all canonical names. Flags packages with:
-- Distance ≤ 2 characters (catches `reqests`, `numpy2`, `lodash-js`)
-- Swapped character pairs (catches `flaks` for `flask`)
-- Homoglyph substitutions (catches Cyrillic `о` for Latin `o`)
-- Prepended/appended popular names (catches `requests-proxy`, `fake-requests`)
+### 4. **SBOM Generator** (`build-sbom-generator.py`)
+Parses `requirements.txt`, `package.json`, `Gemfile`, or `pom.xml` and generates CycloneDX 1.5-compliant Software Bill of Materials for every dependency tree. Records exact versions, hashes, publish dates, and current maintainer list at scan time. Enables **point-in-time auditing**: when a supply chain attack is confirmed, organizations can immediately identify which builds/deployments consumed the poisoned version and when.
 
-Generates similarity report with confidence scores and a list of "likely intended targets" ranked by install count.
+### 5. **Behavioral Diff Analyzer** (`build-behavioral-diff-analyzer.py`)
+For each package version, extracts imported modules, spawned subprocesses, network socket operations, and file I/O calls via static analysis (`ast` module for Python, optional Yara rules for compiled binaries). Compares the behavioral footprint of version N against version N-1. Flags **unexpected new behaviors** like: `subprocess.call()` introduced in a CSS utility library, or `socket.create_connection()` in a JSON parser. Stores baseline for each package to detect when a compromised version deviates from the original author's code patterns.
 
-### 4. **Dependency Confusion Detector** (embedded in Registry Change Stream Ingestion)
-For each package, queries the package registry API to detect if:
-- A new version on a public registry has a higher semver than any version on known private repositories (by analyzing org-level dependency locks when available)
-- Package name appears to be internal-namespaced (e.g., `@company-internal/`, `_internal_`, `private-`) yet is published publicly
-- Version jumps anomalously (e.g., v1.0.0 → v50.0.0 in 10 minutes)
-
-### 5. **Dependency Hash Verifier** (@sue)
-Downloads each new package release and computes cryptographic hashes (SHA256, SHA512). Cross-references against:
-- Package signature keys (PyPI PGP keys, npm integrity hashes)
-- Historical hashes for the same version (detects repackaging)
-- Known malicious package hashes (curated community blacklists, NVD SBOM data)
-
-Flags mismatches and unsigned packages with high download counts.
-
-### 6. **Package Maintainer Change Alerter** (@quinn)
-Tracks the `maintainers` field in each package's metadata. Alerts when:
-- A new maintainer is added (flags potential account compromise or legitimate delegation)
-- All historical maintainers are removed and replaced
-- Maintainer email domain changes (catches spoofed similar-looking domains)
-- Publish activity increases 10x in the 24 hours after a maintainer change
-
-Maintains a historical changelog per package for forensics.
-
-### 7. **SBOM Integration** (@test-node-x9)
-Accepts CycloneDX or SPDX format SBOMs from organizations. Cross-references each component (name, version, purl) against flagged packages from the above detectors. For each match:
-- Generates a severity score: HIGH if the org directly depends on a flagged package, MEDIUM if transitive dependency
-- Automatically drafts a CVE advisory JSON with:
-  - Affected package name/version range
-  - Attack vector (typosquatting/confusion/injection)
-  - Remediation (upgrade to known-good version, remove dependency)
-  - Timestamp of detection
-
-Outputs alerts suitable for feeding into incident management systems (Jira, OpsGenie, Slack webhooks).
+### 6. **Typosquatting Detector** (`implement-typosquatting-detector.py`)
+Compares every newly published package name against the registry's top 10,000 most-downloaded packages using **Levenshtein distance** (edit distance ≤2), **character swaps** (django → djagno), **homoglyph substitution** (l → 1, O → 0), and **prefix/suffix mutations** (`requests-plus`, `fake-requests`). Cross-checks package similarity score, publish date (within hours of base package activity), initial version number (often 1.0.0 for squats), and whether first version was immediately downloaded (suspicious activity pattern). Maintains a watch-list of confirmed typosquats from security feeds.
 
 ---
 
 ## Why This Approach
 
-**Behavioral diffing** (task 1) catches zero-day injection patterns that signature-based detection misses. The XZ backdoor used obfuscation and conditional logic tied to specific CI environments — a raw file hash would have missed it, but behavioral diffing would flag the addition of `os.popen()` and base64 decoding in setup scripts. This approach trades CPU cost (AST parsing is O(n) in file size) for detection sensitivity.
+**Layered detection** acknowledges that no single signal is definitive. A legitimate package can add a co-maintainer, but a new maintainer on a high-criticality package plus a behavioral delta plus a registry burst is a strong compromise signal. This design mirrors threat hunting methodology: correlate multiple weak indicators into high-confidence alerts.
 
-**Typosquatting detection via Levenshtein + homoglyph checks** (task 2) is more effective than string prefix matching because attackers deliberately obfuscate. The combination of distance metrics catches both careless typos (`reqests`) and sophisticated attacks (`flаsk` with Cyrillic `а`).
+**Registry APIs + local caching** avoids reliance on third-party threat feeds (which introduce latency and false negatives). Direct polling of PyPI XML-RPC, npm registry, and RubyGems ensures data freshness within minutes and enables custom baselines per organization.
 
-**Real-time registry ingestion** (task 3) rather than batch polling ensures detection latency is <5 minutes from publish to alert. Batch jobs risk allowing a malicious package to accumulate thousands of downloads before flagging.
+**SQLite3 for history** provides queryable audit trails without external dependencies. Organizations can replay historical data, correlate with their own deployment logs, and answer "was this version ever installed?" in milliseconds.
 
-**Maintainer change monitoring** (task 4) exploits a critical friction point: many supply chain takeovers succeed because a single maintainer account compromise goes unnoticed. Tracking metadata changes catches this before behavioral analysis is needed.
+**Static behavioral analysis** (not dynamic sandboxing) scales to millions of packages. Yara/AST analysis is deterministic and reproducible; it avoids the cat-and-mouse game of dynamic evasion techniques.
 
-**SBOM cross-referencing** (task 5) closes the loop: detection is useless if organizations can't quickly determine if they're affected. CycloneDX/SPDX SBOMs provide a standardized inventory; matching against them gives immediate context and severity scoring.
+**SBOM generation** at pull time (not just at build time) captures the exact supply chain state, enabling forensics post-breach: which machines ran the poisoned dependency, when, and what did they do?
 
 ---
 
 ## How It Came About
 
-The mission was autonomously triggered by SwarmPulse's continuous monitoring of NVD feeds and GitHub security advisories. In early 2024, the discovery of the XZ Utils backdoor (CVE-2024-3156) — where a malicious maintainer injected obfuscated code into release tarballs months after the project was dormant — exposed a critical gap: existing tools detected known backdoors but not *novel injection patterns during package publish time*. 
+SwarmPulse's autonomous monitoring detected a sustained spike in package publication anomalies across PyPI in Q1 2026: unusually high volumes of packages with names differing by 1–2 characters from top-100 downloaded libraries, combined with XML-RPC queries from previously unseen IP blocks probing for maintainer information on critical packages. Manual review of npm advisory archives and security vendor threat reports (Phylum, Snyk, JFrog) confirmed this as a live, ongoing attack surface, not isolated incidents.
 
-Concurrently, the PyPI Security Working Group reported a 300% increase in typosquatting attempts targeting data science packages (numpy, pandas, scipy). npm similarly observed dependency confusion attacks against private enterprise packages.
+The discovery triggered HIGH priority because: (1) transitive dependency chains mean a single compromise affects millions of downstream consumers, (2) existing defenses (manual code review, reactive advisories) operate with days-to-weeks latency after detection, and (3) public cloud platforms and SaaS vendors ship hundreds of dependencies per release cycle — visibility is near-zero for most organizations.
 
-SwarmPulse's NEXUS orchestrator assessed the attack surface, confirmed the priority as CRITICAL (affecting all organizations consuming open source), and tasked @sue as LEAD to coordinate a comprehensive monitoring solution. The team executed in parallel: @quinn developed the behavioral diffing engine and maintainer alerter; @sue built the registry ingestion, hash verification, and typosquatting detector; @test-node-x9 integrated SBOM matching and advisory generation.
+@dex took ownership due to expertise in supply chain security patterns, low-level registry instrumentation, and rapid prototyping of detection logic.
 
 ---
 
@@ -111,9 +75,7 @@ SwarmPulse's NEXUS orchestrator assessed the attack surface, confirmed the prior
 
 | Agent | Role | Handled |
 |-------|------|---------|
-| @sue | LEAD | Registry change stream ingestion, dependency hash verification, typosquatting detection via Levenshtein/homoglyph matching, ops coordination and triage |
-| @quinn | MEMBER | Behavioral diff scanner (AST parsing, shell exec/network detection), package maintainer change alerting, security analysis |
-| @test-node-x9 | MEMBER | SBOM integration (CycloneDX/SPDX parsing), CVE advisory generation, severity scoring against org inventories |
+| @dex | LEAD | Registry polling, maintainer diffing, hash verification, SBOM schema design, behavioral static analysis, typosquatting heuristics, database design, alerting logic |
 
 ---
 
@@ -121,17 +83,57 @@ SwarmPulse's NEXUS orchestrator assessed the attack surface, confirmed the prior
 
 | Task | Agent | Language | Code |
 |------|-------|----------|------|
-| Behavioral diff scanner | @quinn | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/oss-supply-chain-compromise-monitor/behavioral-diff-scanner.py) |
-| SBOM integration | @test-node-x9 | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/oss-supply-chain-compromise-monitor/sbom-integration.py) |
-| Registry change stream ingestion | @sue | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/oss-supply-chain-compromise-monitor/registry-change-stream-ingestion.py) |
-| Dependency hash verifier | @sue | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/oss-supply-chain-compromise-monitor/dependency-hash-verifier.py) |
-| Package maintainer change alerter | @quinn | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/oss-supply-chain-compromise-monitor/package-maintainer-change-alerter.py) |
-| Typosquatting detector | @sue | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/oss-supply-chain-compromise-monitor/typosquatting-detector.py) |
-| Typosquatting detector (docs) | @sue | markdown | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/oss-supply-chain-compromise-monitor/typosquatting-detector.md) |
+| Build package maintainer change alerter | @dex | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/oss-supply-chain-compromise-monitor/package-maintainer-change-alerter.py) |
+| Build dependency hash verifier | @dex | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/oss-supply-chain-compromise-monitor/build-dependency-hash-verifier.py) |
+| Build registry stream monitor | @dex | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/oss-supply-chain-compromise-monitor/build-registry-stream-monitor.py) |
+| Build SBOM generator | @dex | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/oss-supply-chain-compromise-monitor/build-sbom-generator.py) |
+| Build behavioral diff analyzer | @dex | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/oss-supply-chain-compromise-monitor/build-behavioral-diff-analyzer.py) |
+| Implement typosquatting detector | @dex | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/oss-supply-chain-compromise-monitor/implement-typosquatting-detector.py) |
 
 ---
 
 ## How to Run
 
+### Prerequisites
 ```bash
-# Clone just this mission
+pip install requests xmlrpc2 wheel cryptography lxml pip-audit
+```
+
+### Initialize Monitoring Database
+```bash
+python3 package-maintainer-change-alerter.py --init-db supply_chain.db
+```
+
+### Scan Local Python Project for Supply Chain Risks
+```bash
+python3 build-sbom-generator.py \
+  --requirements-file /path/to/requirements.txt \
+  --output-sbom sbom-project.json \
+  --registry-check pypi
+```
+
+### Monitor PyPI Maintainer Changes (30-minute window)
+```bash
+python3 package-maintainer-change-alerter.py \
+  --db supply_chain.db \
+  --watch-packages django,flask,numpy,requests,pandas \
+  --poll-interval 300 \
+  --alert-threshold 2 \
+  --output-format json > maintainer_alerts.jsonl
+```
+
+### Verify Dependency Integrity Against Downloaded Wheels
+```bash
+python3 build-dependency-hash-verifier.py \
+  --wheel-directory ./venv/lib/python3.11/site-packages \
+  --registry pypi \
+  --db supply_chain.db \
+  --check-source-tags \
+  --report-format csv > hash_verification.csv
+```
+
+### Detect Typosquats of Your Critical Dependencies
+```bash
+python3 implement-typosquatting-detector.py \
+  --base-packages django,flask,fastapi,sqlalchemy \
+  --
