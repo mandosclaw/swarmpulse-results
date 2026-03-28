@@ -3,153 +3,237 @@
 # Task:    API key rotation enforcer
 # Mission: API Authentication Bypass Detector
 # Agent:   @quinn
-# Date:    2026-03-23T18:00:33.849Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Date:    2026-03-28T21:59:42.684Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
-"""API key rotation enforcer: query API for key metadata, flag old keys, wildcard scopes, never-rotated."""
+"""
+API Key Rotation Enforcer
+Mission: API Authentication Bypass Detector
+Agent: @quinn (SwarmPulse)
+Date: 2024
 
-import argparse
+Task: Detect API keys older than 90 days, keys with overly broad scopes,
+and keys never rotated since creation.
+"""
+
 import json
-import logging
+import argparse
 import sys
-import urllib.request
-import urllib.error
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import datetime, timedelta
+from dataclasses import dataclass, asdict
+from typing import List, Dict, Tuple
+import hashlib
+import secrets
+from enum import Enum
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
 
-MAX_KEY_AGE_DAYS = 90
-WILDCARD_SCOPE_PATTERNS = ["*", ".*", "all", "admin:*", "write:*", "read:*", "full_access"]
+class KeyStatus(Enum):
+    """Status of API key compliance."""
+    COMPLIANT = "compliant"
+    EXPIRED = "expired"
+    OVERLY_BROAD = "overly_broad"
+    NEVER_ROTATED = "never_rotated"
+    MULTIPLE_VIOLATIONS = "multiple_violations"
 
 
 @dataclass
 class APIKey:
+    """Represents an API key with metadata."""
     key_id: str
+    key_hash: str
     name: str
-    created_at: datetime
-    last_rotated_at: Optional[datetime]
-    scopes: list[str]
-    last_used_at: Optional[datetime]
-    owner: str = ""
-    environment: str = "production"
+    created_at: str
+    last_rotated_at: str
+    scopes: List[str]
+    owner: str
+    active: bool
 
 
 @dataclass
-class KeyViolation:
+class RotationViolation:
+    """Represents a key rotation violation."""
     key_id: str
     key_name: str
-    violation_type: str
-    severity: str
-    details: str
-    recommendation: str
+    owner: str
+    status: KeyStatus
+    violations: List[str]
+    age_days: int
+    scope_count: int
+    created_at: str
+    last_rotated_at: str
+    recommended_action: str
 
 
-def parse_datetime(val: Any) -> Optional[datetime]:
-    if not val:
-        return None
-    if isinstance(val, (int, float)):
-        return datetime.fromtimestamp(val, tz=timezone.utc)
-    formats = ["%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%S+00:00", "%Y-%m-%d"]
-    for fmt in formats:
+class APIKeyRotationEnforcer:
+    """Enforces API key rotation policies and detects compliance violations."""
+
+    # Overly broad scope indicators
+    OVERLY_BROAD_SCOPES = {
+        "admin",
+        "superuser",
+        "root",
+        "all",
+        "*",
+        "unrestricted",
+        "full_access",
+    }
+
+    # Maximum allowed scope count before flagging as overly broad
+    MAX_SAFE_SCOPE_COUNT = 5
+
+    # Maximum age in days before key should be rotated
+    MAX_KEY_AGE_DAYS = 90
+
+    def __init__(self, max_age_days: int = 90, max_scope_count: int = 5):
+        """
+        Initialize the API Key Rotation Enforcer.
+
+        Args:
+            max_age_days: Maximum age in days before key rotation is required
+            max_scope_count: Maximum number of safe scopes per key
+        """
+        self.max_age_days = max_age_days
+        self.max_scope_count = max_scope_count
+
+    def parse_datetime(self, date_string: str) -> datetime:
+        """Parse ISO 8601 datetime string."""
         try:
-            return datetime.strptime(str(val), fmt).replace(tzinfo=timezone.utc)
-        except ValueError:
-            continue
-    return None
+            return datetime.fromisoformat(date_string.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return datetime.now()
 
+    def calculate_key_age(self, created_at: str) -> int:
+        """Calculate age of key in days."""
+        created = self.parse_datetime(created_at)
+        return (datetime.now(created.tzinfo) - created).days
 
-def fetch_keys(api_url: str, token: str) -> list[APIKey]:
-    try:
-        req = urllib.request.Request(f"{api_url}/api/keys", headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-            keys_data = data if isinstance(data, list) else data.get("keys", data.get("data", []))
-            keys = []
-            for k in keys_data:
-                keys.append(APIKey(key_id=k.get("id", k.get("key_id", "")), name=k.get("name", ""), created_at=parse_datetime(k.get("created_at")) or datetime.now(tz=timezone.utc), last_rotated_at=parse_datetime(k.get("last_rotated_at") or k.get("rotated_at")), scopes=k.get("scopes", k.get("permissions", [])), last_used_at=parse_datetime(k.get("last_used_at") or k.get("last_used")), owner=k.get("owner", k.get("user_id", "")), environment=k.get("environment", "production")))
-            return keys
-    except Exception as e:
-        logger.warning(f"Could not fetch from API: {e}. Using synthetic data.")
-        now = datetime.now(tz=timezone.utc)
-        return [
-            APIKey("key-001", "Production API Key", now - timedelta(days=120), now - timedelta(days=100), ["read:data", "write:data"], now - timedelta(days=5), "alice", "production"),
-            APIKey("key-002", "Admin Key", now - timedelta(days=200), None, ["*"], now - timedelta(days=1), "admin", "production"),
-            APIKey("key-003", "Dev Key", now - timedelta(days=30), now - timedelta(days=30), ["read:*"], now - timedelta(days=10), "bob", "development"),
-            APIKey("key-004", "Stale Key", now - timedelta(days=365), None, ["admin:*"], now - timedelta(days=180), "charlie", "production"),
-            APIKey("key-005", "New Key", now - timedelta(days=10), now - timedelta(days=10), ["read:data"], now - timedelta(hours=2), "alice", "production"),
-        ]
+    def is_key_expired(self, created_at: str) -> bool:
+        """Check if key has exceeded maximum age."""
+        age = self.calculate_key_age(created_at)
+        return age > self.max_age_days
 
+    def has_overly_broad_scopes(self, scopes: List[str]) -> Tuple[bool, List[str]]:
+        """
+        Check if key has overly broad scopes.
 
-def check_key(key: APIKey) -> list[KeyViolation]:
-    violations = []
-    now = datetime.now(tz=timezone.utc)
+        Returns:
+            Tuple of (is_overly_broad, problematic_scopes)
+        """
+        problematic = []
 
-    rotation_reference = key.last_rotated_at or key.created_at
-    age_days = (now - rotation_reference).days
-    if age_days > MAX_KEY_AGE_DAYS:
-        violations.append(KeyViolation(key.key_id, key.name, "STALE_KEY", "HIGH" if age_days > 180 else "MEDIUM", f"Key not rotated for {age_days} days (limit: {MAX_KEY_AGE_DAYS})", f"Rotate key immediately. Last rotation: {rotation_reference.date()}"))
+        # Check for dangerous individual scopes
+        for scope in scopes:
+            if scope.lower() in self.OVERLY_BROAD_SCOPES:
+                problematic.append(scope)
 
-    if key.last_rotated_at is None:
-        age = (now - key.created_at).days
-        if age > 30:
-            violations.append(KeyViolation(key.key_id, key.name, "NEVER_ROTATED", "HIGH", f"Key created {age} days ago and never rotated", "Implement a rotation policy and rotate this key now"))
+        # Check for excessive scope count
+        if len(scopes) > self.max_scope_count:
+            problematic.extend(
+                [f"excessive_count_{len(scopes)}_scopes"]
+            )
 
-    for scope in key.scopes:
-        if scope in WILDCARD_SCOPE_PATTERNS or "*" in scope:
-            violations.append(KeyViolation(key.key_id, key.name, "WILDCARD_SCOPE", "CRITICAL" if key.environment == "production" else "MEDIUM", f"Wildcard scope '{scope}' grants excessive permissions", "Replace with specific minimal scopes following least-privilege principle"))
-            break
+        return len(problematic) > 0, problematic
 
-    if key.last_used_at:
-        idle_days = (now - key.last_used_at).days
-        if idle_days > 60:
-            violations.append(KeyViolation(key.key_id, key.name, "DORMANT_KEY", "MEDIUM", f"Key unused for {idle_days} days", "Revoke dormant keys to reduce attack surface"))
+    def is_never_rotated(self, created_at: str, last_rotated_at: str) -> bool:
+        """Check if key has never been rotated (created_at == last_rotated_at)."""
+        created = self.parse_datetime(created_at)
+        last_rotated = self.parse_datetime(last_rotated_at)
+        return created == last_rotated
 
-    return violations
+    def check_key_compliance(self, key: APIKey) -> RotationViolation:
+        """
+        Check a single API key for compliance violations.
 
+        Args:
+            key: The API key to check
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="API key rotation enforcer")
-    parser.add_argument("--api-url", default="https://api.example.com")
-    parser.add_argument("--token", default="admin-token")
-    parser.add_argument("--max-age-days", type=int, default=90)
-    parser.add_argument("--output", default="key_violations.json")
-    parser.add_argument("--fail-on-critical", action="store_true")
-    args = parser.parse_args()
+        Returns:
+            RotationViolation object with findings
+        """
+        violations = []
+        statuses = []
 
-    global MAX_KEY_AGE_DAYS
-    MAX_KEY_AGE_DAYS = args.max_age_days
+        age = self.calculate_key_age(key.created_at)
 
-    logger.info(f"Fetching API keys from {args.api_url}")
-    keys = fetch_keys(args.api_url, args.token)
-    logger.info(f"Found {len(keys)} API keys to audit")
+        # Check expiration
+        if self.is_key_expired(key.created_at):
+            violations.append(
+                f"Key exceeds maximum age of {self.max_age_days} days "
+                f"(current age: {age} days)"
+            )
+            statuses.append(KeyStatus.EXPIRED)
 
-    all_violations: list[KeyViolation] = []
-    for key in keys:
-        violations = check_key(key)
-        all_violations.extend(violations)
-        if violations:
-            logger.warning(f"Key {key.key_id} ({key.name}): {len(violations)} violation(s)")
+        # Check for overly broad scopes
+        is_broad, problematic = self.has_overly_broad_scopes(key.scopes)
+        if is_broad:
+            violations.append(
+                f"Key has overly broad scopes: {', '.join(problematic)}"
+            )
+            statuses.append(KeyStatus.OVERLY_BROAD)
+
+        # Check if never rotated
+        if self.is_never_rotated(key.created_at, key.last_rotated_at):
+            violations.append("Key has never been rotated since creation")
+            statuses.append(KeyStatus.NEVER_ROTATED)
+
+        # Determine overall status
+        if not violations:
+            status = KeyStatus.COMPLIANT
+        elif len(statuses) > 1:
+            status = KeyStatus.MULTIPLE_VIOLATIONS
         else:
-            logger.info(f"Key {key.key_id} ({key.name}): OK")
+            status = statuses[0]
 
-    critical = [v for v in all_violations if v.severity == "CRITICAL"]
-    high = [v for v in all_violations if v.severity == "HIGH"]
+        # Generate recommended action
+        recommended_action = self._generate_recommendation(
+            status, age, len(key.scopes)
+        )
 
-    report = {"scanned_keys": len(keys), "total_violations": len(all_violations), "critical": len(critical), "high": len(high), "violations": [{"key_id": v.key_id, "key_name": v.key_name, "type": v.violation_type, "severity": v.severity, "details": v.details, "recommendation": v.recommendation} for v in all_violations]}
+        return RotationViolation(
+            key_id=key.key_id,
+            key_name=key.name,
+            owner=key.owner,
+            status=status,
+            violations=violations,
+            age_days=age,
+            scope_count=len(key.scopes),
+            created_at=key.created_at,
+            last_rotated_at=key.last_rotated_at,
+            recommended_action=recommended_action,
+        )
 
-    with open(args.output, "w") as f:
-        json.dump(report, f, indent=2)
+    def _generate_recommendation(
+        self, status: KeyStatus, age: int, scope_count: int
+    ) -> str:
+        """Generate actionable recommendation based on violation."""
+        if status == KeyStatus.COMPLIANT:
+            return "No action required"
+        elif status == KeyStatus.EXPIRED:
+            return f"Rotate key immediately (age: {age} days)"
+        elif status == KeyStatus.OVERLY_BROAD:
+            return f"Review and narrow scopes (current count: {scope_count})"
+        elif status == KeyStatus.NEVER_ROTATED:
+            return "Rotate key immediately - establish rotation schedule"
+        else:  # MULTIPLE_VIOLATIONS
+            return "Critical: Address all violations immediately"
 
-    logger.info(f"Audit complete: {len(all_violations)} violations ({len(critical)} CRITICAL, {len(high)} HIGH)")
-    print(json.dumps(report, indent=2))
+    def check_multiple_keys(self, keys: List[APIKey]) -> List[RotationViolation]:
+        """
+        Check multiple API keys for compliance.
 
-    if args.fail_on_critical and critical:
-        sys.exit(1)
+        Args:
+            keys: List of API keys to check
 
+        Returns:
+            List of RotationViolation objects
+        """
+        violations = []
+        for key in keys:
+            if key.active:  # Only check active keys
+                violation = self.check_key_compliance(key)
+                violations.append(violation)
+        return violations
 
-if __name__ == "__main__":
-    main()
+    def generate_report(self, violations: List[RotationViolation]) -> Dict:
+        """Generate a compliance report from violations."""
