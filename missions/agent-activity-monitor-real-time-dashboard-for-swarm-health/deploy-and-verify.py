@@ -1,221 +1,197 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────
 # Task:    Deploy and verify
-# Mission: Agent Activity Monitor — Real-time Dashboard for Swarm Health
+# Mission: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
 # Agent:   @bolt
-# Date:    2026-03-28T21:58:59.274Z
+# Date:    2026-03-28T22:02:07.845Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Agent Activity Monitor — Real-time Dashboard for Swarm Health (Deploy and verify)
-MISSION: Build a live monitoring dashboard that tracks agent activity, task throughput, and project velocity
-AGENT: @bolt
-DATE: 2025-01-20
+Task: Deploy and verify - Agent Activity Monitor: Real-Time Dashboard for Swarm Health
+Mission: Real-time monitoring dashboard tracking agent health, task throughput, error rates, and performance metrics
+Agent: @bolt
+Date: 2025-01-14
 """
 
 import argparse
 import json
 import time
-import threading
-import sqlite3
 import random
+import threading
+from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
-from collections import defaultdict
+from collections import defaultdict, deque
+from typing import Dict, List, Optional
 import statistics
-import sys
 
 
-class MetricsDatabase:
-    """SQLite-based metrics storage for agent activity."""
-    
-    def __init__(self, db_path="metrics.db"):
-        self.db_path = db_path
-        self.init_db()
-    
-    def init_db(self):
-        """Initialize database schema."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+@dataclass
+class AgentMetrics:
+    agent_id: str
+    timestamp: str
+    cpu_usage: float
+    memory_usage: float
+    active_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+    error_rate: float
+    avg_task_duration: float
+    uptime_seconds: int
+    status: str
+
+
+@dataclass
+class SwarmMetrics:
+    timestamp: str
+    total_agents: int
+    healthy_agents: int
+    unhealthy_agents: int
+    total_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+    throughput_tasks_per_sec: float
+    avg_error_rate: float
+    avg_cpu_usage: float
+    avg_memory_usage: float
+    critical_alerts: int
+
+
+class AgentHealthMonitor:
+    def __init__(self, num_agents: int = 5, sample_window: int = 10):
+        self.num_agents = num_agents
+        self.sample_window = sample_window
+        self.agent_metrics: Dict[str, deque] = defaultdict(lambda: deque(maxlen=sample_window))
+        self.agent_states: Dict[str, dict] = {}
+        self.swarm_history: deque = deque(maxlen=sample_window)
+        self.alerts: List[str] = []
+        self.lock = threading.Lock()
+        self.cpu_threshold = 85.0
+        self.memory_threshold = 80.0
+        self.error_rate_threshold = 0.1
+        self.task_timeout = 60
         
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS agent_activity (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_id TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                task_count INTEGER DEFAULT 0,
-                idle_duration INTEGER DEFAULT 0
+        self._initialize_agents()
+    
+    def _initialize_agents(self):
+        for i in range(self.num_agents):
+            agent_id = f"agent_{i:03d}"
+            self.agent_states[agent_id] = {
+                'uptime_seconds': random.randint(3600, 86400),
+                'total_completed_tasks': random.randint(100, 1000),
+                'total_failed_tasks': random.randint(5, 50),
+                'active_task_start_times': {},
+                'status': 'healthy'
+            }
+    
+    def _generate_agent_metrics(self, agent_id: str) -> AgentMetrics:
+        state = self.agent_states[agent_id]
+        
+        cpu_usage = random.gauss(35, 15)
+        cpu_usage = max(0, min(100, cpu_usage))
+        
+        memory_usage = random.gauss(45, 12)
+        memory_usage = max(0, min(100, memory_usage))
+        
+        active_tasks = random.randint(0, 8)
+        completed_this_period = random.randint(2, 15)
+        failed_this_period = random.randint(0, 2)
+        
+        state['total_completed_tasks'] += completed_this_period
+        state['total_failed_tasks'] += failed_this_period
+        state['uptime_seconds'] += 5
+        
+        total_tasks = state['total_completed_tasks'] + state['total_failed_tasks']
+        error_rate = state['total_failed_tasks'] / total_tasks if total_tasks > 0 else 0.0
+        
+        avg_task_duration = random.gauss(2.5, 0.8)
+        avg_task_duration = max(0.1, avg_task_duration)
+        
+        if cpu_usage > self.cpu_threshold:
+            state['status'] = 'degraded'
+        elif error_rate > self.error_rate_threshold:
+            state['status'] = 'warning'
+        elif cpu_usage > self.cpu_threshold * 0.9 or memory_usage > self.memory_threshold * 0.9:
+            state['status'] = 'warning'
+        else:
+            state['status'] = 'healthy'
+        
+        metrics = AgentMetrics(
+            agent_id=agent_id,
+            timestamp=datetime.utcnow().isoformat(),
+            cpu_usage=round(cpu_usage, 2),
+            memory_usage=round(memory_usage, 2),
+            active_tasks=active_tasks,
+            completed_tasks=state['total_completed_tasks'],
+            failed_tasks=state['total_failed_tasks'],
+            error_rate=round(error_rate, 4),
+            avg_task_duration=round(avg_task_duration, 2),
+            uptime_seconds=state['uptime_seconds'],
+            status=state['status']
+        )
+        
+        return metrics
+    
+    def collect_metrics(self) -> None:
+        with self.lock:
+            for agent_id in self.agent_states.keys():
+                metrics = self._generate_agent_metrics(agent_id)
+                self.agent_metrics[agent_id].append(asdict(metrics))
+                self._check_alerts(metrics)
+    
+    def _check_alerts(self, metrics: AgentMetrics) -> None:
+        if metrics.cpu_usage > self.cpu_threshold:
+            self.alerts.append(
+                f"[CRITICAL] {metrics.agent_id} CPU usage {metrics.cpu_usage}% exceeds threshold"
             )
-        """)
         
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS task_metrics (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id TEXT NOT NULL,
-                agent_id TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                duration INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                blocked INTEGER DEFAULT 0
+        if metrics.memory_usage > self.memory_threshold:
+            self.alerts.append(
+                f"[CRITICAL] {metrics.agent_id} Memory usage {metrics.memory_usage}% exceeds threshold"
             )
-        """)
         
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS daily_summary (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL UNIQUE,
-                total_tasks INTEGER DEFAULT 0,
-                avg_duration REAL DEFAULT 0,
-                blocked_tasks INTEGER DEFAULT 0,
-                idle_agents INTEGER DEFAULT 0,
-                throughput_per_hour REAL DEFAULT 0
+        if metrics.error_rate > self.error_rate_threshold:
+            self.alerts.append(
+                f"[WARNING] {metrics.agent_id} Error rate {metrics.error_rate:.2%} exceeds threshold"
             )
-        """)
         
-        conn.commit()
-        conn.close()
+        if metrics.status == 'degraded':
+            self.alerts.append(
+                f"[ALERT] {metrics.agent_id} transitioned to DEGRADED state"
+            )
     
-    def record_agent_activity(self, agent_id, status, task_count=0, idle_duration=0):
-        """Record agent activity."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        timestamp = int(time.time())
-        
-        cursor.execute("""
-            INSERT INTO agent_activity (agent_id, timestamp, status, task_count, idle_duration)
-            VALUES (?, ?, ?, ?, ?)
-        """, (agent_id, timestamp, status, task_count, idle_duration))
-        
-        conn.commit()
-        conn.close()
-    
-    def record_task_metric(self, task_id, agent_id, duration, status, blocked=0):
-        """Record task execution metric."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        timestamp = int(time.time())
-        
-        cursor.execute("""
-            INSERT INTO task_metrics (task_id, agent_id, timestamp, duration, status, blocked)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (task_id, agent_id, timestamp, duration, status, blocked))
-        
-        conn.commit()
-        conn.close()
-    
-    def get_recent_metrics(self, minutes=60):
-        """Get metrics from last N minutes."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cutoff_time = int(time.time()) - (minutes * 60)
-        
-        cursor.execute("""
-            SELECT agent_id, timestamp, status, task_count, idle_duration
-            FROM agent_activity
-            WHERE timestamp > ?
-            ORDER BY timestamp DESC
-        """, (cutoff_time,))
-        
-        activities = cursor.fetchall()
-        
-        cursor.execute("""
-            SELECT task_id, agent_id, timestamp, duration, status, blocked
-            FROM task_metrics
-            WHERE timestamp > ?
-            ORDER BY timestamp DESC
-        """, (cutoff_time,))
-        
-        tasks = cursor.fetchall()
-        conn.close()
-        
-        return {
-            "activities": activities,
-            "tasks": tasks,
-            "cutoff_time": cutoff_time
-        }
-    
-    def compute_daily_summary(self, target_date=None):
-        """Compute and store daily summary metrics."""
-        if target_date is None:
-            target_date = datetime.now().strftime("%Y-%m-%d")
-        
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        next_date = (datetime.strptime(target_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-        start_ts = int(datetime.strptime(target_date, "%Y-%m-%d").timestamp())
-        end_ts = int(datetime.strptime(next_date, "%Y-%m-%d").timestamp())
-        
-        cursor.execute("""
-            SELECT COUNT(*), AVG(duration), SUM(blocked)
-            FROM task_metrics
-            WHERE timestamp >= ? AND timestamp < ?
-        """, (start_ts, end_ts))
-        
-        result = cursor.fetchone()
-        total_tasks = result[0] or 0
-        avg_duration = result[1] or 0
-        blocked_tasks = result[2] or 0
-        
-        cursor.execute("""
-            SELECT COUNT(DISTINCT agent_id)
-            FROM agent_activity
-            WHERE timestamp >= ? AND timestamp < ? AND status = 'idle'
-        """, (start_ts, end_ts))
-        
-        idle_agents = cursor.fetchone()[0] or 0
-        
-        throughput_per_hour = (total_tasks / 24) if total_tasks > 0 else 0
-        
-        cursor.execute("""
-            INSERT OR REPLACE INTO daily_summary 
-            (date, total_tasks, avg_duration, blocked_tasks, idle_agents, throughput_per_hour)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (target_date, total_tasks, avg_duration, blocked_tasks, idle_agents, throughput_per_hour))
-        
-        conn.commit()
-        
-        cursor.execute("""
-            SELECT * FROM daily_summary WHERE date = ?
-        """, (target_date,))
-        
-        summary = cursor.fetchone()
-        conn.close()
-        
-        return {
-            "date": target_date,
-            "total_tasks": total_tasks,
-            "avg_duration": round(avg_duration, 2),
-            "blocked_tasks": blocked_tasks,
-            "idle_agents": idle_agents,
-            "throughput_per_hour": round(throughput_per_hour, 2)
-        }
-    
-    def get_dashboard_data(self):
-        """Get comprehensive dashboard data."""
-        metrics = self.get_recent_metrics(minutes=120)
-        
-        agent_stats = defaultdict(lambda: {"tasks": 0, "idle_time": 0, "status": "unknown"})
-        
-        for activity in metrics["activities"]:
-            agent_id = activity[0]
-            agent_stats[agent_id]["tasks"] += activity[3]
-            agent_stats[agent_id]["idle_time"] += activity[4]
-            agent_stats[agent_id]["status"] = activity[2]
-        
-        blocked_count = sum(1 for task in metrics["tasks"] if task[5] == 1)
-        task_durations = [task[3] for task in metrics["tasks"]]
-        
-        avg_duration = statistics.mean(task_durations) if task_durations else 0
-        throughput = len(metrics["tasks"]) / 2
-        
-        idle_agents = sum(1 for stats in agent_stats.values() if stats["status"] == "idle")
-        
-        return {
-            "timestamp": datetime.now().isoformat(),
-            "agents": dict(agent_stats),
-            "metrics": {
-                "total_agents
+    def get_swarm_metrics(self) -> SwarmMetrics:
+        with self.lock:
+            if not self.agent_metrics:
+                return None
+            
+            latest_metrics = {}
+            for agent_id, metrics_history in self.agent_metrics.items():
+                if metrics_history:
+                    latest_metrics[agent_id] = metrics_history[-1]
+            
+            if not latest_metrics:
+                return None
+            
+            healthy_count = sum(1 for m in latest_metrics.values() if m['status'] == 'healthy')
+            unhealthy_count = len(latest_metrics) - healthy_count
+            
+            total_completed = sum(m['completed_tasks'] for m in latest_metrics.values())
+            total_failed = sum(m['failed_tasks'] for m in latest_metrics.values())
+            total_tasks = total_completed + total_failed
+            
+            cpu_usages = [m['cpu_usage'] for m in latest_metrics.values()]
+            memory_usages = [m['memory_usage'] for m in latest_metrics.values()]
+            error_rates = [m['error_rate'] for m in latest_metrics.values()]
+            
+            throughput = sum(m['completed_tasks'] for m in latest_metrics.values()) / 5.0
+            
+            critical_alerts = sum(1 for a in self.alerts if '[CRITICAL]' in a)
+            
+            swarm_metrics = SwarmMetrics(
+                timestamp=datetime.utcnow().isoformat(),
+                total_agents=len(latest_metrics),
+                healthy_agents=healthy_count,
+                unhealthy_agents=unhealthy_count,
+                total_tasks=total_tasks,
+                completed
