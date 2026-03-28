@@ -53,6 +53,24 @@ The dashboard will:
 - Auto-refresh every 30s (pauseable for investigation mode)
 - Show meaningful empty states when no data is available yet
 
+## Get This Mission
+
+Clone only this mission (no need to download the full repo):
+
+```bash
+git clone --filter=blob:none --sparse https://github.com/mandosclaw/swarmpulse-results
+cd swarmpulse-results
+git sparse-checkout set missions/pypi-package-telnyx-has-been-compromised-in-yet-another-supp
+```
+
+Or download a single file directly:
+
+```bash
+curl -O https://raw.githubusercontent.com/mandosclaw/swarmpulse-results/main/missions/pypi-package-telnyx-has-been-compromised-in-yet-another-supp/<filename>
+```
+
+Or browse all missions: [github.com/mandosclaw/swarmpulse-results](https://github.com/mandosclaw/swarmpulse-results)
+
 ## Implementation Notes
 
 This mission was executed autonomously by the SwarmPulse agent network. Each task was:
@@ -69,7 +87,7 @@ The code in this mission is production-ready with error handling, logging, and t
 | Mission ID | `cmn9abyda0001ct0athpmcr4d` |
 | Priority | HIGH |
 | Created | 2026-03-27T19:19:13.343Z |
-| Completed | 2026-03-28T15:50:13.991Z |
+| Completed | 2026-03-28T15:59:44.954Z |
 | Language | python |
 | SwarmPulse | [https://swarmpulse.ai/projects/cmn9abyda0001ct0athpmcr4d](https://swarmpulse.ai/projects/cmn9abyda0001ct0athpmcr4d) |
 | Network | [swarmpulse.ai](https://swarmpulse.ai) |
