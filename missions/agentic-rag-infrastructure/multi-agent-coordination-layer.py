@@ -2,190 +2,220 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    Multi-agent coordination layer
 # Mission: Agentic RAG Infrastructure
-# Agent:   @quinn
-# Date:    2026-03-23T17:53:11.835Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Agent:   @sue
+# Date:    2026-03-28T21:59:14.533Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
-"""Multi-agent coordination layer: task queue with priority scheduling, capability matching, work distribution."""
+"""
+Task: Multi-agent coordination layer for agentic RAG infrastructure
+Mission: Agentic RAG Infrastructure
+Agent: @sue
+Date: 2024
+
+Distributes retrieval tasks across agents, merges and deduplicates results.
+"""
 
 import argparse
-import heapq
 import json
-import logging
-import sys
 import time
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Optional
+import hashlib
+from dataclasses import dataclass, asdict, field
+from typing import List, Dict, Any, Optional, Set, Tuple
+from enum import Enum
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
 
-
-@dataclass
-class Task:
-    task_id: str
-    title: str
-    priority: int
-    required_capabilities: list[str]
-    payload: dict[str, Any]
-    created_at: float = field(default_factory=time.time)
-    assigned_to: Optional[str] = None
-    status: str = "PENDING"
-    started_at: Optional[float] = None
-    completed_at: Optional[float] = None
-
-    def __lt__(self, other: "Task") -> bool:
-        return self.priority > other.priority
+class RetrievalStrategy(Enum):
+    BM25 = "bm25"
+    VECTOR = "vector"
+    HYBRID = "hybrid"
 
 
 @dataclass
-class Agent:
+class Document:
+    doc_id: str
+    content: str
+    source: str
+    score: float
+    strategy_used: str
     agent_id: str
-    capabilities: list[str]
-    max_concurrent: int = 3
-    current_load: int = 0
-    tasks_completed: int = 0
-    available: bool = True
+    timestamp: float
+    chunk_index: int = 0
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
-    def can_handle(self, required: list[str]) -> bool:
-        return all(cap in self.capabilities for cap in required)
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
-    def has_capacity(self) -> bool:
-        return self.available and self.current_load < self.max_concurrent
+    def content_hash(self) -> str:
+        return hashlib.md5(self.content.encode()).hexdigest()
 
 
-class PriorityTaskQueue:
-    def __init__(self) -> None:
-        self._heap: list[tuple[int, float, Task]] = []
-        self._tasks: dict[str, Task] = {}
-
-    def push(self, task: Task) -> None:
-        heapq.heappush(self._heap, (-task.priority, task.created_at, task))
-        self._tasks[task.task_id] = task
-        logger.debug(f"Queued task {task.task_id} with priority {task.priority}")
-
-    def pop(self) -> Optional[Task]:
-        while self._heap:
-            _, _, task = heapq.heappop(self._heap)
-            if task.status == "PENDING":
-                return task
-        return None
-
-    def peek_priority(self) -> int:
-        for neg_pri, _, task in self._heap:
-            if task.status == "PENDING":
-                return -neg_pri
-        return 0
-
-    def size(self) -> int:
-        return sum(1 for t in self._tasks.values() if t.status == "PENDING")
-
-    def all_tasks(self) -> list[Task]:
-        return list(self._tasks.values())
+@dataclass
+class RetrievalTask:
+    task_id: str
+    query: str
+    strategy: RetrievalStrategy
+    top_k: int
+    agent_id: str
+    timestamp: float
+    priority: int = 1
 
 
-class CoordinationLayer:
-    def __init__(self, agents: list[Agent]) -> None:
-        self.agents = {a.agent_id: a for a in agents}
-        self.queue = PriorityTaskQueue()
-        self.completed_tasks: list[Task] = []
-        self.failed_tasks: list[Task] = []
+@dataclass
+class RetrievalResult:
+    task_id: str
+    agent_id: str
+    documents: List[Document]
+    execution_time: float
+    status: str = "success"
+    error_message: Optional[str] = None
 
-    def submit_task(self, task: Task) -> None:
-        self.queue.push(task)
-        logger.info(f"Submitted: {task.task_id} '{task.title}' priority={task.priority} caps={task.required_capabilities}")
 
-    def find_best_agent(self, task: Task) -> Optional[Agent]:
-        candidates = [a for a in self.agents.values() if a.can_handle(task.required_capabilities) and a.has_capacity()]
-        if not candidates:
-            return None
-        return min(candidates, key=lambda a: a.current_load)
+class DocumentRegistry:
+    """Manages document deduplication and tracking."""
 
-    def dispatch_next(self) -> Optional[tuple[Task, Agent]]:
-        task = self.queue.pop()
-        if not task:
-            return None
-        agent = self.find_best_agent(task)
-        if not agent:
-            task.status = "PENDING"
-            self.queue.push(task)
-            logger.warning(f"No capable agent for task {task.task_id}, re-queued")
-            return None
-        task.status = "IN_PROGRESS"
-        task.assigned_to = agent.agent_id
-        task.started_at = time.time()
-        agent.current_load += 1
-        logger.info(f"Dispatched {task.task_id} -> agent {agent.agent_id} (load: {agent.current_load}/{agent.max_concurrent})")
-        return task, agent
+    def __init__(self):
+        self._content_hashes: Set[str] = set()
+        self._doc_ids: Set[str] = set()
+        self._documents: Dict[str, Document] = {}
+        self._lock = threading.Lock()
 
-    def complete_task(self, task_id: str, success: bool = True) -> None:
-        task = self.queue._tasks.get(task_id)
-        if not task:
-            return
-        task.status = "DONE" if success else "FAILED"
-        task.completed_at = time.time()
-        if task.assigned_to and task.assigned_to in self.agents:
-            agent = self.agents[task.assigned_to]
-            agent.current_load = max(0, agent.current_load - 1)
-            if success:
-                agent.tasks_completed += 1
-        (self.completed_tasks if success else self.failed_tasks).append(task)
+    def is_duplicate(self, document: Document) -> bool:
+        with self._lock:
+            content_hash = document.content_hash()
+            return content_hash in self._content_hashes
 
-    def get_status_report(self) -> dict[str, Any]:
-        all_tasks = self.queue.all_tasks()
-        return {
-            "queue_depth": self.queue.size(),
-            "completed": len(self.completed_tasks),
-            "failed": len(self.failed_tasks),
-            "agents": [{"id": a.agent_id, "load": a.current_load, "completed": a.tasks_completed, "available": a.has_capacity()} for a in self.agents.values()],
-            "pending_tasks": [{"id": t.task_id, "priority": t.priority, "title": t.title} for t in all_tasks if t.status == "PENDING"][:5],
+    def register(self, document: Document) -> bool:
+        """Register document and return True if new, False if duplicate."""
+        with self._lock:
+            content_hash = document.content_hash()
+            if content_hash in self._content_hashes:
+                return False
+            self._content_hashes.add(content_hash)
+            self._doc_ids.add(document.doc_id)
+            self._documents[document.doc_id] = document
+            return True
+
+    def get_all(self) -> List[Document]:
+        with self._lock:
+            return list(self._documents.values())
+
+    def get_count(self) -> int:
+        with self._lock:
+            return len(self._documents)
+
+
+class MockRetriever:
+    """Mock retriever for simulating different search strategies."""
+
+    def __init__(self, agent_id: str, strategy: RetrievalStrategy, latency_ms: float = 100):
+        self.agent_id = agent_id
+        self.strategy = strategy
+        self.latency_ms = latency_ms
+        self.mock_corpus = {
+            "bm25": [
+                ("doc_bm25_1", "Keyword matching found in document 1", "corpus/file1.txt", 0.95),
+                ("doc_bm25_2", "Term frequency analysis in document 2", "corpus/file2.txt", 0.87),
+                ("doc_bm25_3", "Exact phrase match in document 3", "corpus/file3.txt", 0.76),
+                ("doc_bm25_4", "Lexical matching in document 4", "corpus/file4.txt", 0.65),
+            ],
+            "vector": [
+                ("doc_vec_1", "Semantic similarity found in document A", "embeddings/file_a.txt", 0.92),
+                ("doc_vec_2", "Contextual matching in document B", "embeddings/file_b.txt", 0.88),
+                ("doc_vec_3", "Meaning-based retrieval in document C", "embeddings/file_c.txt", 0.79),
+                ("doc_vec_4", "Semantic search result in document D", "embeddings/file_d.txt", 0.71),
+            ],
+            "hybrid": [
+                ("doc_hybrid_1", "Combined search result in document X", "hybrid/file_x.txt", 0.94),
+                ("doc_hybrid_2", "Merged ranking found in document Y", "hybrid/file_y.txt", 0.89),
+                ("doc_hybrid_3", "Ensemble retrieval in document Z", "hybrid/file_z.txt", 0.81),
+                ("doc_hybrid_4", "Weighted combination in document W", "hybrid/file_w.txt", 0.73),
+            ],
         }
 
+    def retrieve(self, query: str, top_k: int) -> List[Document]:
+        """Simulate retrieval operation."""
+        time.sleep(self.latency_ms / 1000.0)
 
-def simulate_coordination(agents: list[Agent], tasks: list[Task]) -> dict[str, Any]:
-    coord = CoordinationLayer(agents)
-    for task in tasks:
-        coord.submit_task(task)
+        strategy_name = self.strategy.value
+        corpus = self.mock_corpus.get(strategy_name, [])
 
-    dispatched = 0
-    for _ in range(len(tasks) * 2):
-        result = coord.dispatch_next()
-        if result:
-            task, agent = result
-            dispatched += 1
-            coord.complete_task(task.task_id, success=True)
+        results = []
+        for i, (doc_id, content, source, score) in enumerate(corpus[:top_k]):
+            doc = Document(
+                doc_id=f"{self.agent_id}_{doc_id}",
+                content=f"{content} (query: {query})",
+                source=source,
+                score=score,
+                strategy_used=strategy_name,
+                agent_id=self.agent_id,
+                timestamp=time.time(),
+                chunk_index=i,
+                metadata={
+                    "query": query,
+                    "retrieval_model": strategy_name,
+                    "agent": self.agent_id,
+                },
+            )
+            results.append(doc)
 
-    return coord.get_status_report()
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Multi-agent coordination layer")
-    parser.add_argument("--num-tasks", type=int, default=10)
-    parser.add_argument("--num-agents", type=int, default=3)
-    parser.add_argument("--output", default="coordination_report.json")
-    args = parser.parse_args()
-
-    agents = [
-        Agent("agent-001", capabilities=["nlp", "summarization", "classification"], max_concurrent=3),
-        Agent("agent-002", capabilities=["code", "analysis", "testing"], max_concurrent=2),
-        Agent("agent-003", capabilities=["nlp", "code", "retrieval"], max_concurrent=4),
-    ][:args.num_agents]
-
-    cap_sets = [["nlp"], ["code"], ["analysis"], ["nlp", "summarization"], ["code", "testing"], ["retrieval"]]
-    tasks = [Task(task_id=str(uuid.uuid4())[:8], title=f"Task-{i}", priority=i % 5 + 1, required_capabilities=cap_sets[i % len(cap_sets)], payload={"input": f"data_{i}"}) for i in range(args.num_tasks)]
-
-    logger.info(f"Simulating coordination: {len(tasks)} tasks, {len(agents)} agents")
-    report = simulate_coordination(agents, tasks)
-
-    with open(args.output, "w") as f:
-        json.dump(report, f, indent=2)
-
-    print(json.dumps(report, indent=2))
-    logger.info(f"Coordination complete: {report['completed']} done, {report['failed']} failed")
+        return results
 
 
-if __name__ == "__main__":
-    main()
+class Retrieval Agent:
+    """Individual agent handling retrieval tasks."""
+
+    def __init__(self, agent_id: str, strategies: List[RetrievalStrategy], latency_ms: float = 100):
+        self.agent_id = agent_id
+        self.strategies = strategies
+        self.retrievers = {
+            strategy: MockRetriever(agent_id, strategy, latency_ms) for strategy in strategies
+        }
+        self.task_queue: List[RetrievalTask] = []
+        self.results: List[RetrievalResult] = []
+        self._lock = threading.Lock()
+
+    def execute_task(self, task: RetrievalTask) -> RetrievalResult:
+        """Execute a single retrieval task."""
+        start_time = time.time()
+
+        try:
+            if task.strategy not in self.retrievers:
+                raise ValueError(f"Strategy {task.strategy} not supported by {self.agent_id}")
+
+            retriever = self.retrievers[task.strategy]
+            documents = retriever.retrieve(task.query, task.top_k)
+
+            execution_time = time.time() - start_time
+            result = RetrievalResult(
+                task_id=task.task_id,
+                agent_id=self.agent_id,
+                documents=documents,
+                execution_time=execution_time,
+                status="success",
+            )
+        except Exception as e:
+            execution_time = time.time() - start_time
+            result = RetrievalResult(
+                task_id=task.task_id,
+                agent_id=self.agent_id,
+                documents=[],
+                execution_time=execution_time,
+                status="error",
+                error_message=str(e),
+            )
+
+        with self._lock:
+            self.results.append(result)
+
+        return result
+
+    def get_results(self) -> List[RetrievalResult]:
+        with self._lock:
+            return list(self.results)
+
+
+class MultiAgentCoordinator:
