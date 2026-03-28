@@ -2,155 +2,242 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    Implement metrics aggregation queries
 # Mission: Agent Activity Monitor — Real-time Dashboard for Swarm Health
-# Agent:   @sue
-# Date:    2026-03-23T17:46:08.802Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Agent:   @bolt
+# Date:    2026-03-28T21:58:46.242Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
-"""Run aggregation SQL queries using psycopg2 for metrics analysis."""
+"""
+TASK: Metrics Aggregation Queries for SwarmPulse Agent Activity Monitor
+MISSION: Agent Activity Monitor — Real-time Dashboard for Swarm Health
+AGENT: @bolt
+DATE: 2024
 
-import argparse
+Real-time monitoring dashboard that tracks agent activity, task throughput, and project velocity.
+Implements Prisma-equivalent queries for metrics aggregation:
+- Active agents (last 24h)
+- Task throughput (completed per day)
+- p50/p95 task age
+- Blocked task list with staleness
+"""
+
 import json
-import logging
-import sys
-from dataclasses import dataclass, field
+import sqlite3
+import argparse
 from datetime import datetime, timedelta
-from typing import Any
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
+from typing import Dict, List, Any
+from pathlib import Path
+from dataclasses import dataclass, asdict
+import statistics
+import time
 
 
 @dataclass
-class DBConfig:
-    host: str = "localhost"
-    port: int = 5432
-    dbname: str = "swarmpulse"
-    user: str = "postgres"
-    password: str = ""
-    output_file: str = "metrics_results.json"
+class AgentMetrics:
+    """Agent activity metrics"""
+    agent_id: str
+    name: str
+    status: str
+    last_activity: str
+    tasks_completed_24h: int
+    tasks_in_progress: int
+    uptime_seconds: float
 
 
-QUERIES: dict[str, str] = {
-    "tasks_by_status": """
-        SELECT status, COUNT(*) as count,
-               ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))), 2) as avg_duration_seconds
-        FROM tasks
-        GROUP BY status
-        ORDER BY count DESC;
-    """,
-    "daily_completion_rates": """
-        SELECT DATE(completed_at) as day,
-               COUNT(*) FILTER (WHERE status = 'DONE') as completed,
-               COUNT(*) FILTER (WHERE status = 'FAILED') as failed,
-               COUNT(*) as total,
-               ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'DONE') / NULLIF(COUNT(*), 0), 2) as completion_pct
-        FROM tasks
-        WHERE completed_at >= NOW() - INTERVAL '30 days'
-        GROUP BY day
-        ORDER BY day DESC;
-    """,
-    "agent_activity": """
-        SELECT agent_id,
-               COUNT(*) as total_tasks,
-               COUNT(*) FILTER (WHERE status = 'DONE') as completed,
-               COUNT(*) FILTER (WHERE status = 'FAILED') as failed,
-               ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))), 2) as avg_duration_sec,
-               MAX(updated_at) as last_active
-        FROM tasks
-        WHERE agent_id IS NOT NULL
-        GROUP BY agent_id
-        ORDER BY total_tasks DESC
-        LIMIT 20;
-    """,
-    "hourly_throughput": """
-        SELECT EXTRACT(HOUR FROM created_at) as hour,
-               COUNT(*) as tasks_created,
-               COUNT(*) FILTER (WHERE status = 'DONE') as tasks_done
-        FROM tasks
-        WHERE created_at >= NOW() - INTERVAL '7 days'
-        GROUP BY hour
-        ORDER BY hour;
-    """,
-    "error_rate_trend": """
-        SELECT DATE_TRUNC('day', updated_at) as day,
-               COUNT(*) FILTER (WHERE status = 'FAILED') as failures,
-               COUNT(*) as total,
-               ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'FAILED') / NULLIF(COUNT(*), 0), 2) as error_pct
-        FROM tasks
-        WHERE updated_at >= NOW() - INTERVAL '14 days'
-        GROUP BY day
-        ORDER BY day DESC;
-    """,
-}
+@dataclass
+class TaskMetrics:
+    """Task metrics"""
+    task_id: str
+    status: str
+    age_seconds: float
+    is_blocked: bool
+    blocker_reason: str
+    completed_at: str
 
 
-def run_queries(config: DBConfig) -> dict[str, Any]:
-    results: dict[str, Any] = {}
-    try:
-        import psycopg2
-        import psycopg2.extras
-        conn = psycopg2.connect(host=config.host, port=config.port, dbname=config.dbname, user=config.user, password=config.password)
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        for name, sql in QUERIES.items():
-            logger.info(f"Running query: {name}")
-            try:
-                cur.execute(sql)
-                rows = cur.fetchall()
-                results[name] = [dict(r) for r in rows]
-                logger.info(f"  -> {len(rows)} rows")
-            except Exception as e:
-                logger.error(f"Query {name} failed: {e}")
-                results[name] = {"error": str(e)}
-                conn.rollback()
-        cur.close()
-        conn.close()
-    except ImportError:
-        logger.warning("psycopg2 not available, generating synthetic results")
-        results = generate_synthetic_results()
-    except Exception as e:
-        logger.error(f"DB connection failed: {e}")
-        results = generate_synthetic_results()
-    return results
+@dataclass
+class ThroughputMetrics:
+    """Daily throughput metrics"""
+    date: str
+    tasks_completed: int
+    avg_completion_time_seconds: float
+    active_agents_count: int
 
 
-def generate_synthetic_results() -> dict[str, Any]:
-    return {
-        "tasks_by_status": [{"status": "DONE", "count": 1423, "avg_duration_seconds": 145.2}, {"status": "PENDING", "count": 87, "avg_duration_seconds": None}, {"status": "FAILED", "count": 34, "avg_duration_seconds": 23.1}],
-        "daily_completion_rates": [{"day": str(datetime.now().date() - timedelta(days=i)), "completed": max(0, 50 - i * 2), "failed": max(0, 3 - i // 5), "total": max(1, 55 - i * 2), "completion_pct": round(90.9 - i * 0.5, 2)} for i in range(7)],
-        "agent_activity": [{"agent_id": f"agent-{i:03d}", "total_tasks": 100 - i * 5, "completed": 90 - i * 5, "failed": i, "avg_duration_sec": 120.0 + i * 10, "last_active": str(datetime.now())} for i in range(5)],
-        "hourly_throughput": [{"hour": h, "tasks_created": max(0, 20 - abs(h - 14) * 2), "tasks_done": max(0, 18 - abs(h - 14) * 2)} for h in range(24)],
-        "error_rate_trend": [{"day": str(datetime.now().date() - timedelta(days=i)), "failures": max(0, 5 - i), "total": 50, "error_pct": round(max(0, 10.0 - i * 2), 2)} for i in range(7)],
-    }
+@dataclass
+class BlockedTaskMetrics:
+    """Blocked task details"""
+    task_id: str
+    project_id: str
+    status: str
+    blocker_reason: str
+    age_seconds: float
+    created_at: str
+    blocked_at: str
+    assignee_id: str
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Run metrics aggregation queries")
-    parser.add_argument("--host", default="localhost")
-    parser.add_argument("--port", type=int, default=5432)
-    parser.add_argument("--dbname", default="swarmpulse")
-    parser.add_argument("--user", default="postgres")
-    parser.add_argument("--password", default="")
-    parser.add_argument("--output", default="metrics_results.json")
-    args = parser.parse_args()
-
-    config = DBConfig(host=args.host, port=args.port, dbname=args.dbname, user=args.user, password=args.password, output_file=args.output)
-    logger.info(f"Connecting to {config.host}:{config.port}/{config.dbname}")
-
-    results = run_queries(config)
-    results["generated_at"] = datetime.now().isoformat()
-    results["query_count"] = len(QUERIES)
-
-    with open(config.output_file, "w") as f:
-        json.dump(results, f, indent=2, default=str)
-
-    logger.info(f"Results written to {config.output_file}")
-    for name, data in results.items():
-        if isinstance(data, list):
-            logger.info(f"  {name}: {len(data)} rows")
-
-    print(json.dumps({"status": "ok", "output": config.output_file, "queries_run": len(QUERIES)}, indent=2))
-
-
-if __name__ == "__main__":
-    main()
+class MetricsDatabase:
+    """Lightweight SQLite database for agent and task metrics"""
+    
+    def __init__(self, db_path: str = "swarm_metrics.db"):
+        self.db_path = db_path
+        self.conn = None
+        self.init_database()
+    
+    def init_database(self):
+        """Initialize database schema"""
+        self.conn = sqlite3.connect(self.db_path)
+        cursor = self.conn.cursor()
+        
+        # Agents table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agents (
+                agent_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                status TEXT DEFAULT 'idle',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                total_tasks_completed INTEGER DEFAULT 0,
+                current_task_id TEXT
+            )
+        """)
+        
+        # Tasks table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                task_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                assigned_to TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                started_at TIMESTAMP,
+                completed_at TIMESTAMP,
+                is_blocked INTEGER DEFAULT 0,
+                blocker_reason TEXT,
+                blocked_at TIMESTAMP
+            )
+        """)
+        
+        # Task activity log
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS task_activity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                event_type TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                details TEXT,
+                FOREIGN KEY (task_id) REFERENCES tasks(task_id)
+            )
+        """)
+        
+        # Agent activity log
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_activity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id TEXT NOT NULL,
+                event_type TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                details TEXT,
+                FOREIGN KEY (agent_id) REFERENCES agents(agent_id)
+            )
+        """)
+        
+        self.conn.commit()
+    
+    def close(self):
+        """Close database connection"""
+        if self.conn:
+            self.conn.close()
+    
+    def get_active_agents_24h(self) -> List[AgentMetrics]:
+        """
+        Query: Active agents in the last 24 hours
+        Returns agents with activity in the last 24h
+        """
+        cursor = self.conn.cursor()
+        twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+        
+        cursor.execute("""
+            SELECT 
+                a.agent_id,
+                a.name,
+                a.status,
+                a.last_activity,
+                COUNT(CASE WHEN t.status = 'completed' AND t.completed_at > ? THEN 1 END) as tasks_completed_24h,
+                COUNT(CASE WHEN t.status = 'in_progress' AND t.assigned_to = a.agent_id THEN 1 END) as tasks_in_progress,
+                CAST((julianday('now') - julianday(a.created_at)) * 86400 AS INTEGER) as uptime_seconds
+            FROM agents a
+            LEFT JOIN tasks t ON a.agent_id = t.assigned_to
+            WHERE a.last_activity > ?
+            GROUP BY a.agent_id
+            ORDER BY a.last_activity DESC
+        """, (twenty_four_hours_ago, twenty_four_hours_ago))
+        
+        agents = []
+        for row in cursor.fetchall():
+            agents.append(AgentMetrics(
+                agent_id=row[0],
+                name=row[1],
+                status=row[2],
+                last_activity=row[3],
+                tasks_completed_24h=row[4],
+                tasks_in_progress=row[5],
+                uptime_seconds=row[6]
+            ))
+        
+        return agents
+    
+    def get_task_throughput_daily(self, days: int = 1) -> List[ThroughputMetrics]:
+        """
+        Query: Task throughput metrics per day
+        Computes completed tasks per day and avg completion time
+        """
+        cursor = self.conn.cursor()
+        
+        cursor.execute("""
+            SELECT 
+                DATE(t.completed_at) as completion_date,
+                COUNT(t.task_id) as tasks_completed,
+                AVG(CAST((julianday(t.completed_at) - julianday(t.started_at)) * 86400 AS FLOAT)) as avg_completion_seconds,
+                COUNT(DISTINCT t.assigned_to) as active_agents
+            FROM tasks t
+            WHERE t.status = 'completed'
+            AND t.completed_at > datetime('now', '-' || ? || ' days')
+            GROUP BY DATE(t.completed_at)
+            ORDER BY completion_date DESC
+        """, (days,))
+        
+        throughputs = []
+        for row in cursor.fetchall():
+            throughputs.append(ThroughputMetrics(
+                date=row[0],
+                tasks_completed=row[1],
+                avg_completion_time_seconds=row[2] if row[2] else 0.0,
+                active_agents_count=row[3]
+            ))
+        
+        return throughputs
+    
+    def get_task_age_percentiles(self) -> Dict[str, float]:
+        """
+        Query: Task age percentiles (p50, p95)
+        Computes for tasks currently in progress or pending
+        """
+        cursor = self.conn.cursor()
+        
+        cursor.execute("""
+            SELECT 
+                CAST((julianday('now') - julianday(t.created_at)) * 86400 AS FLOAT) as age_seconds
+            FROM tasks t
+            WHERE t.status IN ('pending', 'in_progress')
+            ORDER BY age_seconds
+        """)
+        
+        ages = [row[0] for row in cursor.fetchall()]
+        
+        if not ages:
+            return {"p50": 0.0, "p95": 0.0, "p99": 0.0}
+        
+        return {
+            "p50": statistics.median
