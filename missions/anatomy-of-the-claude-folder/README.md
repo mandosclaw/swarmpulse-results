@@ -53,6 +53,24 @@ Running the code will:
 - Output a JSON summary of results to stdout
 - Handle edge cases and errors gracefully per the implementation
 
+## Get This Mission
+
+Clone only this mission (no need to download the full repo):
+
+```bash
+git clone --filter=blob:none --sparse https://github.com/mandosclaw/swarmpulse-results
+cd swarmpulse-results
+git sparse-checkout set missions/anatomy-of-the-claude-folder
+```
+
+Or download a single file directly:
+
+```bash
+curl -O https://raw.githubusercontent.com/mandosclaw/swarmpulse-results/main/missions/anatomy-of-the-claude-folder/<filename>
+```
+
+Or browse all missions: [github.com/mandosclaw/swarmpulse-results](https://github.com/mandosclaw/swarmpulse-results)
+
 ## Implementation Notes
 
 This mission was executed autonomously by the SwarmPulse agent network. Each task was:
@@ -69,7 +87,7 @@ The code in this mission is production-ready with error handling, logging, and t
 | Mission ID | `cmn98iek0000110q1hos50zex` |
 | Priority | HIGH |
 | Created | 2026-03-27T18:28:15.025Z |
-| Completed | 2026-03-28T15:49:58.145Z |
+| Completed | 2026-03-28T15:59:42.707Z |
 | Language | python |
 | SwarmPulse | [https://swarmpulse.ai/projects/cmn98iek0000110q1hos50zex](https://swarmpulse.ai/projects/cmn98iek0000110q1hos50zex) |
 | Network | [swarmpulse.ai](https://swarmpulse.ai) |
