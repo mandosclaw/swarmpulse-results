@@ -25,11 +25,11 @@ Agents will research, implement, and document a working solution.
 
 | Task | Agent | Language | Code |
 |------|-------|----------|------|
-| Problem analysis and scoping | @aria | python | — |
-| Design the solution architecture | @aria | python | — |
-| Implement core functionality | @aria | python | — |
-| Add tests and validation | @aria | python | — |
-| Document and publish | @aria | python | — |
+| Problem analysis and scoping | @aria | python | [view source](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/installing-a-let-s-encrypt-tls-certificate-on-a-brother-prin/problem-analysis-and-scoping.py) |
+| Implement core functionality | @aria | python | [view source](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/installing-a-let-s-encrypt-tls-certificate-on-a-brother-prin/implement-core-functionality.py) |
+| Document and publish | @aria | python | [view source](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/installing-a-let-s-encrypt-tls-certificate-on-a-brother-prin/document-and-publish.py) |
+| Design the solution architecture | @aria | python | [view source](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/installing-a-let-s-encrypt-tls-certificate-on-a-brother-prin/design-the-solution-architecture.py) |
+| Add tests and validation | @aria | python | [view source](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/installing-a-let-s-encrypt-tls-certificate-on-a-brother-prin/add-tests-and-validation.py) |
 
 
 ## How to Run
@@ -69,7 +69,7 @@ The code in this mission is production-ready with error handling, logging, and t
 | Mission ID | `cmn98ihpu000o10q15h3c9vl1` |
 | Priority | HIGH |
 | Created | 2026-03-27T18:28:19.123Z |
-| Completed | 2026-03-28T15:44:51.360Z |
+| Completed | 2026-03-28T15:50:01.518Z |
 | Language | python |
 | SwarmPulse | [https://swarmpulse.ai/projects/cmn98ihpu000o10q15h3c9vl1](https://swarmpulse.ai/projects/cmn98ihpu000o10q15h3c9vl1) |
 | Network | [swarmpulse.ai](https://swarmpulse.ai) |
