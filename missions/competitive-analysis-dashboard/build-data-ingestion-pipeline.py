@@ -3,453 +3,432 @@
 # Task:    Build data ingestion pipeline
 # Mission: Competitive Analysis Dashboard
 # Agent:   @sue
-# Date:    2026-03-28T22:06:07.204Z
+# Date:    2026-03-29T13:23:02.532Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Build data ingestion pipeline for Competitive Analysis Dashboard
-MISSION: Competitive Analysis Dashboard
-AGENT: @sue
-DATE: 2024
+Task: Build data ingestion pipeline
+Mission: Competitive Analysis Dashboard
+Agent: @sue
+Date: 2024
+
+Implements scrapers and API connectors for competitor data sources including
+public APIs, web scraping, and data aggregation with caching and error handling.
 """
 
-import json
 import argparse
-import sqlite3
+import json
+import sys
+import time
+import urllib.request
+import urllib.error
+import urllib.parse
 import csv
+import io
+import sqlite3
 from datetime import datetime, timedelta
-from urllib.parse import urljoin
-from typing import Dict, List, Any, Optional
-import re
+from dataclasses import dataclass, asdict
+from typing import List, Dict, Any, Optional
 from pathlib import Path
+import hashlib
 
 
+@dataclass
+class CompetitorDataPoint:
+    """Represents a single data point from a competitor source"""
+    source: str
+    competitor: str
+    metric: str
+    value: Any
+    timestamp: str
+    raw_url: str
+
+
+@dataclass
 class DataSource:
-    """Base class for data source connectors"""
-    
-    def __init__(self, name: str, config: Dict[str, Any]):
-        self.name = name
-        self.config = config
-        self.last_update = None
-        self.data = []
-    
-    def fetch(self) -> List[Dict[str, Any]]:
-        """Fetch data from source - override in subclasses"""
-        raise NotImplementedError
-    
-    def validate(self, item: Dict[str, Any]) -> bool:
-        """Validate data item"""
-        return True
+    """Configuration for a data source"""
+    name: str
+    url: str
+    data_type: str  # "json", "csv", "html"
+    parser_type: str  # "api", "csv", "scrape"
+    headers: Optional[Dict[str, str]] = None
+    params: Optional[Dict[str, str]] = None
 
 
-class MockAPISource(DataSource):
-    """Mock API connector for competitor data"""
+class DataCache:
+    """SQLite-based cache for ingested data"""
     
-    def __init__(self, name: str, config: Dict[str, Any]):
-        super().__init__(name, config)
-        self.endpoint = config.get('endpoint', '')
-        self.fields = config.get('fields', [])
+    def __init__(self, cache_path: str = "competitor_cache.db"):
+        self.cache_path = cache_path
+        self._init_db()
     
-    def fetch(self) -> List[Dict[str, Any]]:
-        """Simulate API fetch with mock data"""
-        mock_data = []
-        
-        if 'pricing' in self.fields:
-            mock_data.extend([
-                {
-                    'competitor': 'CompetitorA',
-                    'product': 'Premium Plan',
-                    'price': 99.99,
-                    'currency': 'USD',
-                    'date': datetime.now().isoformat(),
-                    'source': self.name
-                },
-                {
-                    'competitor': 'CompetitorB',
-                    'product': 'Enterprise Plan',
-                    'price': 249.99,
-                    'currency': 'USD',
-                    'date': datetime.now().isoformat(),
-                    'source': self.name
-                },
-            ])
-        
-        if 'features' in self.fields:
-            mock_data.extend([
-                {
-                    'competitor': 'CompetitorA',
-                    'feature': 'API Integration',
-                    'available': True,
-                    'date': datetime.now().isoformat(),
-                    'source': self.name
-                },
-                {
-                    'competitor': 'CompetitorB',
-                    'feature': 'Advanced Analytics',
-                    'available': True,
-                    'date': datetime.now().isoformat(),
-                    'source': self.name
-                },
-            ])
-        
-        if 'market_share' in self.fields:
-            mock_data.extend([
-                {
-                    'competitor': 'CompetitorA',
-                    'market_share_percent': 15.5,
-                    'region': 'North America',
-                    'date': datetime.now().isoformat(),
-                    'source': self.name
-                },
-                {
-                    'competitor': 'CompetitorB',
-                    'market_share_percent': 22.3,
-                    'region': 'Europe',
-                    'date': datetime.now().isoformat(),
-                    'source': self.name
-                },
-            ])
-        
-        self.last_update = datetime.now()
-        self.data = mock_data
-        return mock_data
-    
-    def validate(self, item: Dict[str, Any]) -> bool:
-        """Validate API data item"""
-        required_fields = {'competitor', 'date', 'source'}
-        return required_fields.issubset(set(item.keys()))
-
-
-class WebScraperSource(DataSource):
-    """Web scraper connector for public competitor data"""
-    
-    def __init__(self, name: str, config: Dict[str, Any]):
-        super().__init__(name, config)
-        self.urls = config.get('urls', [])
-        self.selectors = config.get('selectors', {})
-    
-    def fetch(self) -> List[Dict[str, Any]]:
-        """Simulate web scraping with mock data"""
-        mock_data = []
-        
-        for url in self.urls:
-            if 'news' in url or 'press' in url:
-                mock_data.extend([
-                    {
-                        'competitor': self._extract_domain(url),
-                        'title': 'New Product Launch Announced',
-                        'content': 'Latest release features advanced AI capabilities',
-                        'date': datetime.now().isoformat(),
-                        'url': url,
-                        'source': self.name,
-                        'type': 'press_release'
-                    },
-                    {
-                        'competitor': self._extract_domain(url),
-                        'title': 'Q3 Performance Report',
-                        'content': 'Strong quarterly growth in customer acquisition',
-                        'date': (datetime.now() - timedelta(days=7)).isoformat(),
-                        'url': url,
-                        'source': self.name,
-                        'type': 'news'
-                    },
-                ])
-            elif 'pricing' in url:
-                mock_data.extend([
-                    {
-                        'competitor': self._extract_domain(url),
-                        'product': 'Starter',
-                        'price': 29.99,
-                        'features_count': 5,
-                        'date': datetime.now().isoformat(),
-                        'url': url,
-                        'source': self.name,
-                        'type': 'pricing_page'
-                    },
-                    {
-                        'competitor': self._extract_domain(url),
-                        'product': 'Professional',
-                        'price': 99.99,
-                        'features_count': 15,
-                        'date': datetime.now().isoformat(),
-                        'url': url,
-                        'source': self.name,
-                        'type': 'pricing_page'
-                    },
-                ])
-        
-        self.last_update = datetime.now()
-        self.data = mock_data
-        return mock_data
-    
-    def _extract_domain(self, url: str) -> str:
-        """Extract domain from URL"""
-        match = re.search(r'https?://(?:www\.)?([^/]+)', url)
-        if match:
-            return match.group(1).split('.')[0].capitalize()
-        return 'Unknown'
-    
-    def validate(self, item: Dict[str, Any]) -> bool:
-        """Validate scraped data item"""
-        required_fields = {'competitor', 'date', 'url', 'source'}
-        return required_fields.issubset(set(item.keys()))
-
-
-class CSVFileSource(DataSource):
-    """CSV file connector for manual data uploads"""
-    
-    def __init__(self, name: str, config: Dict[str, Any]):
-        super().__init__(name, config)
-        self.filepath = config.get('filepath', '')
-    
-    def fetch(self) -> List[Dict[str, Any]]:
-        """Read CSV file data"""
-        mock_data = []
-        
-        if self.filepath and Path(self.filepath).exists():
-            try:
-                with open(self.filepath, 'r', encoding='utf-8') as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        row['source'] = self.name
-                        row['date'] = datetime.now().isoformat()
-                        mock_data.append(row)
-            except Exception as e:
-                print(f"Error reading CSV {self.filepath}: {e}")
-        else:
-            mock_data = [
-                {
-                    'competitor': 'CompetitorA',
-                    'metric': 'customer_count',
-                    'value': 5000,
-                    'date': datetime.now().isoformat(),
-                    'source': self.name
-                },
-                {
-                    'competitor': 'CompetitorB',
-                    'metric': 'revenue_millions',
-                    'value': 50.5,
-                    'date': datetime.now().isoformat(),
-                    'source': self.name
-                },
-            ]
-        
-        self.last_update = datetime.now()
-        self.data = mock_data
-        return mock_data
-    
-    def validate(self, item: Dict[str, Any]) -> bool:
-        """Validate CSV data item"""
-        required_fields = {'competitor', 'date', 'source'}
-        return required_fields.issubset(set(item.keys()))
-
-
-class DataPipeline:
-    """Main data ingestion pipeline orchestrator"""
-    
-    def __init__(self, db_path: str = 'competitive_analysis.db'):
-        self.db_path = db_path
-        self.sources: Dict[str, DataSource] = {}
-        self.ingested_count = 0
-        self.failed_count = 0
-        self._init_database()
-    
-    def _init_database(self):
-        """Initialize SQLite database"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS ingested_data (
+    def _init_db(self):
+        """Initialize the cache database"""
+        with sqlite3.connect(self.cache_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS cached_data (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    competitor TEXT NOT NULL,
-                    data_type TEXT,
-                    raw_data TEXT NOT NULL,
                     source TEXT NOT NULL,
-                    ingestion_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    validation_status TEXT DEFAULT 'pending'
+                    competitor TEXT NOT NULL,
+                    metric TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    raw_url TEXT NOT NULL,
+                    cached_at TEXT NOT NULL,
+                    UNIQUE(source, competitor, metric, timestamp)
                 )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS ingestion_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_name TEXT NOT NULL,
-                    record_count INTEGER,
-                    status TEXT,
-                    error_message TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_source_timestamp 
+                ON cached_data(source, timestamp)
+            """)
             conn.commit()
-            conn.close()
-        except Exception as e:
-            print(f"Database initialization error: {e}")
     
-    def register_source(self, source: DataSource):
-        """Register a data source"""
-        self.sources[source.name] = source
-        print(f"✓ Registered source: {source.name}")
+    def store(self, data_point: CompetitorDataPoint):
+        """Store a data point in the cache"""
+        with sqlite3.connect(self.cache_path) as conn:
+            try:
+                conn.execute("""
+                    INSERT INTO cached_data 
+                    (source, competitor, metric, value, timestamp, raw_url, cached_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    data_point.source,
+                    data_point.competitor,
+                    data_point.metric,
+                    json.dumps(data_point.value) if not isinstance(data_point.value, str) else data_point.value,
+                    data_point.timestamp,
+                    data_point.raw_url,
+                    datetime.utcnow().isoformat()
+                ))
+                conn.commit()
+            except sqlite3.IntegrityError:
+                pass
     
-    def ingest(self, source_name: Optional[str] = None) -> Dict[str, Any]:
-        """Ingest data from registered sources"""
-        results = {
-            'total_sources': 0,
-            'successful_ingestions': 0,
-            'failed_ingestions': 0,
-            'total_records': 0,
-            'details': []
-        }
-        
-        sources_to_process = {source_name: self.sources[source_name]} if source_name and source_name in self.sources else self.sources
-        
-        for name, source in sources_to_process.items():
-            result = self._ingest_source(source)
-            results['details'].append(result)
-            results['total_sources'] += 1
+    def get_recent(self, source: str, hours: int = 24) -> List[CompetitorDataPoint]:
+        """Retrieve recent cached data"""
+        cutoff_time = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        with sqlite3.connect(self.cache_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT source, competitor, metric, value, timestamp, raw_url
+                FROM cached_data
+                WHERE source = ? AND timestamp > ?
+                ORDER BY timestamp DESC
+            """, (source, cutoff_time)).fetchall()
             
-            if result['status'] == 'success':
-                results['successful_ingestions'] += 1
-                results['total_records'] += result['record_count']
+            data_points = []
+            for row in rows:
+                try:
+                    value = json.loads(row['value'])
+                except (json.JSONDecodeError, TypeError):
+                    value = row['value']
+                
+                data_points.append(CompetitorDataPoint(
+                    source=row['source'],
+                    competitor=row['competitor'],
+                    metric=row['metric'],
+                    value=value,
+                    timestamp=row['timestamp'],
+                    raw_url=row['raw_url']
+                ))
+            return data_points
+    
+    def clear_old(self, days: int = 30):
+        """Remove cached data older than specified days"""
+        cutoff_time = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        with sqlite3.connect(self.cache_path) as conn:
+            conn.execute(
+                "DELETE FROM cached_data WHERE timestamp < ?",
+                (cutoff_time,)
+            )
+            conn.commit()
+
+
+class APIConnector:
+    """Handles API-based data fetching"""
+    
+    def __init__(self, timeout: int = 10):
+        self.timeout = timeout
+    
+    def fetch_json(self, url: str, headers: Optional[Dict] = None, 
+                   params: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
+        """Fetch JSON data from API endpoint"""
+        try:
+            if params:
+                url = url + "?" + urllib.parse.urlencode(params)
+            
+            req = urllib.request.Request(url)
+            if headers:
+                for key, value in headers.items():
+                    req.add_header(key, value)
+            
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                data = response.read().decode('utf-8')
+                return json.loads(data)
+        
+        except urllib.error.URLError as e:
+            print(f"URL Error fetching {url}: {e}", file=sys.stderr)
+            return None
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error from {url}: {e}", file=sys.stderr)
+            return None
+        except Exception as e:
+            print(f"Unexpected error fetching {url}: {e}", file=sys.stderr)
+            return None
+    
+    def fetch_csv(self, url: str, headers: Optional[Dict] = None) -> Optional[List[Dict]]:
+        """Fetch CSV data from URL"""
+        try:
+            req = urllib.request.Request(url)
+            if headers:
+                for key, value in headers.items():
+                    req.add_header(key, value)
+            
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                content = response.read().decode('utf-8')
+                reader = csv.DictReader(io.StringIO(content))
+                return list(reader)
+        
+        except Exception as e:
+            print(f"Error fetching CSV from {url}: {e}", file=sys.stderr)
+            return None
+
+
+class CompetitorScraper:
+    """Web scraping functionality for competitor data"""
+    
+    @staticmethod
+    def extract_json_from_html(html_content: str, script_id: Optional[str] = None) -> Optional[Dict]:
+        """Extract JSON data embedded in HTML script tags"""
+        try:
+            if script_id:
+                start = html_content.find(f'id="{script_id}"')
+                if start == -1:
+                    return None
+                start = html_content.find('>', start)
+                end = html_content.find('</script>', start)
+                json_str = html_content[start+1:end].strip()
             else:
-                results['failed_ingestions'] += 1
+                start = html_content.find('<script type="application/json">')
+                if start == -1:
+                    return None
+                start += len('<script type="application/json">')
+                end = html_content.find('</script>', start)
+                json_str = html_content[start:end].strip()
+            
+            return json.loads(json_str)
+        except Exception as e:
+            print(f"Error extracting JSON from HTML: {e}", file=sys.stderr)
+            return None
+    
+    @staticmethod
+    def extract_text_metrics(html_content: str, patterns: Dict[str, str]) -> Dict[str, Any]:
+        """Extract metrics using simple pattern matching"""
+        metrics = {}
+        for metric_name, pattern in patterns.items():
+            start = html_content.find(pattern)
+            if start != -1:
+                start += len(pattern)
+                end = html_content.find('<', start)
+                if end == -1:
+                    end = len(html_content)
+                value = html_content[start:end].strip()
+                metrics[metric_name] = value
+        return metrics
+
+
+class DataIngestionPipeline:
+    """Main pipeline for ingesting competitor data"""
+    
+    def __init__(self, cache_path: str = "competitor_cache.db", timeout: int = 10):
+        self.cache = DataCache(cache_path)
+        self.api_connector = APIConnector(timeout)
+        self.scraper = CompetitorScraper()
+        self.data_sources: List[DataSource] = []
+        self.ingested_data: List[CompetitorDataPoint] = []
+    
+    def add_source(self, source: DataSource):
+        """Register a data source"""
+        self.data_sources.append(source)
+    
+    def ingest_from_source(self, source: DataSource, use_cache: bool = True) -> List[CompetitorDataPoint]:
+        """Ingest data from a single source"""
+        results = []
+        
+        if use_cache:
+            cached = self.cache.get_recent(source.name, hours=1)
+            if cached:
+                results.extend(cached)
+                return results
+        
+        if source.parser_type == "api":
+            if source.data_type == "json":
+                data = self.api_connector.fetch_json(
+                    source.url,
+                    headers=source.headers,
+                    params=source.params
+                )
+                if data:
+                    results.extend(self._parse_api_json(source, data))
+        
+        elif source.parser_type == "csv":
+            data = self.api_connector.fetch_csv(source.url, headers=source.headers)
+            if data:
+                results.extend(self._parse_csv_data(source, data))
+        
+        elif source.parser_type == "scrape":
+            try:
+                req = urllib.request.Request(source.url)
+                if source.headers:
+                    for key, value in source.headers.items():
+                        req.add_header(key, value)
+                
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    html_content = response.read().decode('utf-8')
+                    results.extend(self._parse_html_content(source, html_content))
+            except Exception as e:
+                print(f"Error scraping {source.name}: {e}", file=sys.stderr)
+        
+        for data_point in results:
+            self.cache.store(data_point)
         
         return results
     
-    def _ingest_source(self, source: DataSource) -> Dict[str, Any]:
-        """Ingest data from a single source"""
-        result = {
-            'source_name': source.name,
-            'status': 'pending',
-            'record_count': 0,
-            'error': None
-        }
+    def _parse_api_json(self, source: DataSource, data: Dict[str, Any]) -> List[CompetitorDataPoint]:
+        """Parse JSON API response"""
+        results = []
+        timestamp = datetime.utcnow().isoformat()
         
-        try:
-            data = source.fetch()
-            valid_records = 0
-            
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            for item in data:
-                if source.validate(item):
-                    try:
-                        cursor.execute('''
-                            INSERT INTO ingested_data 
-                            (competitor, data_type, raw_data, source, validation_status)
-                            VALUES (?, ?, ?, ?, ?)
-                        ''', (
-                            item.get('competitor', 'Unknown'),
-                            item.get('type', 'general'),
-                            json.dumps(item),
-                            source.name,
-                            'valid'
-                        ))
-                        valid_records += 1
-                    except Exception as e:
-                        print(f"Error inserting record: {e}")
-                        self.failed_count += 1
-            
-            cursor.execute('''
-                INSERT INTO ingestion_logs 
-                (source_name, record_count, status, error_message)
-                VALUES (?, ?, ?, ?)
-            ''', (source.name, valid_records, 'success', None))
-            
-            conn.commit()
-            conn.close()
-            
-            result['status'] = 'success'
-            result['record_count'] = valid_records
-            self.ingested_count += valid_records
-            
-        except Exception as e:
-            result['status'] = 'failed'
-            result['error'] = str(e)
-            self.failed_count += 1
-            
-            try:
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO ingestion_logs 
-                    (source_name, record_count, status, error_message)
-                    VALUES (?, ?, ?, ?)
-                ''', (source.name, 0, 'failed', str(e)))
-                conn.commit()
-                conn.close()
-            except:
-                pass
+        if isinstance(data, dict):
+            if "competitors" in data:
+                competitors = data["competitors"]
+                if isinstance(competitors, list):
+                    for comp in competitors:
+                        if isinstance(comp, dict):
+                            competitor_name = comp.get("name", "unknown")
+                            for key, value in comp.items():
+                                if key != "name":
+                                    results.append(CompetitorDataPoint(
+                                        source=source.name,
+                                        competitor=competitor_name,
+                                        metric=key,
+                                        value=value,
+                                        timestamp=timestamp,
+                                        raw_url=source.url
+                                    ))
+            else:
+                for key, value in data.items():
+                    results.append(CompetitorDataPoint(
+                        source=source.name,
+                        competitor="general",
+                        metric=key,
+                        value=value,
+                        timestamp=timestamp,
+                        raw_url=source.url
+                    ))
         
-        return result
+        return results
+    
+    def _parse_csv_data(self, source: DataSource, data: List[Dict]) -> List[CompetitorDataPoint]:
+        """Parse CSV data"""
+        results = []
+        timestamp = datetime.utcnow().isoformat()
+        
+        for row in data:
+            competitor = row.get("competitor", row.get("name", "unknown"))
+            for key, value in row.items():
+                if key not in ["competitor", "name"]:
+                    results.append(CompetitorDataPoint(
+                        source=source.name,
+                        competitor=competitor,
+                        metric=key,
+                        value=value,
+                        timestamp=timestamp,
+                        raw_url=source.url
+                    ))
+        
+        return results
+    
+    def _parse_html_content(self, source: DataSource, html_content: str) -> List[CompetitorDataPoint]:
+        """Parse HTML scraped content"""
+        results = []
+        timestamp = datetime.utcnow().isoformat()
+        
+        json_data = self.scraper.extract_json_from_html(html_content)
+        if json_data:
+            results.extend(self._parse_api_json(source, json_data))
+        else:
+            patterns = {
+                "market_cap": "Market Cap:",
+                "revenue": "Revenue:",
+                "employees": "Employees:"
+            }
+            metrics = self.scraper.extract_text_metrics(html_content, patterns)
+            for metric, value in metrics.items():
+                results.append(CompetitorDataPoint(
+                    source=source.name,
+                    competitor="scraped",
+                    metric=metric,
+                    value=value,
+                    timestamp=timestamp,
+                    raw_url=source.url
+                ))
+        
+        return results
+    
+    def ingest_all(self, use_cache: bool = True) -> Dict[str, List[CompetitorDataPoint]]:
+        """Ingest data from all registered sources"""
+        results = {}
+        for source in self.data_sources:
+            results[source.name] = self.ingest_from_source(source, use_cache)
+        self.ingested_data = [dp for dps in results.values() for dp in dps]
+        return results
     
     def get_summary(self) -> Dict[str, Any]:
-        """Get pipeline summary statistics"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT COUNT(*) FROM ingested_data')
-            total_records = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT COUNT(DISTINCT competitor) FROM ingested_data')
-            unique_competitors = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT COUNT(DISTINCT source) FROM ingested_data')
-            unique_sources = cursor.fetchone()[0]
-            
-            cursor.execute('''
-                SELECT source, COUNT(*) as count 
-                FROM ingested_data 
-                GROUP BY source
-            ''')
-            source_breakdown = dict(cursor.fetchall())
-            
-            conn.close()
-            
-            return {
-                'total_records': total_records,
-                'unique_competitors': unique_competitors,
-                'unique_sources': unique_sources,
-                'source_breakdown': source_breakdown,
-                'ingestion_stats': {
-                    'successful': self.ingested_count,
-                    'failed': self.failed_count
-                }
-            }
-        except Exception as e:
-            print(f"Error getting summary: {e}")
-            return {}
+        """Generate summary of ingested data"""
+        competitors = set()
+        metrics = set()
+        sources = set()
+        
+        for dp in self.ingested_data:
+            competitors.add(dp.competitor)
+            metrics.add(dp.metric)
+            sources.add(dp.source)
+        
+        return {
+            "total_data_points": len(self.ingested_data),
+            "unique_competitors": len(competitors),
+            "unique_metrics": len(metrics),
+            "unique_sources": len(sources),
+            "competitors": sorted(list(competitors)),
+            "metrics": sorted(list(metrics)),
+            "sources": sorted(list(sources)),
+            "timestamp": datetime.utcnow().isoformat()
+        }
     
-    def export_data(self, output_file: str = 'competitive_data.json'):
-        """Export ingested data to JSON"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT raw_data, ingestion_date FROM ingested_data ORDER BY ingestion_date DESC')
-            rows = cursor.fetchall()
-            
-            data = [json.loads(row[0]) for row in rows]
-            
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump({
-                    'export_date': datetime.now().isoformat(),
-                    'record_count': len(data),
-                    'data': data
-                }, f, indent=2)
-            
-            conn.close()
-            return f"✓ Exported {len(data)} records to {output_file}"
-        except Exception as e:
-            return f"✗ Export failed: {e}"
-
-
-def main():
-    """Main entry point"""
-    parser = argparse.ArgumentParser(description='Competitive Analysis Data Ingestion Pipeline')
-    parser.
+    def export_json(self, output_path: str):
+        """Export ingested data to JSON file"""
+        data = [asdict(dp) for dp in self.ingested_data]
+        with open(output_path, 'w') as f:
+            json.dump({
+                "metadata": self.get_summary(),
+                "data": data
+            }, f, indent=2)
+    
+    def export_csv(self, output_path: str):
+        """Export ingested data to CSV file"""
+        if not self.ingested_data:
+            return
+        
+        with open(output_path, 'w', newline='') as f:
+            fieldnames = ['source', 'competitor', 'metric', 'value', 'timestamp', 'raw_url']
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for dp in self.ingested_data:
+                writer.writerow({
+                    'source': dp.source,
+                    'competitor': dp.competitor,
+                    'metric': dp.metric,
+                    'value': dp.value if isinstance(dp.value, str) else json.dumps(dp.value),
