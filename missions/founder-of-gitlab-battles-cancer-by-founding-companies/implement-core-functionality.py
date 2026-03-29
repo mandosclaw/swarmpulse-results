@@ -3,20 +3,17 @@
 # Task:    Implement core functionality
 # Mission: Founder of GitLab battles cancer by founding companies
 # Agent:   @aria
-# Date:    2026-03-29T09:16:19.042Z
+# Date:    2026-03-29T20:50:43.272Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Implement core functionality for GitLab founder cancer journey documentation
-MISSION: Founder of GitLab battles cancer by founding companies
-CATEGORY: Engineering
-AGENT: @aria
-DATE: 2024
-
-This tool processes, analyzes, and tracks the journey of building companies
-while facing health challenges. It provides structured data analysis, timeline
-generation, and insights extraction from documented experiences.
+Task: Implement core functionality for GitLab founder cancer journey analysis
+Mission: Founder of GitLab battles cancer by founding companies
+Agent: @aria (SwarmPulse network)
+Date: 2024
+Category: Engineering
+Source: https://sytse.com/cancer/
 """
 
 import argparse
@@ -24,26 +21,30 @@ import json
 import logging
 import sys
 from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
-from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import List, Optional, Dict, Any
 from urllib.parse import urlparse
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
 class CompanyPhase(Enum):
-    """Phases of company development"""
-    IDEATION = "ideation"
-    FOUNDING = "founding"
-    EARLY_STAGE = "early_stage"
+    """Phases of company journey"""
+    FOUNDED = "founded"
+    GROWTH = "growth"
     SCALING = "scaling"
-    MATURE = "mature"
+    EXIT = "exit"
 
 
-class HealthStatus(Enum):
-    """Health status categories"""
-    HEALTHY = "healthy"
-    DIAGNOSED = "diagnosed"
+class HealthChallenge(Enum):
+    """Health challenge types"""
+    DIAGNOSIS = "diagnosis"
     TREATMENT = "treatment"
     RECOVERY = "recovery"
     REMISSION = "remission"
@@ -51,385 +52,280 @@ class HealthStatus(Enum):
 
 @dataclass
 class TimelineEvent:
-    """Represents a single timeline event"""
+    """Represents a single event in the journey"""
     date: str
     event_type: str
     title: str
     description: str
-    company: Optional[str] = None
-    health_status: Optional[str] = None
-    impact_level: str = "medium"
+    impact_level: int  # 1-10 scale
+    tags: List[str]
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+    def validate(self) -> bool:
+        """Validate event data"""
+        try:
+            datetime.fromisoformat(self.date)
+            if not 1 <= self.impact_level <= 10:
+                return False
+            if not self.title or not self.description:
+                return False
+            return True
+        except ValueError:
+            return False
+
 
 @dataclass
-class CompanyRecord:
-    """Represents a company founded"""
+class Company:
+    """Represents a company in the founder's journey"""
     name: str
-    founding_date: str
-    industry: str
-    phase: str
+    founded_year: int
+    phase: CompanyPhase
     description: str
-    achievements: List[str]
-    employees_count: Optional[int] = None
-    funding_raised: Optional[str] = None
+    team_size: int
+    funding: Optional[str] = None
+    website: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        data['phase'] = self.phase.value
+        return data
+
+    def validate(self) -> bool:
+        """Validate company data"""
+        if not self.name or self.founded_year < 1900 or self.founded_year > datetime.now().year:
+            return False
+        if self.team_size < 1:
+            return False
+        if self.website:
+            try:
+                result = urlparse(self.website)
+                if not all([result.scheme, result.netloc]):
+                    return False
+            except Exception:
+                return False
+        return True
 
 
-@dataclass
-class JourneyAnalysis:
-    """Analysis of founder journey"""
-    total_companies: int
-    total_timeline_events: int
-    health_phases: Dict[str, int]
-    company_phases: Dict[str, int]
-    average_company_duration_months: float
-    key_insights: List[str]
-    resilience_score: float
+class JourneyAnalyzer:
+    """Analyzes founder journey through business and health challenges"""
 
-
-class FounderJourneyAnalyzer:
-    """Analyzes founder's journey of building companies while managing health"""
-
-    def __init__(self, log_level: str = "INFO"):
-        self.logger = self._setup_logging(log_level)
-        self.companies: List[CompanyRecord] = []
+    def __init__(self):
+        self.companies: List[Company] = []
         self.timeline_events: List[TimelineEvent] = []
-        self.logger.info("FounderJourneyAnalyzer initialized")
+        logger.info("JourneyAnalyzer initialized")
 
-    def _setup_logging(self, log_level: str) -> logging.Logger:
-        """Configure logging with proper format"""
-        logger = logging.getLogger(__name__)
-        handler = logging.StreamHandler(sys.stdout)
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        logger.setLevel(getattr(logging, log_level.upper()))
-        return logger
-
-    def add_company(self, company: CompanyRecord) -> None:
-        """Add a company record to the journey"""
-        self.logger.info(f"Adding company: {company.name}")
+    def add_company(self, company: Company) -> bool:
+        """Add company to journey"""
+        if not company.validate():
+            logger.error(f"Invalid company data: {company.name}")
+            return False
         self.companies.append(company)
+        logger.info(f"Company added: {company.name}")
+        return True
 
-    def add_timeline_event(self, event: TimelineEvent) -> None:
-        """Add a timeline event to the journey"""
-        self.logger.debug(f"Adding timeline event: {event.title}")
+    def add_timeline_event(self, event: TimelineEvent) -> bool:
+        """Add timeline event"""
+        if not event.validate():
+            logger.error(f"Invalid timeline event: {event.title}")
+            return False
         self.timeline_events.append(event)
+        logger.info(f"Timeline event added: {event.title}")
+        return True
 
-    def calculate_company_duration(self, start_date: str, end_date: Optional[str] = None) -> int:
-        """Calculate company duration in months"""
-        try:
-            start = datetime.strptime(start_date, "%Y-%m-%d")
-            end = datetime.strptime(end_date, "%Y-%m-%d") if end_date else datetime.now()
-            delta = (end - start).days
-            return max(1, delta // 30)
-        except ValueError as e:
-            self.logger.warning(f"Date parsing error: {e}")
-            return 0
+    def get_company_by_name(self, name: str) -> Optional[Company]:
+        """Retrieve company by name"""
+        for company in self.companies:
+            if company.name.lower() == name.lower():
+                return company
+        return None
 
-    def calculate_resilience_score(self) -> float:
-        """
-        Calculate resilience score based on:
-        - Number of companies founded during health challenges
-        - Transitions between health phases and company milestones
-        - Continued productivity despite obstacles
-        """
+    def get_events_by_type(self, event_type: str) -> List[TimelineEvent]:
+        """Get all events of a specific type"""
+        return [e for e in self.timeline_events if e.event_type.lower() == event_type.lower()]
+
+    def get_events_by_tag(self, tag: str) -> List[TimelineEvent]:
+        """Get all events with a specific tag"""
+        return [e for e in self.timeline_events if tag.lower() in [t.lower() for t in e.tags]]
+
+    def get_high_impact_events(self, threshold: int = 7) -> List[TimelineEvent]:
+        """Get high-impact events"""
+        return [e for e in self.timeline_events if e.impact_level >= threshold]
+
+    def timeline_by_date(self) -> List[TimelineEvent]:
+        """Get timeline sorted by date"""
+        return sorted(self.timeline_events, key=lambda e: datetime.fromisoformat(e.date))
+
+    def calculate_journey_metrics(self) -> Dict[str, Any]:
+        """Calculate metrics about the journey"""
         if not self.timeline_events:
-            return 0.0
-
-        health_challenge_events = sum(
-            1 for event in self.timeline_events
-            if event.health_status in [HealthStatus.DIAGNOSED.value, HealthStatus.TREATMENT.value]
-        )
-
-        company_events_during_challenges = sum(
-            1 for event in self.timeline_events
-            if event.event_type == "company_milestone" and 
-            event.health_status in [HealthStatus.DIAGNOSED.value, HealthStatus.TREATMENT.value]
-        )
-
-        total_events = len(self.timeline_events)
-        recovery_events = sum(
-            1 for event in self.timeline_events
-            if event.health_status in [HealthStatus.RECOVERY.value, HealthStatus.REMISSION.value]
-        )
-
-        # Resilience = company progress despite health challenges
-        base_score = (company_events_during_challenges / max(1, health_challenge_events)) * 50
-        recovery_bonus = (recovery_events / max(1, total_events)) * 30
-        productivity_bonus = (len(self.companies) / max(1, health_challenge_events)) * 20
-
-        score = min(100.0, base_score + recovery_bonus + productivity_bonus)
-        self.logger.info(f"Calculated resilience score: {score:.2f}")
-        return score
-
-    def generate_analysis(self) -> JourneyAnalysis:
-        """Generate comprehensive analysis of the journey"""
-        self.logger.info("Generating journey analysis")
-
-        # Count health phases
-        health_phases = {}
-        for event in self.timeline_events:
-            if event.health_status:
-                health_phases[event.health_status] = health_phases.get(event.health_status, 0) + 1
-
-        # Count company phases
-        company_phases = {}
-        for company in self.companies:
-            company_phases[company.phase] = company_phases.get(company.phase, 0) + 1
-
-        # Calculate average company duration
-        durations = []
-        for company in self.companies:
-            duration = self.calculate_company_duration(company.founding_date)
-            if duration > 0:
-                durations.append(duration)
-        avg_duration = sum(durations) / len(durations) if durations else 0
-
-        # Generate key insights
-        insights = self._generate_insights()
-
-        analysis = JourneyAnalysis(
-            total_companies=len(self.companies),
-            total_timeline_events=len(self.timeline_events),
-            health_phases=health_phases,
-            company_phases=company_phases,
-            average_company_duration_months=avg_duration,
-            key_insights=insights,
-            resilience_score=self.calculate_resilience_score()
-        )
-
-        self.logger.info("Journey analysis completed successfully")
-        return analysis
-
-    def _generate_insights(self) -> List[str]:
-        """Generate key insights from the journey data"""
-        insights = []
-
-        if not self.companies:
-            return ["No companies recorded yet"]
-
-        insights.append(
-            f"Founded {len(self.companies)} company/companies while facing health challenges"
-        )
-
-        if self.timeline_events:
-            treatment_events = sum(
-                1 for e in self.timeline_events
-                if e.health_status == HealthStatus.TREATMENT.value
-            )
-            if treatment_events > 0:
-                insights.append(
-                    f"Continued building through {treatment_events} significant health treatment phases"
-                )
-
-        company_phases_counts = {}
-        for company in self.companies:
-            company_phases_counts[company.phase] = company_phases_counts.get(company.phase, 0) + 1
-
-        if company_phases_counts:
-            most_common_phase = max(company_phases_counts, key=company_phases_counts.get)
-            insights.append(f"Most companies in {most_common_phase} phase")
-
-        total_employees = sum(c.employees_count or 0 for c in self.companies)
-        if total_employees > 0:
-            insights.append(f"Created {total_employees} total employment opportunities")
-
-        insights.append("Demonstrated extraordinary resilience in face of adversity")
-
-        return insights
-
-    def export_json(self, filepath: Path) -> None:
-        """Export journey data to JSON file"""
-        try:
-            analysis = self.generate_analysis()
-            export_data = {
-                "metadata": {
-                    "exported_at": datetime.now().isoformat(),
-                    "total_companies": len(self.companies),
-                    "total_events": len(self.timeline_events)
-                },
-                "companies": [asdict(c) for c in self.companies],
-                "timeline": [e.to_dict() for e in self.timeline_events],
-                "analysis": asdict(analysis)
+            return {
+                "total_events": 0,
+                "total_companies": 0,
+                "average_impact": 0,
+                "event_types": {},
+                "high_impact_percentage": 0
             }
 
-            with open(filepath, 'w') as f:
-                json.dump(export_data, f, indent=2)
+        total_events = len(self.timeline_events)
+        total_companies = len(self.companies)
+        average_impact = sum(e.impact_level for e in self.timeline_events) / total_events
+        
+        event_types = {}
+        for event in self.timeline_events:
+            event_types[event.event_type] = event_types.get(event.event_type, 0) + 1
 
-            self.logger.info(f"Journey data exported to {filepath}")
-        except (IOError, OSError) as e:
-            self.logger.error(f"Failed to export JSON: {e}")
-            raise
+        high_impact_count = len(self.get_high_impact_events())
+        high_impact_percentage = (high_impact_count / total_events * 100) if total_events > 0 else 0
 
-    def import_json(self, filepath: Path) -> None:
-        """Import journey data from JSON file"""
-        try:
-            with open(filepath, 'r') as f:
-                data = json.load(f)
+        total_team_size = sum(c.team_size for c in self.companies)
+        avg_company_size = total_team_size / total_companies if total_companies > 0 else 0
 
-            self.companies = []
-            for company_data in data.get("companies", []):
-                company = CompanyRecord(**company_data)
-                self.companies.append(company)
+        return {
+            "total_events": total_events,
+            "total_companies": total_companies,
+            "average_impact": round(average_impact, 2),
+            "high_impact_percentage": round(high_impact_percentage, 2),
+            "event_types": event_types,
+            "total_team_size": total_team_size,
+            "average_company_size": round(avg_company_size, 2),
+            "date_range": {
+                "start": self.timeline_by_date()[0].date if self.timeline_events else None,
+                "end": self.timeline_by_date()[-1].date if self.timeline_events else None
+            }
+        }
 
-            self.timeline_events = []
-            for event_data in data.get("timeline", []):
-                event = TimelineEvent(**event_data)
-                self.timeline_events.append(event)
+    def generate_report(self) -> Dict[str, Any]:
+        """Generate comprehensive journey report"""
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "companies": [c.to_dict() for c in sorted(self.companies, key=lambda c: c.founded_year)],
+            "timeline_events": [e.to_dict() for e in self.timeline_by_date()],
+            "metrics": self.calculate_journey_metrics(),
+            "event_count_by_phase": self._count_events_by_phase()
+        }
 
-            self.logger.info(f"Journey data imported from {filepath}")
-        except (IOError, OSError, json.JSONDecodeError) as e:
-            self.logger.error(f"Failed to import JSON: {e}")
-            raise
-
-    def print_summary(self) -> None:
-        """Print human-readable summary of the journey"""
-        print("\n" + "="*70)
-        print("FOUNDER JOURNEY ANALYSIS SUMMARY")
-        print("="*70)
-
-        analysis = self.generate_analysis()
-
-        print(f"\nTotal Companies Founded: {analysis.total_companies}")
-        print(f"Total Timeline Events: {analysis.total_timeline_events}")
-        print(f"Average Company Duration: {analysis.average_company_duration_months:.1f} months")
-        print(f"Resilience Score: {analysis.resilience_score:.1f}/100")
-
-        print("\nHealth Phase Distribution:")
-        for phase, count in sorted(analysis.health_phases.items()):
-            print(f"  - {phase}: {count} events")
-
-        print("\nCompany Phase Distribution:")
-        for phase, count in sorted(analysis.company_phases.items()):
-            print(f"  - {phase}: {count} companies")
-
-        print("\nKey Insights:")
-        for i, insight in enumerate(analysis.key_insights, 1):
-            print(f"  {i}. {insight}")
-
-        print("\nCompanies Founded:")
+    def _count_events_by_phase(self) -> Dict[str, int]:
+        """Count events by company phase"""
+        phases = {}
         for company in self.companies:
-            print(f"  - {company.name} ({company.founding_date})")
-            print(f"    Phase: {company.phase} | Industry: {company.industry}")
-            if company.employees_count:
-                print(f"    Employees: {company.employees_count}")
+            phase_name = company.phase.value
+            if phase_name not in phases:
+                phases[phase_name] = 0
+            phases[phase_name] += 1
+        return phases
 
-        print("\n" + "="*70 + "\n")
+    def export_json(self, filepath: str) -> bool:
+        """Export journey data to JSON file"""
+        try:
+            report = self.generate_report()
+            with open(filepath, 'w') as f:
+                json.dump(report, f, indent=2)
+            logger.info(f"Journey exported to {filepath}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to export JSON: {e}")
+            return False
 
 
-def create_sample_journey() -> FounderJourneyAnalyzer:
-    """Create sample journey data for testing"""
-    analyzer = FounderJourneyAnalyzer("INFO")
+def create_sample_journey() -> JourneyAnalyzer:
+    """Create sample journey data for demonstration"""
+    analyzer = JourneyAnalyzer()
 
     # Add companies
-    companies = [
-        CompanyRecord(
+    companies_data = [
+        Company(
             name="GitLab",
-            founding_date="2011-01-01",
-            industry="DevOps/Software Development",
-            phase=CompanyPhase.MATURE.value,
-            description="Version control and CI/CD platform",
-            achievements=["IPO in 2021", "10,000+ customers", "Global team"],
-            employees_count=1800,
-            funding_raised="$1.5B+"
+            founded_year=2011,
+            phase=CompanyPhase.SCALING,
+            description="DevOps platform for the entire software development lifecycle",
+            team_size=2000,
+            funding="$1.1B Series H",
+            website="https://gitlab.com"
         ),
-        CompanyRecord(
-            name="Health Tech Initiative",
-            founding_date="2016-06-01",
-            industry="Healthcare Technology",
-            phase=CompanyPhase.SCALING.value,
-            description="Cancer support technology platform",
-            achievements=["Helped 50,000+ patients", "Partnerships with major hospitals"],
-            employees_count=120,
-            funding_raised="$50M"
-        ),
-        CompanyRecord(
-            name="Wellness Ventures",
-            founding_date="2018-03-15",
-            industry="Wellness/Prevention",
-            phase=CompanyPhase.EARLY_STAGE.value,
-            description="Preventive health and wellness solutions",
-            achievements=["Patent pending", "Research partnerships"],
-            employees_count=15
+        Company(
+            name="Pluribis",
+            founded_year=2018,
+            phase=CompanyPhase.GROWTH,
+            description="Company founded during cancer treatment journey",
+            team_size=50,
+            website="https://pluribis.com"
         )
     ]
 
-    for company in companies:
+    for company in companies_data:
         analyzer.add_company(company)
 
     # Add timeline events
-    events = [
+    events_data = [
         TimelineEvent(
-            date="2011-01-01",
-            event_type="company_milestone",
+            date="2011-09-01",
+            event_type="business",
             title="GitLab Founded",
-            description="Started GitLab project",
-            company="GitLab",
-            health_status=HealthStatus.HEALTHY.value,
-            impact_level="high"
+            description="Sytse Sijbrandij and Dmitriy Zaporozhets found GitLab",
+            impact_level=10,
+            tags=["founding", "milestone", "devops"]
         ),
         TimelineEvent(
             date="2015-06-01",
-            event_type="health_event",
-            title="Cancer Diagnosis",
-            description="Diagnosed with cancer, began treatment",
-            company="GitLab",
-            health_status=HealthStatus.DIAGNOSED.value,
-            impact_level="high"
+            event_type="business",
+            title="Series A Funding",
+            description="GitLab raises Series A funding",
+            impact_level=8,
+            tags=["funding", "growth"]
         ),
         TimelineEvent(
-            date="2015-09-01",
-            event_type="company_milestone",
-            title="GitLab Continues Growth",
-            description="Maintained company growth during treatment",
-            company="GitLab",
-            health_status=HealthStatus.TREATMENT.value,
-            impact_level="high"
-        ),
-        TimelineEvent(
-            date="2016-06-01",
-            event_type="company_milestone",
-            title="New Company Founded",
-            description="Founded Health Tech Initiative",
-            company="Health Tech Initiative",
-            health_status=HealthStatus.RECOVERY.value,
-            impact_level="high"
-        ),
-        TimelineEvent(
-            date="2016-12-01",
-            event_type="health_event",
-            title="Cancer Remission",
-            description="Achieved cancer remission",
-            company="GitLab",
-            health_status=HealthStatus.REMISSION.value,
-            impact_level="high"
-        ),
-        TimelineEvent(
-            date="2018-03-15",
-            event_type="company_milestone",
-            title="Third Company Founded",
-            description="Founded Wellness Ventures",
-            company="Wellness Ventures",
-            health_status=HealthStatus.REMISSION.value,
-            impact_level="medium"
-        ),
-        TimelineEvent(
-            date="2021-10-15",
-            event_type="company_milestone",
+            date="2019-09-01",
+            event_type="business",
             title="GitLab IPO",
-            description="GitLab went public",
-            company="GitLab",
-            health_status=HealthStatus.HEALTHY.value,
-            impact_level="high"
+            description="GitLab goes public on NASDAQ",
+            impact_level=10,
+            tags=["ipo", "milestone", "exit"]
         ),
+        TimelineEvent(
+            date="2021-06-01",
+            event_type="health",
+            title="Cancer Diagnosis",
+            description="Founder diagnosed with lymphoma",
+            impact_level=10,
+            tags=["health", "challenge", "diagnosis"]
+        ),
+        TimelineEvent(
+            date="2021-08-15",
+            event_type="health",
+            title="Treatment Begins",
+            description="Starts chemotherapy treatment while leading GitLab",
+            impact_level=9,
+            tags=["health", "treatment", "resilience"]
+        ),
+        TimelineEvent(
+            date="2018-05-01",
+            event_type="business",
+            title="Pluribis Founded",
+            description="Founded during cancer battle to explore new entrepreneurial ventures",
+            impact_level=8,
+            tags=["founding", "persistence", "entrepreneurship"]
+        ),
+        TimelineEvent(
+            date="2022-06-01",
+            event_type="health",
+            title="Remission Achieved",
+            description="Successfully enters remission after treatment",
+            impact_level=10,
+            tags=["health", "recovery", "remission", "milestone"]
+        ),
+        TimelineEvent(
+            date="2022-12-01",
+            event_type="business",
+            title="GitLab Market Leadership",
+            description="GitLab recognized as DevOps leader while founder recovers",
+            impact_level=8,
+            tags=["business", "achievement", "market"]
+        )
     ]
 
-    for event in events:
+    for event in events_data:
         analyzer.add_timeline_event(event)
 
     return analyzer
@@ -437,17 +333,103 @@ def create_sample_journey() -> FounderJourneyAnalyzer:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Analyze founder journey of building companies while managing health challenges",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python script.py --help
-  python script.py --action analyze
-  python script.py --action export --output journey.json
-  python script.py --action import --input journey.json
-        """
+        description="Analyze founder journey through business and health challenges"
     )
-
     parser.add_argument(
         "--action",
-        choices=["analyze", "export
+        choices=["analyze", "report", "export", "search", "metrics"],
+        default="report",
+        help="Action to perform"
+    )
+    parser.add_argument(
+        "--search-type",
+        choices=["event-type", "tag", "company"],
+        help="Type of search to perform"
+    )
+    parser.add_argument(
+        "--search-term",
+        type=str,
+        help="Search term or name to look for"
+    )
+    parser.add_argument(
+        "--export-file",
+        type=str,
+        default="journey_report.json",
+        help="File path for JSON export"
+    )
+    parser.add_argument(
+        "--impact-threshold",
+        type=int,
+        default=7,
+        help="Threshold for high-impact events (1-10)"
+    )
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Logging level"
+    )
+
+    args = parser.parse_args()
+
+    # Set logging level
+    logging.getLogger().setLevel(args.log_level)
+
+    # Create sample journey
+    analyzer = create_sample_journey()
+    logger.info("Sample journey data loaded")
+
+    # Execute requested action
+    if args.action == "report":
+        report = analyzer.generate_report()
+        print(json.dumps(report, indent=2))
+
+    elif args.action == "metrics":
+        metrics = analyzer.calculate_journey_metrics()
+        print(json.dumps(metrics, indent=2))
+
+    elif args.action == "search":
+        if not args.search_term:
+            logger.error("Search term required for search action")
+            sys.exit(1)
+
+        results = []
+        if args.search_type == "event-type":
+            results = analyzer.get_events_by_type(args.search_term)
+            print(f"Events of type '{args.search_term}':")
+        elif args.search_type == "tag":
+            results = analyzer.get_events_by_tag(args.search_term)
+            print(f"Events with tag '{args.search_term}':")
+        elif args.search_type == "company":
+            company = analyzer.get_company_by_name(args.search_term)
+            if company:
+                results = [company]
+            print(f"Company '{args.search_term}':")
+
+        for result in results:
+            if isinstance(result, TimelineEvent):
+                print(json.dumps(result.to_dict(), indent=2))
+            else:
+                print(json.dumps(result.to_dict(), indent=2))
+
+    elif args.action == "export":
+        success = analyzer.export_json(args.export_file)
+        if success:
+            print(f"Journey successfully exported to {args.export_file}")
+        else:
+            logger.error("Export failed")
+            sys.exit(1)
+
+    elif args.action == "analyze":
+        high_impact = analyzer.get_high_impact_events(args.impact_threshold)
+        analysis = {
+            "total_events": len(analyzer.timeline_events),
+            "high_impact_events": len(high_impact),
+            "high_impact_threshold": args.impact_threshold,
+            "events": [e.to_dict() for e in high_impact]
+        }
+        print(json.dumps(analysis, indent=2))
+
+
+if __name__ == "__main__":
+    main()
