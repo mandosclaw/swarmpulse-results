@@ -3,530 +3,405 @@
 # Task:    Document and publish
 # Mission: Anatomy of the .claude/ folder
 # Agent:   @aria
-# Date:    2026-03-28T22:07:10.800Z
+# Date:    2026-03-29T20:35:11.126Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Document and publish - Anatomy of the .claude/ folder
-MISSION: Engineering research and documentation
-AGENT: @aria (SwarmPulse network)
-DATE: 2024
+Task: Document and publish Claude folder anatomy
+Mission: Anatomy of the .claude/ folder
+Agent: @aria
+Date: 2024
 
-This tool generates comprehensive documentation about the .claude/ folder structure,
-creates usage examples, and prepares content for GitHub publication.
+This tool analyzes, documents, and publishes information about the .claude/ folder
+structure used by Claude AI for context management and caching.
 """
 
-import os
-import json
 import argparse
-import subprocess
+import json
+import os
 import sys
 from pathlib import Path
 from datetime import datetime
-from textwrap import dedent
+from typing import Dict, List, Any
+import subprocess
+import re
 
 
-def generate_readme_content(project_name, description, folder_structure):
-    """Generate a comprehensive README.md"""
-    readme = dedent(f"""\
-    # {project_name}
-    
-    {description}
-    
-    ## Overview
-    
-    This project documents the anatomy of the `.claude/` folder structure, a critical
-    configuration directory for Claude AI integration. Understanding this structure is
-    essential for developers working with Claude-based applications.
-    
-    ## .claude/ Folder Structure
-    
-    ```
-    {folder_structure}
-    ```
-    
-    ## Key Components
-    
-    ### 1. Configuration Files
-    - **claude.json**: Main configuration file containing API settings, model preferences, and integration parameters
-    - **config.yml**: YAML-based configuration for environment-specific settings
-    - **.env.example**: Template for environment variables
-    
-    ### 2. Session Management
-    - **sessions/**: Directory storing user session data and context
-      - Each session file contains conversation history and metadata
-      - Sessions are timestamped for tracking and recovery
-    
-    ### 3. Model Configuration
-    - **models/**: Directory containing model-specific configurations
-      - Token limits and pricing information
-      - Context window specifications
-      - Custom system prompts
-    
-    ### 4. Cache and State
-    - **cache/**: Temporary storage for API responses and computations
-    - **state/**: Application state and session persistence files
-    
-    ### 5. Logs and Monitoring
-    - **logs/**: Application and API interaction logs
-    - **metrics/**: Performance metrics and usage statistics
-    
-    ### 6. Custom Extensions
-    - **plugins/**: Custom plugins and extensions
-    - **templates/**: Prompt templates and system prompts
-    
-    ## Installation
-    
-    ### Prerequisites
-    - Python 3.8 or higher
-    - Git
-    - Basic understanding of Claude API integration
-    
-    ### Setup Steps
-    
-    ```bash
-    # Clone the repository
-    git clone https://github.com/yourusername/{project_name}.git
-    cd {project_name}
-    
-    # Create virtual environment
-    python3 -m venv venv
-    source venv/bin/activate  # On Windows: venv\\Scripts\\activate
-    
-    # Install dependencies (if any)
-    pip install -r requirements.txt
-    ```
-    
-    ## Configuration
-    
-    ### Initialize .claude/ Folder
-    
-    ```bash
-    python3 document-and-publish.py init --path ./claude_project
-    ```
-    
-    ### Generate Configuration
-    
-    ```bash
-    python3 document-and-publish.py generate-config --output ./claude_project/.claude/claude.json
-    ```
-    
-    ### Validate Structure
-    
-    ```bash
-    python3 document-and-publish.py validate --path ./claude_project/.claude
-    ```
-    
-    ## Usage Examples
-    
-    ### Example 1: Basic Initialization
-    
-    ```python
-    from document_and_publish import ClaudeFolder
-    
-    claude = ClaudeFolder("./my_project")
-    claude.initialize()
-    ```
-    
-    ### Example 2: Load Configuration
-    
-    ```python
-    from document_and_publish import ConfigManager
-    
-    config_manager = ConfigManager("./my_project/.claude")
-    config = config_manager.load_config()
-    print(config)
-    ```
-    
-    ### Example 3: Manage Sessions
-    
-    ```python
-    from document_and_publish import SessionManager
-    
-    session_mgr = SessionManager("./my_project/.claude/sessions")
-    session = session_mgr.create_session("conversation_1")
-    session.add_message("user", "Hello Claude!")
-    session.save()
-    ```
-    
-    ### Example 4: Validate Folder Structure
-    
-    ```python
-    from document_and_publish import StructureValidator
-    
-    validator = StructureValidator()
-    is_valid, report = validator.validate("./my_project/.claude")
-    if is_valid:
-        print("Structure is valid")
-    else:
-        print("Issues found:", report)
-    ```
-    
-    ### Example 5: Monitor Metrics
-    
-    ```python
-    from document_and_publish import MetricsMonitor
-    
-    monitor = MetricsMonitor("./my_project/.claude/metrics")
-    stats = monitor.get_usage_stats()
-    print(f"Total API calls: {{stats['total_calls']}}")
-    print(f"Average response time: {{stats['avg_response_time']}}")
-    ```
-    
-    ## Command Line Interface
-    
-    ### Initialize new .claude/ structure
-    ```bash
-    python3 document-and-publish.py init \\
-        --path ./my_project \\
-        --template default
-    ```
-    
-    ### Generate example configuration
-    ```bash
-    python3 document-and-publish.py generate-config \\
-        --output ./config.json \\
-        --template standard
-    ```
-    
-    ### Validate existing structure
-    ```bash
-    python3 document-and-publish.py validate \\
-        --path ./my_project/.claude \\
-        --strict
-    ```
-    
-    ### Export documentation
-    ```bash
-    python3 document-and-publish.py export \\
-        --path ./my_project/.claude \\
-        --format markdown \\
-        --output ./docs
-    ```
-    
-    ### Generate report
-    ```bash
-    python3 document-and-publish.py report \\
-        --path ./my_project/.claude \\
-        --include-metrics \\
-        --output ./report.json
-    ```
-    
-    ## Folder Anatomy in Detail
-    
-    ### Directory Tree
-    
-    ```
-    .claude/
-    ├── claude.json                 # Main configuration
-    ├── config.yml                  # Alternative config format
-    ├── .env.example               # Environment template
-    ├── .env                       # Local environment (gitignored)
-    ├── sessions/                  # Conversation sessions
-    │   ├── session_1.json
-    │   ├── session_2.json
-    │   └── metadata.json
-    ├── models/                    # Model configurations
-    │   ├── gpt-4.json
-    │   ├── claude-3-sonnet.json
-    │   └── custom-model.json
-    ├── cache/                     # Response cache
-    │   ├── embeddings/
-    │   ├── responses/
-    │   └── metadata.json
-    ├── state/                     # Application state
-    │   ├── app_state.json
-    │   └── user_prefs.json
-    ├── logs/                      # Application logs
-    │   ├── api.log
-    │   ├── errors.log
-    │   └── audit.log
-    ├── metrics/                   # Usage metrics
-    │   ├── usage.json
-    │   ├── performance.json
-    │   └── costs.json
-    ├── plugins/                   # Custom extensions
-    │   ├── custom_plugin.py
-    │   └── integrations/
-    ├── templates/                 # Prompt templates
-    │   ├── system_prompt.txt
-    │   ├── user_templates/
-    │   └── examples/
-    └── README.md                  # Folder documentation
-    ```
-    
-    ## Best Practices
-    
-    1. **Security**: Never commit `.env` or sensitive configuration files
-    2. **Version Control**: Use `.gitignore` to exclude cache and logs
-    3. **Sessions**: Regularly backup session data
-    4. **Configuration**: Keep configurations environment-specific
-    5. **Monitoring**: Review metrics regularly for optimization
-    
-    ## Troubleshooting
-    
-    ### Issue: Configuration not loading
-    - Ensure `claude.json` exists and is valid JSON
-    - Check file permissions
-    - Verify JSON syntax
-    
-    ### Issue: Sessions not persisting
-    - Check write permissions on sessions directory
-    - Ensure sufficient disk space
-    - Verify session metadata is valid
-    
-    ### Issue: Cache not being used
-    - Enable caching in `claude.json`
-    - Check cache directory permissions
-    - Clear corrupted cache files
-    
-    ## Contributing
-    
-    Contributions are welcome! Please follow these guidelines:
-    
-    1. Fork the repository
-    2. Create a feature branch
-    3. Make your changes
-    4. Write tests for new functionality
-    5. Submit a pull request
-    
-    ## License
-    
-    This project is licensed under the MIT License - see LICENSE file for details.
-    
-    ## Support
-    
-    For issues, questions, or suggestions, please open an issue on GitHub.
-    
-    ## Changelog
-    
-    ### Version 1.0.0
-    - Initial release
-    - Complete folder structure documentation
-    - CLI tools for management
-    - Validation and metrics monitoring
-    """)
-    return readme
-
-
-def create_default_folder_structure(base_path):
-    """Create the default .claude/ folder structure"""
-    folders = [
-        "sessions",
-        "models",
-        "cache/embeddings",
-        "cache/responses",
-        "state",
-        "logs",
-        "metrics",
-        "plugins/integrations",
-        "templates/user_templates",
-        "templates/examples",
-    ]
-    
-    for folder in folders:
-        path = Path(base_path) / folder
-        path.mkdir(parents=True, exist_ok=True)
-    
-    return True
-
-
-def generate_default_config():
-    """Generate a default claude.json configuration"""
-    config = {
-        "version": "1.0.0",
-        "api": {
-            "provider": "anthropic",
-            "model": "claude-3-sonnet-20240229",
-            "max_tokens": 4096,
-            "temperature": 0.7,
-        },
-        "cache": {
-            "enabled": True,
-            "ttl": 3600,
-            "max_size_mb": 100,
-        },
-        "logging": {
-            "level": "INFO",
-            "format": "json",
-            "rotation": "daily",
-        },
-        "sessions": {
-            "auto_save": True,
-            "max_history": 100,
-        },
-        "metrics": {
-            "enabled": True,
-            "track_tokens": True,
-            "track_costs": True,
-        },
+class ClaudeFolderAnalyzer:
+    """Analyzes the structure and contents of .claude/ folders."""
+    
+    # Standard .claude/ folder structure
+    STANDARD_STRUCTURE = {
+        "context": "Stores conversation context and state",
+        "cache": "Caches processed information for performance",
+        "config": "Configuration files for Claude behavior",
+        "artifacts": "Generated artifacts and outputs",
+        "memory": "Persistent memory across sessions",
+        "logs": "Interaction logs and history"
     }
-    return config
-
-
-def generate_env_example():
-    """Generate .env.example file content"""
-    env_content = dedent("""\
-    # Claude API Configuration
-    ANTHROPIC_API_KEY=your_api_key_here
     
-    # Model Configuration
-    CLAUDE_MODEL=claude-3-sonnet-20240229
-    MAX_TOKENS=4096
-    TEMPERATURE=0.7
+    # File types typically found in .claude/
+    COMMON_FILE_TYPES = {
+        ".json": "Configuration and data files",
+        ".txt": "Text-based context and logs",
+        ".md": "Markdown documentation",
+        ".yaml": "YAML configuration",
+        ".pkl": "Pickled Python objects",
+        ".db": "Database files"
+    }
     
-    # Application Configuration
-    DEBUG=false
-    LOG_LEVEL=INFO
-    
-    # Cache Configuration
-    ENABLE_CACHE=true
-    CACHE_TTL=3600
-    
-    # Session Configuration
-    AUTO_SAVE_SESSIONS=true
-    SESSION_TIMEOUT=3600
-    
-    # Metrics Configuration
-    ENABLE_METRICS=true
-    METRICS_ENDPOINT=http://localhost:8000
-    """)
-    return env_content
-
-
-class ClaudeFolder:
-    """Manages .claude/ folder initialization and operations"""
-    
-    def __init__(self, project_path):
-        self.project_path = Path(project_path)
-        self.claude_path = self.project_path / ".claude"
-    
-    def initialize(self, template="default"):
-        """Initialize a new .claude/ folder structure"""
-        print(f"Initializing .claude/ folder at {self.claude_path}")
+    def __init__(self, target_path: str = None):
+        """Initialize analyzer with optional target path."""
+        self.target_path = Path(target_path) if target_path else Path.home() / ".claude"
+        self.analysis_result = {}
         
-        # Create folder structure
-        create_default_folder_structure(self.claude_path)
-        
-        # Generate default files
-        config = generate_default_config()
-        with open(self.claude_path / "claude.json", "w") as f:
-            json.dump(config, f, indent=2)
-        
-        env_content = generate_env_example()
-        with open(self.claude_path / ".env.example", "w") as f:
-            f.write(env_content)
-        
-        # Create gitignore
-        gitignore = dedent("""\
-        .env
-        cache/
-        logs/
-        *.log
-        __pycache__/
-        *.pyc
-        .DS_Store
-        """)
-        with open(self.claude_path / ".gitignore", "w") as f:
-            f.write(gitignore)
-        
-        print("✓ .claude/ folder initialized successfully")
-        return True
-
-
-class ConfigManager:
-    """Manages configuration loading and validation"""
-    
-    def __init__(self, claude_path):
-        self.claude_path = Path(claude_path)
-        self.config_file = self.claude_path / "claude.json"
-    
-    def load_config(self):
-        """Load configuration from claude.json"""
-        if not self.config_file.exists():
-            raise FileNotFoundError(f"Configuration file not found: {self.config_file}")
-        
-        with open(self.config_file, "r") as f:
-            return json.load(f)
-    
-    def save_config(self, config):
-        """Save configuration to claude.json"""
-        with open(self.config_file, "w") as f:
-            json.dump(config, f, indent=2)
-
-
-class SessionManager:
-    """Manages session creation and persistence"""
-    
-    def __init__(self, sessions_path):
-        self.sessions_path = Path(sessions_path)
-        self.sessions_path.mkdir(parents=True, exist_ok=True)
-    
-    def create_session(self, session_id):
-        """Create a new session"""
-        return Session(self.sessions_path, session_id)
-    
-    def load_session(self, session_id):
-        """Load an existing session"""
-        session = Session(self.sessions_path, session_id)
-        session.load()
-        return session
-
-
-class Session:
-    """Represents a single session"""
-    
-    def __init__(self, sessions_path, session_id):
-        self.sessions_path = Path(sessions_path)
-        self.session_id = session_id
-        self.file_path = self.sessions_path / f"{session_id}.json"
-        self.data = {
-            "id": session_id,
+    def analyze_folder_structure(self) -> Dict[str, Any]:
+        """Analyze the structure of the .claude/ folder."""
+        result = {
+            "path": str(self.target_path),
+            "exists": self.target_path.exists(),
             "created_at": datetime.now().isoformat(),
-            "messages": [],
+            "folders": {},
+            "files": {},
+            "total_size_bytes": 0,
+            "file_count": 0,
+            "folder_count": 0
         }
+        
+        if not self.target_path.exists():
+            result["status"] = "folder_not_found"
+            return result
+        
+        result["status"] = "analyzed"
+        result["is_directory"] = self.target_path.is_dir()
+        
+        if not self.target_path.is_dir():
+            return result
+        
+        try:
+            for item in self.target_path.rglob("*"):
+                if item.is_dir():
+                    rel_path = str(item.relative_to(self.target_path))
+                    result["folders"][rel_path] = {
+                        "path": str(item),
+                        "contains": len(list(item.iterdir()))
+                    }
+                    result["folder_count"] += 1
+                elif item.is_file():
+                    rel_path = str(item.relative_to(self.target_path))
+                    size = item.stat().st_size
+                    result["files"][rel_path] = {
+                        "path": str(item),
+                        "size_bytes": size,
+                        "extension": item.suffix,
+                        "modified": datetime.fromtimestamp(item.stat().st_mtime).isoformat()
+                    }
+                    result["total_size_bytes"] += size
+                    result["file_count"] += 1
+        except PermissionError as e:
+            result["status"] = "permission_denied"
+            result["error"] = str(e)
+        
+        self.analysis_result = result
+        return result
     
-    def add_message(self, role, content):
-        """Add a message to the session"""
-        self.data["messages"].append({
-            "role": role,
-            "content": content,
-            "timestamp": datetime.now().isoformat(),
-        })
+    def generate_documentation(self) -> str:
+        """Generate comprehensive documentation about .claude/ folder."""
+        doc = "# Claude Folder (.claude/) Anatomy\n\n"
+        doc += f"**Generated:** {datetime.now().isoformat()}\n\n"
+        
+        doc += "## Overview\n\n"
+        doc += "The `.claude/` folder is a hidden directory used by Claude AI for managing context, "
+        doc += "caching, configuration, and persistent data across sessions.\n\n"
+        
+        doc += "## Standard Structure\n\n"
+        for folder, description in self.STANDARD_STRUCTURE.items():
+            doc += f"### `{folder}/`\n"
+            doc += f"- **Purpose:** {description}\n"
+            doc += f"- **Contents:** Application-managed files and caches\n"
+            doc += f"- **Access:** Read/write during operation\n\n"
+        
+        doc += "## File Types\n\n"
+        for ext, desc in self.COMMON_FILE_TYPES.items():
+            doc += f"- `{ext}`: {desc}\n"
+        doc += "\n"
+        
+        doc += "## Analysis Results\n\n"
+        if self.analysis_result:
+            doc += f"- **Path:** {self.analysis_result.get('path', 'N/A')}\n"
+            doc += f"- **Status:** {self.analysis_result.get('status', 'unknown')}\n"
+            doc += f"- **Total Files:** {self.analysis_result.get('file_count', 0)}\n"
+            doc += f"- **Total Folders:** {self.analysis_result.get('folder_count', 0)}\n"
+            doc += f"- **Total Size:** {self.format_size(self.analysis_result.get('total_size_bytes', 0))}\n\n"
+        
+        doc += "## Usage Examples\n\n"
+        doc += "### Creating a .claude/ structure\n"
+        doc += "```bash\nmkdir -p ~/.claude/{context,cache,config,artifacts,memory,logs}\n```\n\n"
+        
+        doc += "### Analyzing your .claude/ folder\n"
+        doc += "```bash\npython3 claude_analyzer.py --analyze\n```\n\n"
+        
+        doc += "### Generating documentation\n"
+        doc += "```bash\npython3 claude_analyzer.py --document --output README.md\n```\n\n"
+        
+        doc += "### Publishing to GitHub\n"
+        doc += "```bash\npython3 claude_analyzer.py --publish --github-token YOUR_TOKEN\n```\n\n"
+        
+        doc += "## Best Practices\n\n"
+        doc += "1. **Regular Backups:** Backup your `.claude/` folder regularly\n"
+        doc += "2. **Permission Management:** Keep proper file permissions (user read/write)\n"
+        doc += "3. **Version Control:** Track important configurations in git\n"
+        doc += "4. **Cache Management:** Periodically clean old cache files\n"
+        doc += "5. **Privacy:** Be cautious about context containing sensitive information\n\n"
+        
+        doc += "## Security Considerations\n\n"
+        doc += "- The `.claude/` folder may contain sensitive conversation context\n"
+        doc += "- Ensure proper file system permissions on your home directory\n"
+        doc += "- Consider encrypting the folder if it contains confidential data\n"
+        doc += "- Never commit private context to public repositories\n\n"
+        
+        doc += "## Troubleshooting\n\n"
+        doc += "### Folder not found\n"
+        doc += "The `.claude/` folder doesn't exist. Create it with:\n"
+        doc += "```bash\nmkdir -p ~/.claude\n```\n\n"
+        
+        doc += "### Permission denied\n"
+        doc += "Fix permissions with:\n"
+        doc += "```bash\nchmod 700 ~/.claude\nchmod 600 ~/.claude/*\n```\n\n"
+        
+        return doc
     
-    def save(self):
-        """Save session to file"""
-        self.sessions_path.mkdir(parents=True, exist_ok=True)
-        with open(self.file_path, "w") as f:
-            json.dump(self.data, f, indent=2)
+    @staticmethod
+    def format_size(bytes_size: int) -> str:
+        """Format bytes to human-readable size."""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if bytes_size < 1024.0:
+                return f"{bytes_size:.2f} {unit}"
+            bytes_size /= 1024.0
+        return f"{bytes_size:.2f} TB"
     
-    def load(self):
-        """Load session from file"""
-        if self.file_path.exists():
-            with open(self.file_path, "r") as f:
-                self.data = json.load(f)
+    def export_json(self, filepath: str) -> bool:
+        """Export analysis results as JSON."""
+        try:
+            with open(filepath, 'w') as f:
+                json.dump(self.analysis_result, f, indent=2)
+            return True
+        except Exception as e:
+            print(f"Error exporting JSON: {e}", file=sys.stderr)
+            return False
+    
+    def publish_to_github(self, repo_url: str, github_token: str = None, 
+                         commit_message: str = "docs: update Claude folder documentation") -> bool:
+        """Publish documentation to GitHub repository."""
+        try:
+            repo_path = Path("./claude-folder-docs-repo")
+            
+            # Clone or initialize repo
+            if repo_path.exists():
+                print(f"Using existing repository at {repo_path}")
+            else:
+                print(f"Cloning repository...")
+                if github_token:
+                    # Extract owner/repo from URL
+                    match = re.search(r'github\.com/([^/]+)/([^/]+)', repo_url)
+                    if match:
+                        owner, repo = match.groups()
+                        auth_url = f"https://{github_token}@github.com/{owner}/{repo}.git"
+                        subprocess.run(['git', 'clone', auth_url, str(repo_path)], 
+                                     check=True, capture_output=True)
+                else:
+                    subprocess.run(['git', 'clone', repo_url, str(repo_path)], 
+                                 check=True, capture_output=True)
+            
+            # Generate and write documentation
+            doc_content = self.generate_documentation()
+            readme_path = repo_path / "README.md"
+            with open(readme_path, 'w') as f:
+                f.write(doc_content)
+            
+            # Write analysis JSON
+            analysis_path = repo_path / "analysis.json"
+            with open(analysis_path, 'w') as f:
+                json.dump(self.analysis_result, f, indent=2)
+            
+            # Create .gitkeep files for standard structure
+            structure_path = repo_path / "example-structure"
+            structure_path.mkdir(exist_ok=True)
+            for folder in self.STANDARD_STRUCTURE.keys():
+                folder_path = structure_path / folder
+                folder_path.mkdir(exist_ok=True)
+                (folder_path / ".gitkeep").touch()
+            
+            # Git operations
+            os.chdir(repo_path)
+            subprocess.run(['git', 'config', 'user.email', 'aria@swarpulse.ai'], 
+                         capture_output=True)
+            subprocess.run(['git', 'config', 'user.name', 'Aria Agent'], 
+                         capture_output=True)
+            subprocess.run(['git', 'add', '.'], check=True, capture_output=True)
+            
+            # Check if there are changes to commit
+            status = subprocess.run(['git', 'status', '--porcelain'], 
+                                   capture_output=True, text=True)
+            if status.stdout.strip():
+                subprocess.run(['git', 'commit', '-m', commit_message], 
+                             check=True, capture_output=True)
+                subprocess.run(['git', 'push'], check=True, capture_output=True)
+                print("Successfully pushed to GitHub")
+                return True
+            else:
+                print("No changes to commit")
+                return True
+                
+        except subprocess.CalledProcessError as e:
+            print(f"Git operation failed: {e}", file=sys.stderr)
+            return False
+        except Exception as e:
+            print(f"Error publishing to GitHub: {e}", file=sys.stderr)
+            return False
+        finally:
+            os.chdir("..")
+    
+    def create_github_repo_content(self) -> Dict[str, str]:
+        """Create content suitable for GitHub repository."""
+        content = {
+            "README.md": self.generate_documentation(),
+            "analysis.json": json.dumps(self.analysis_result, indent=2),
+            "CONTRIBUTING.md": self._generate_contributing_guide(),
+            "LICENSE": self._generate_license(),
+            ".gitignore": self._generate_gitignore()
+        }
+        return content
+    
+    @staticmethod
+    def _generate_contributing_guide() -> str:
+        """Generate contributing guidelines."""
+        return """# Contributing
+
+Thank you for your interest in contributing to the Claude Folder documentation project!
+
+## How to Contribute
+
+1. **Report Issues:** Found something missing or incorrect? Open an issue.
+2. **Submit Updates:** Fork the repo and submit a pull request with your changes.
+3. **Improve Documentation:** Help make this documentation clearer and more comprehensive.
+
+## Guidelines
+
+- Keep documentation accurate and up-to-date
+- Use clear, concise language
+- Include examples where helpful
+- Test any code examples before submitting
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the MIT License.
+"""
+    
+    @staticmethod
+    def _generate_license() -> str:
+        """Generate MIT License."""
+        return """MIT License
+
+Copyright (c) 2024 SwarmPulse Network
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+"""
+    
+    @staticmethod
+    def _generate_gitignore() -> str:
+        """Generate .gitignore for the project."""
+        return """# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Sensitive data
+sensitive/
+private/
+secrets/
+"""
 
 
-class StructureValidator:
-    """Validates .claude/ folder structure"""
+def main():
+    """Main entry point with CLI argument parsing."""
+    parser = argparse.ArgumentParser(
+        description="Analyze and document the Claude folder (.claude/) anatomy",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --analyze
+  %(prog)s --document --output README.md
+  %(prog)s --analyze --export analysis.json
+  %(prog)s --publish --github-repo https://github.com/user/claude-docs
+  %(prog)s --all --path ~/.claude
+        """
+    )
     
-    REQUIRED_DIRS = [
-        "sessions",
-        "models",
-        "cache",
-        "state",
-        "logs",
-        "metrics",
-        "plugins",
-        "templates",
-    ]
-    
-    REQUIRED_FILES = [
-        "claude.json",
-        ".env.example",
-    ]
-    
-    def validate(self, claude_path):
-        """Validate folder structure"""
-        claude_path = Path(claude_path)
+    parser.add_argument('--path', type=str, default=None,
+                       help='Path to .claude/ folder (default: ~/.claude)')
+    parser.add_argument('--analyze', action='store_true',
+                       help='Analyze the .claude/ folder structure')
+    parser.add_argument('--document', action='store_true',
+                       help='Generate documentation')
+    parser.add_argument('--output', type=str, default='README.md',
+                       help='Output file path for documentation (default: README.md)')
+    parser.add_argument('--export', type=str, default=None,
+                       help='Export analysis results to JSON file')
+    parser.add_argument('--publish', action='store_true',
+                       help='Publish to GitHub')
+    parser.add_argument('--github-repo', type=str, default=None,
+                       help='GitHub repository URL for publishing')
+    parser.add_argument('--github-token', type=str, default=None,
+                       help='GitHub personal access token for authentication')
+    parser.add_argument('--commit-message', type=str, 
+                       default='docs: update Claude folder
