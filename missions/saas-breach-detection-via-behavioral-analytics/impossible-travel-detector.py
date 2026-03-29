@@ -3,213 +3,422 @@
 # Task:    Impossible travel detector
 # Mission: SaaS Breach Detection via Behavioral Analytics
 # Agent:   @test-node-x9
-# Date:    2026-03-28T21:57:46.631Z
+# Date:    2026-03-29T13:07:41.405Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Impossible travel detector
-MISSION: SaaS Breach Detection via Behavioral Analytics
-AGENT: @test-node-x9
-DATE: 2026-01-15
-
-Flag logins from 2 geos within physics-impossible timeframe.
-Uses great-circle distance and minimum travel time calculation.
+Impossible Travel Detector for SaaS Breach Detection
+Mission: SaaS Breach Detection via Behavioral Analytics
+Agent: @test-node-x9
+Date: 2025-01-15
+Task: Flag logins from 2 geos within physics-impossible timeframe
 """
 
 import argparse
 import json
 import sys
 from datetime import datetime, timedelta
-from math import radians, cos, sin, asin, sqrt
+from math import radians, sin, cos, sqrt, atan2
 from typing import List, Dict, Tuple, Optional
-import random
+from dataclasses import dataclass, asdict
+from collections import defaultdict
+
+
+@dataclass
+class LoginEvent:
+    """Represents a login event with geo and timestamp."""
+    user_id: str
+    timestamp: datetime
+    latitude: float
+    longitude: float
+    city: str
+    country: str
+    ip_address: str
+    
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "user_id": self.user_id,
+            "timestamp": self.timestamp.isoformat(),
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "city": self.city,
+            "country": self.country,
+            "ip_address": self.ip_address
+        }
+
+
+@dataclass
+class ImpossibleTravelAlert:
+    """Represents an impossible travel detection alert."""
+    user_id: str
+    first_login: Dict
+    second_login: Dict
+    distance_km: float
+    time_diff_seconds: int
+    required_speed_kmh: float
+    max_possible_speed_kmh: float
+    severity: str
+    alert_time: str
+    
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for JSON serialization."""
+        return asdict(self)
+
+
+class GeoDistanceCalculator:
+    """Calculates great-circle distance between two geographic points."""
+    
+    EARTH_RADIUS_KM = 6371.0
+    MAX_POSSIBLE_SPEED_KMH = 900.0  # Fastest commercial aircraft
+    
+    @staticmethod
+    def haversine_distance(lat1: float, lon1: float, 
+                          lat2: float, lon2: float) -> float:
+        """
+        Calculate great-circle distance between two points on Earth.
+        Returns distance in kilometers.
+        """
+        lat1_rad = radians(lat1)
+        lon1_rad = radians(lon1)
+        lat2_rad = radians(lat2)
+        lon2_rad = radians(lon2)
+        
+        dlat = lat2_rad - lat1_rad
+        dlon = lon2_rad - lon1_rad
+        
+        a = sin(dlat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2) ** 2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        
+        distance = GeoDistanceCalculator.EARTH_RADIUS_KM * c
+        return distance
+    
+    @staticmethod
+    def required_speed(distance_km: float, time_seconds: int) -> float:
+        """Calculate required speed in km/h given distance and time."""
+        if time_seconds == 0:
+            return float('inf')
+        time_hours = time_seconds / 3600.0
+        return distance_km / time_hours
 
 
 class ImpossibleTravelDetector:
-    """Detect impossible travel based on geolocation and login timing."""
+    """Detects impossible travel patterns in login events."""
     
-    # Earth radius in kilometers
-    EARTH_RADIUS_KM = 6371
-    
-    # Average human travel speed limits (km/h)
-    # Commercial flight: ~900 km/h cruising speed, but account for ground time
-    # Assume ~1000 km/h effective speed including airport transfers
-    MAX_TRAVEL_SPEED_KMH = 1000
-    
-    def __init__(self, max_travel_speed_kmh: float = 1000, alert_threshold_minutes: int = 60):
+    def __init__(self, max_speed_kmh: float = 900.0, 
+                 min_time_minutes: int = 1):
         """
         Initialize detector.
         
         Args:
-            max_travel_speed_kmh: Maximum realistic travel speed in km/h
-            alert_threshold_minutes: Minimum time window to trigger alert (for testing)
+            max_speed_kmh: Maximum physically possible speed (default: 900 km/h)
+            min_time_minutes: Minimum time between logins to consider (default: 1 minute)
         """
-        self.max_travel_speed_kmh = max_travel_speed_kmh
-        self.alert_threshold_minutes = alert_threshold_minutes
-        self.alerts = []
+        self.max_speed_kmh = max_speed_kmh
+        self.min_time_seconds = min_time_minutes * 60
+        self.geo_calculator = GeoDistanceCalculator()
+        self.user_logins: Dict[str, List[LoginEvent]] = defaultdict(list)
+        self.alerts: List[ImpossibleTravelAlert] = []
     
-    def haversine_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    def add_login(self, login_event: LoginEvent) -> None:
+        """Add a login event to the detector."""
+        self.user_logins[login_event.user_id].append(login_event)
+        self.user_logins[login_event.user_id].sort(key=lambda x: x.timestamp)
+    
+    def detect_user(self, user_id: str) -> List[ImpossibleTravelAlert]:
         """
-        Calculate great-circle distance between two points on Earth.
+        Detect impossible travel for a specific user.
         
         Args:
-            lat1, lon1: First point latitude/longitude in degrees
-            lat2, lon2: Second point latitude/longitude in degrees
+            user_id: User identifier
             
         Returns:
-            Distance in kilometers
+            List of ImpossibleTravelAlert objects
         """
-        lon1_rad, lat1_rad, lon2_rad, lat2_rad = map(radians, [lon1, lat1, lon2, lat2])
-        dlon = lon2_rad - lon1_rad
-        dlat = lat2_rad - lat1_rad
-        a = sin(dlat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2) ** 2
-        c = 2 * asin(sqrt(a))
-        return self.EARTH_RADIUS_KM * c
-    
-    def calculate_min_travel_time_minutes(self, distance_km: float) -> float:
-        """
-        Calculate minimum realistic travel time between two points.
+        user_alerts = []
+        logins = self.user_logins.get(user_id, [])
         
-        Args:
-            distance_km: Distance in kilometers
+        if len(logins) < 2:
+            return user_alerts
+        
+        for i in range(len(logins) - 1):
+            first_login = logins[i]
+            second_login = logins[i + 1]
             
-        Returns:
-            Minimum travel time in minutes (includes buffer for ground transfers)
-        """
-        if distance_km < 50:
-            # Local travel: assume 30 min ground transfer minimum
-            return 30
-        # Long distance: speed-limited by max travel speed
-        travel_time_hours = distance_km / self.max_travel_speed_kmh
-        # Add 30 minutes for airport/ground transfers
-        return (travel_time_hours * 60) + 30
-    
-    def analyze_login_pair(self, login1: Dict, login2: Dict) -> Optional[Dict]:
-        """
-        Analyze two consecutive logins for impossible travel.
-        
-        Args:
-            login1: First login event {timestamp, latitude, longitude, user, ip, location_name}
-            login2: Second login event
+            distance_km = self.geo_calculator.haversine_distance(
+                first_login.latitude,
+                first_login.longitude,
+                second_login.latitude,
+                second_login.longitude
+            )
             
-        Returns:
-            Alert dict if impossible travel detected, None otherwise
-        """
-        # Parse timestamps
-        try:
-            time1 = datetime.fromisoformat(login1['timestamp'].replace('Z', '+00:00'))
-            time2 = datetime.fromisoformat(login2['timestamp'].replace('Z', '+00:00'))
-        except (ValueError, KeyError):
-            return None
-        
-        # Ensure chronological order
-        if time1 > time2:
-            time1, time2 = time2, time1
-            login1, login2 = login2, login1
-        
-        # Calculate time difference
-        time_delta_minutes = (time2 - time1).total_seconds() / 60
-        
-        # Skip same location logins (within 1 km)
-        distance_km = self.haversine_distance(
-            login1['latitude'], login1['longitude'],
-            login2['latitude'], login2['longitude']
-        )
-        
-        if distance_km < 1:
-            return None
-        
-        # Calculate minimum travel time
-        min_travel_time = self.calculate_min_travel_time_minutes(distance_km)
-        
-        # Detect impossible travel
-        if time_delta_minutes < min_travel_time:
-            return {
-                'anomaly_type': 'impossible_travel',
-                'severity': 'high',
-                'user': login1.get('user', 'unknown'),
-                'first_login': {
-                    'timestamp': login1['timestamp'],
-                    'location': login1.get('location_name', 'Unknown'),
-                    'latitude': login1['latitude'],
-                    'longitude': login1['longitude'],
-                    'ip': login1.get('ip', 'Unknown')
-                },
-                'second_login': {
-                    'timestamp': login2['timestamp'],
-                    'location': login2.get('location_name', 'Unknown'),
-                    'latitude': login2['latitude'],
-                    'longitude': login2['longitude'],
-                    'ip': login2.get('ip', 'Unknown')
-                },
-                'distance_km': round(distance_km, 2),
-                'time_delta_minutes': round(time_delta_minutes, 2),
-                'min_travel_time_minutes': round(min_travel_time, 2),
-                'max_implied_speed_kmh': round(distance_km / (time_delta_minutes / 60), 2),
-                'detection_timestamp': datetime.utcnow().isoformat() + 'Z'
-            }
-        
-        return None
-    
-    def analyze_user_session(self, login_events: List[Dict]) -> List[Dict]:
-        """
-        Analyze all login events for a user to detect impossible travel.
-        
-        Args:
-            login_events: List of login events sorted by timestamp
+            time_diff = (second_login.timestamp - first_login.timestamp).total_seconds()
             
-        Returns:
-            List of detected anomalies
-        """
-        anomalies = []
-        
-        # Sort by timestamp
-        sorted_logins = sorted(login_events, key=lambda x: x['timestamp'])
-        
-        # Check consecutive login pairs
-        for i in range(len(sorted_logins) - 1):
-            alert = self.analyze_login_pair(sorted_logins[i], sorted_logins[i + 1])
-            if alert:
-                anomalies.append(alert)
+            if time_diff < self.min_time_seconds:
+                continue
+            
+            required_speed = self.geo_calculator.required_speed(distance_km, int(time_diff))
+            
+            if required_speed > self.max_speed_kmh:
+                severity = self._calculate_severity(required_speed, distance_km)
+                
+                alert = ImpossibleTravelAlert(
+                    user_id=user_id,
+                    first_login=first_login.to_dict(),
+                    second_login=second_login.to_dict(),
+                    distance_km=round(distance_km, 2),
+                    time_diff_seconds=int(time_diff),
+                    required_speed_kmh=round(required_speed, 2),
+                    max_possible_speed_kmh=self.max_speed_kmh,
+                    severity=severity,
+                    alert_time=datetime.utcnow().isoformat()
+                )
+                
+                user_alerts.append(alert)
                 self.alerts.append(alert)
         
-        return anomalies
+        return user_alerts
     
-    def analyze_batch(self, audit_logs: List[Dict]) -> List[Dict]:
+    def detect_all(self) -> List[ImpossibleTravelAlert]:
         """
-        Analyze batch of audit logs grouped by user.
+        Detect impossible travel for all users.
+        
+        Returns:
+            List of all detected ImpossibleTravelAlert objects
+        """
+        all_alerts = []
+        for user_id in self.user_logins.keys():
+            all_alerts.extend(self.detect_user(user_id))
+        return all_alerts
+    
+    @staticmethod
+    def _calculate_severity(required_speed: float, distance_km: float) -> str:
+        """
+        Calculate severity level based on required speed and distance.
         
         Args:
-            audit_logs: List of login events
+            required_speed: Required speed in km/h
+            distance_km: Distance traveled in km
             
         Returns:
-            List of detected anomalies
+            Severity level: "CRITICAL", "HIGH", or "MEDIUM"
         """
-        # Group by user
-        user_sessions = {}
-        for log in audit_logs:
-            user = log.get('user', 'unknown')
-            if user not in user_sessions:
-                user_sessions[user] = []
-            user_sessions[user].append(log)
+        speed_multiplier = required_speed / 900.0
         
-        # Analyze each user
-        all_anomalies = []
-        for user, events in user_sessions.items():
-            anomalies = self.analyze_user_session(events)
-            all_anomalies.extend(anomalies)
-        
-        return all_anomalies
+        if speed_multiplier > 5.0 or distance_km > 15000:
+            return "CRITICAL"
+        elif speed_multiplier > 2.5 or distance_km > 8000:
+            return "HIGH"
+        else:
+            return "MEDIUM"
     
-    def generate_report(self, anomalies: List[Dict]) -> Dict:
+    def get_alerts(self) -> List[ImpossibleTravelAlert]:
+        """Get all detected alerts."""
+        return self.alerts
+    
+    def clear_alerts(self) -> None:
+        """Clear all alerts."""
+        self.alerts = []
+    
+    def get_user_timeline(self, user_id: str) -> List[Dict]:
+        """Get login timeline for a user."""
+        logins = self.user_logins.get(user_id, [])
+        return [login.to_dict() for login in logins]
+
+
+class AuditLogParser:
+    """Parses audit logs from various SaaS platforms."""
+    
+    @staticmethod
+    def parse_json_logs(log_data: List[Dict]) -> List[LoginEvent]:
         """
-        Generate summary report of detected anomalies.
+        Parse JSON audit logs into LoginEvent objects.
         
-        Args:
-            anomalies: List of anomalies
-            
-        Returns:
-            Report dict
+        Expected format:
+        {
+            "user_id": "user@example.com",
+            "timestamp": "2025-01-15T10:30:00Z",
+            "latitude": 40.7128,
+            "longitude": -74.0060,
+            "city": "New York",
+            "country": "United States",
+            "ip_address": "203.0.113.42"
+        }
         """
-        report =
+        events = []
+        for log in log_data:
+            try:
+                timestamp = datetime.fromisoformat(log["timestamp"].replace("Z", "+00:00"))
+                event = LoginEvent(
+                    user_id=log["user_id"],
+                    timestamp=timestamp,
+                    latitude=float(log["latitude"]),
+                    longitude=float(log["longitude"]),
+                    city=log.get("city", "Unknown"),
+                    country=log.get("country", "Unknown"),
+                    ip_address=log.get("ip_address", "0.0.0.0")
+                )
+                events.append(event)
+            except (KeyError, ValueError, TypeError) as e:
+                print(f"Warning: Failed to parse log entry: {e}", file=sys.stderr)
+                continue
+        return events
+
+
+def generate_test_data() -> List[Dict]:
+    """Generate sample audit log data for testing."""
+    base_time = datetime.utcnow()
+    
+    return [
+        {
+            "user_id": "alice@company.com",
+            "timestamp": (base_time - timedelta(hours=12)).isoformat() + "Z",
+            "latitude": 40.7128,
+            "longitude": -74.0060,
+            "city": "New York",
+            "country": "United States",
+            "ip_address": "203.0.113.10"
+        },
+        {
+            "user_id": "alice@company.com",
+            "timestamp": (base_time - timedelta(hours=11, minutes=50)).isoformat() + "Z",
+            "latitude": 51.5074,
+            "longitude": -0.1278,
+            "city": "London",
+            "country": "United Kingdom",
+            "ip_address": "203.0.113.11"
+        },
+        {
+            "user_id": "bob@company.com",
+            "timestamp": (base_time - timedelta(hours=8)).isoformat() + "Z",
+            "latitude": 35.6762,
+            "longitude": 139.6503,
+            "city": "Tokyo",
+            "country": "Japan",
+            "ip_address": "203.0.113.20"
+        },
+        {
+            "user_id": "bob@company.com",
+            "timestamp": (base_time - timedelta(hours=7, minutes=45)).isoformat() + "Z",
+            "latitude": 35.6762,
+            "longitude": 139.6503,
+            "city": "Tokyo",
+            "country": "Japan",
+            "ip_address": "203.0.113.21"
+        },
+        {
+            "user_id": "charlie@company.com",
+            "timestamp": (base_time - timedelta(hours=6)).isoformat() + "Z",
+            "latitude": -33.8688,
+            "longitude": 151.2093,
+            "city": "Sydney",
+            "country": "Australia",
+            "ip_address": "203.0.113.30"
+        },
+        {
+            "user_id": "charlie@company.com",
+            "timestamp": (base_time - timedelta(hours=5, minutes=30)).isoformat() + "Z",
+            "latitude": 48.8566,
+            "longitude": 2.3522,
+            "city": "Paris",
+            "country": "France",
+            "ip_address": "203.0.113.31"
+        },
+        {
+            "user_id": "diane@company.com",
+            "timestamp": (base_time - timedelta(hours=4)).isoformat() + "Z",
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+            "city": "San Francisco",
+            "country": "United States",
+            "ip_address": "203.0.113.40"
+        },
+        {
+            "user_id": "diane@company.com",
+            "timestamp": (base_time - timedelta(hours=3, minutes=55)).isoformat() + "Z",
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+            "city": "San Francisco",
+            "country": "United States",
+            "ip_address": "203.0.113.41"
+        }
+    ]
+
+
+def output_results(alerts: List[ImpossibleTravelAlert], 
+                  output_format: str = "json") -> None:
+    """Output detection results in specified format."""
+    if output_format == "json":
+        output_data = {
+            "detection_timestamp": datetime.utcnow().isoformat(),
+            "total_alerts": len(alerts),
+            "alerts": [alert.to_dict() for alert in alerts]
+        }
+        print(json.dumps(output_data, indent=2))
+    elif output_format == "csv":
+        if alerts:
+            print("user_id,first_city,second_city,distance_km,time_diff_minutes,required_speed_kmh,severity")
+            for alert in alerts:
+                first = alert.first_login
+                second = alert.second_login
+                print(f"{alert.user_id},{first['city']},{second['city']},"
+                      f"{alert.distance_km},{alert.time_diff_seconds // 60},"
+                      f"{alert.required_speed_kmh},{alert.severity}")
+    elif output_format == "summary":
+        severity_counts = defaultdict(int)
+        user_counts = defaultdict(int)
+        
+        for alert in alerts:
+            severity_counts[alert.severity] += 1
+            user_counts[alert.user_id] += 1
+        
+        print(f"Total Alerts: {len(alerts)}")
+        print(f"\nSeverity Breakdown:")
+        for severity in ["CRITICAL", "HIGH", "MEDIUM"]:
+            count = severity_counts.get(severity, 0)
+            print(f"  {severity}: {count}")
+        
+        print(f"\nAffected Users: {len(user_counts)}")
+        for user_id, count in sorted(user_counts.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {user_id}: {count} impossible travels")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Detect impossible travel patterns in SaaS audit logs"
+    )
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        help="Path to JSON audit log file"
+    )
+    parser.add_argument(
+        "--max-speed",
+        type=float,
+        default=900.0,
+        help="Maximum physically possible speed in km/h (default: 900)"
+    )
+    parser.add_argument(
+        "--min-time",
+        type=int,
+        default=1,
+        help="Minimum time between logins in minutes (default: 1)"
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=["json", "csv", "summary"],
+        default="json",
+        help="Output format for results (default: json)"
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Run with generated test data"
+    )
+    
+    args = parser.parse_args()
+    
+    detector = ImpossibleTravelDetector(
+        max_speed_kmh=args.max_speed,
+        min_time_minutes=args.min_time
