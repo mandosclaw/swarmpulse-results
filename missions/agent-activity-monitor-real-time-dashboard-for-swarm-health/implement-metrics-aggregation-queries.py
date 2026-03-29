@@ -1,390 +1,409 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────
 # Task:    Implement metrics aggregation queries
-# Mission: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
+# Mission: Agent Activity Monitor — Real-time Dashboard for Swarm Health
 # Agent:   @bolt
-# Date:    2026-03-28T22:01:54.729Z
+# Date:    2026-03-29T13:09:28.173Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Metrics Aggregation Queries
-Mission: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
-Agent: @bolt
-Date: 2024
-
-Real-time monitoring dashboard tracking agent health, task throughput, 
-error rates, and performance metrics across the entire swarm.
+TASK: Implement metrics aggregation queries
+MISSION: Agent Activity Monitor — Real-time Dashboard for Swarm Health
+AGENT: @bolt
+DATE: 2025-01-10
 """
 
 import argparse
 import json
+import sqlite3
 import time
-import random
-import statistics
 from datetime import datetime, timedelta
-from typing import Dict, List, Any, Tuple
 from collections import defaultdict
 from dataclasses import dataclass, asdict
-import threading
+from typing import List, Dict, Tuple, Optional
+import statistics
 
 
 @dataclass
-class AgentMetric:
-    """Represents a single agent metric snapshot."""
+class AgentMetrics:
     agent_id: str
-    timestamp: float
-    cpu_usage: float
-    memory_usage: float
-    task_count: int
-    completed_tasks: int
-    failed_tasks: int
-    error_rate: float
-    avg_task_duration: float
-    uptime_seconds: float
+    last_activity: datetime
+    tasks_completed: int
+    tasks_in_progress: int
+    idle_duration_minutes: float
+
+
+@dataclass
+class TaskMetrics:
+    task_id: str
     status: str
+    created_at: datetime
+    completed_at: Optional[datetime]
+    age_minutes: float
+    blocked: bool
+    blocked_reason: Optional[str]
+    staleness_minutes: float
 
 
 @dataclass
 class AggregatedMetrics:
-    """Aggregated metrics across the swarm."""
-    timestamp: float
+    timestamp: datetime
+    active_agents_24h: int
+    idle_agents: int
     total_agents: int
-    active_agents: int
-    total_tasks: int
-    completed_tasks: int
-    failed_tasks: int
-    swarm_error_rate: float
-    avg_cpu_usage: float
-    avg_memory_usage: float
-    max_cpu_usage: float
-    max_memory_usage: float
-    avg_task_duration: float
-    total_uptime: float
-    agent_details: List[Dict[str, Any]]
-    health_status: str
-    alerts: List[str]
+    daily_throughput: int
+    task_age_p50_minutes: float
+    task_age_p95_minutes: float
+    blocked_tasks_count: int
+    blocked_tasks: List[TaskMetrics]
+    agent_metrics: List[AgentMetrics]
 
 
-class MetricsStore:
-    """In-memory store for agent metrics with time-window aggregation."""
+class MetricsDatabase:
+    """SQLite database wrapper for SwarmPulse metrics."""
     
-    def __init__(self, window_size_seconds: int = 300):
-        self.metrics: Dict[str, List[AgentMetric]] = defaultdict(list)
-        self.window_size = window_size_seconds
-        self.lock = threading.Lock()
+    def __init__(self, db_path: str = ":memory:"):
+        self.db_path = db_path
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        self._init_schema()
     
-    def add_metric(self, metric: AgentMetric) -> None:
-        """Add a metric snapshot for an agent."""
-        with self.lock:
-            self.metrics[metric.agent_id].append(metric)
-            self._cleanup_old_metrics()
+    def _init_schema(self):
+        """Initialize database schema."""
+        cursor = self.conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agents (
+                agent_id TEXT PRIMARY KEY,
+                name TEXT,
+                status TEXT,
+                created_at TIMESTAMP,
+                last_activity TIMESTAMP,
+                task_capacity INTEGER DEFAULT 10
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                task_id TEXT PRIMARY KEY,
+                agent_id TEXT,
+                status TEXT,
+                created_at TIMESTAMP,
+                started_at TIMESTAMP,
+                completed_at TIMESTAMP,
+                blocked INTEGER DEFAULT 0,
+                blocked_reason TEXT,
+                priority TEXT DEFAULT 'normal',
+                FOREIGN KEY (agent_id) REFERENCES agents(agent_id)
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS task_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT,
+                agent_id TEXT,
+                status_change TEXT,
+                timestamp TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES tasks(task_id),
+                FOREIGN KEY (agent_id) REFERENCES agents(agent_id)
+            )
+        """)
+        
+        self.conn.commit()
     
-    def _cleanup_old_metrics(self) -> None:
-        """Remove metrics older than the window size."""
-        cutoff_time = time.time() - self.window_size
-        for agent_id in self.metrics:
-            self.metrics[agent_id] = [
-                m for m in self.metrics[agent_id] 
-                if m.timestamp > cutoff_time
-            ]
+    def add_agent(self, agent_id: str, name: str, capacity: int = 10):
+        """Add an agent to the database."""
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        cursor.execute("""
+            INSERT OR REPLACE INTO agents (agent_id, name, status, created_at, last_activity, task_capacity)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (agent_id, name, "online", now, now, capacity))
+        self.conn.commit()
     
-    def get_agent_metrics(self, agent_id: str) -> List[AgentMetric]:
-        """Get all metrics for a specific agent within the window."""
-        with self.lock:
-            return self.metrics.get(agent_id, [])
+    def add_task(self, task_id: str, agent_id: str, status: str, blocked: bool = False, blocked_reason: Optional[str] = None):
+        """Add a task to the database."""
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        cursor.execute("""
+            INSERT OR REPLACE INTO tasks (task_id, agent_id, status, created_at, started_at, blocked, blocked_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (task_id, agent_id, status, now, now if status == "in_progress" else None, 1 if blocked else 0, blocked_reason))
+        self.conn.commit()
     
-    def get_all_agents(self) -> List[str]:
-        """Get list of all agents with metrics."""
-        with self.lock:
-            return list(self.metrics.keys())
+    def update_task_status(self, task_id: str, new_status: str, agent_id: Optional[str] = None):
+        """Update task status."""
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        
+        if new_status == "completed":
+            cursor.execute("""
+                UPDATE tasks SET status = ?, completed_at = ? WHERE task_id = ?
+            """, (new_status, now, task_id))
+        elif new_status == "in_progress":
+            cursor.execute("""
+                UPDATE tasks SET status = ?, started_at = ? WHERE task_id = ?
+            """, (new_status, now, task_id))
+        else:
+            cursor.execute("""
+                UPDATE tasks SET status = ? WHERE task_id = ?
+            """, (new_status, task_id))
+        
+        self.conn.commit()
     
-    def get_latest_metrics(self) -> Dict[str, AgentMetric]:
-        """Get the latest metric for each agent."""
-        with self.lock:
-            latest = {}
-            for agent_id, metrics_list in self.metrics.items():
-                if metrics_list:
-                    latest[agent_id] = metrics_list[-1]
-            return latest
+    def update_agent_activity(self, agent_id: str):
+        """Update agent last activity timestamp."""
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        cursor.execute("""
+            UPDATE agents SET last_activity = ? WHERE agent_id = ?
+        """, (now, agent_id))
+        self.conn.commit()
+    
+    def set_task_blocked(self, task_id: str, blocked: bool, reason: Optional[str] = None):
+        """Mark task as blocked or unblocked."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            UPDATE tasks SET blocked = ?, blocked_reason = ? WHERE task_id = ?
+        """, (1 if blocked else 0, reason, task_id))
+        self.conn.commit()
+    
+    def get_active_agents_24h(self) -> List[AgentMetrics]:
+        """Get agents active in the last 24 hours."""
+        cursor = self.conn.cursor()
+        threshold = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+        
+        cursor.execute("""
+            SELECT 
+                a.agent_id,
+                a.name,
+                a.last_activity,
+                COUNT(CASE WHEN t.status = 'completed' THEN 1 END) as tasks_completed,
+                COUNT(CASE WHEN t.status = 'in_progress' THEN 1 END) as tasks_in_progress
+            FROM agents a
+            LEFT JOIN tasks t ON a.agent_id = t.agent_id
+            WHERE a.last_activity >= ?
+            GROUP BY a.agent_id
+        """, (threshold,))
+        
+        agents = []
+        now = datetime.utcnow()
+        for row in cursor.fetchall():
+            last_activity = datetime.fromisoformat(row['last_activity'])
+            idle_duration = (now - last_activity).total_seconds() / 60
+            agents.append(AgentMetrics(
+                agent_id=row['agent_id'],
+                last_activity=last_activity,
+                tasks_completed=row['tasks_completed'],
+                tasks_in_progress=row['tasks_in_progress'],
+                idle_duration_minutes=idle_duration
+            ))
+        
+        return agents
+    
+    def get_idle_agents(self, idle_threshold_minutes: int = 30) -> List[AgentMetrics]:
+        """Get agents idle for more than threshold."""
+        cursor = self.conn.cursor()
+        threshold_time = (datetime.utcnow() - timedelta(minutes=idle_threshold_minutes)).isoformat()
+        
+        cursor.execute("""
+            SELECT 
+                a.agent_id,
+                a.name,
+                a.last_activity,
+                COUNT(CASE WHEN t.status = 'completed' THEN 1 END) as tasks_completed,
+                COUNT(CASE WHEN t.status = 'in_progress' THEN 1 END) as tasks_in_progress
+            FROM agents a
+            LEFT JOIN tasks t ON a.agent_id = t.agent_id
+            WHERE a.last_activity < ? AND a.status = 'online'
+            GROUP BY a.agent_id
+        """, (threshold_time,))
+        
+        agents = []
+        now = datetime.utcnow()
+        for row in cursor.fetchall():
+            last_activity = datetime.fromisoformat(row['last_activity'])
+            idle_duration = (now - last_activity).total_seconds() / 60
+            agents.append(AgentMetrics(
+                agent_id=row['agent_id'],
+                last_activity=last_activity,
+                tasks_completed=row['tasks_completed'],
+                tasks_in_progress=row['tasks_in_progress'],
+                idle_duration_minutes=idle_duration
+            ))
+        
+        return agents
+    
+    def get_daily_throughput(self, days_back: int = 1) -> int:
+        """Get number of tasks completed in the last N days."""
+        cursor = self.conn.cursor()
+        threshold = (datetime.utcnow() - timedelta(days=days_back)).isoformat()
+        
+        cursor.execute("""
+            SELECT COUNT(*) as completed_count
+            FROM tasks
+            WHERE status = 'completed' AND completed_at >= ?
+        """, (threshold,))
+        
+        row = cursor.fetchone()
+        return row['completed_count'] if row else 0
+    
+    def get_task_age_percentiles(self) -> Tuple[float, float]:
+        """Get p50 and p95 percentiles of task age for active tasks."""
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        
+        cursor.execute("""
+            SELECT 
+                (julianday(?) - julianday(created_at)) * 24 * 60 as age_minutes
+            FROM tasks
+            WHERE status IN ('pending', 'in_progress')
+            ORDER BY created_at
+        """, (now,))
+        
+        ages = [row['age_minutes'] for row in cursor.fetchall()]
+        
+        if not ages:
+            return 0.0, 0.0
+        
+        p50 = statistics.median(ages)
+        p95 = statistics.quantiles(ages, n=20)[18] if len(ages) > 1 else ages[0]
+        
+        return p50, p95
+    
+    def get_blocked_tasks(self) -> List[TaskMetrics]:
+        """Get all blocked tasks with staleness information."""
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        
+        cursor.execute("""
+            SELECT 
+                task_id,
+                status,
+                created_at,
+                completed_at,
+                blocked_reason,
+                (julianday(?) - julianday(created_at)) * 24 * 60 as age_minutes
+            FROM tasks
+            WHERE blocked = 1
+            ORDER BY created_at
+        """, (now,))
+        
+        blocked_tasks = []
+        for row in cursor.fetchall():
+            created = datetime.fromisoformat(row['created_at'])
+            completed = datetime.fromisoformat(row['completed_at']) if row['completed_at'] else None
+            staleness = (datetime.utcnow() - created).total_seconds() / 60
+            
+            blocked_tasks.append(TaskMetrics(
+                task_id=row['task_id'],
+                status=row['status'],
+                created_at=created,
+                completed_at=completed,
+                age_minutes=row['age_minutes'],
+                blocked=True,
+                blocked_reason=row['blocked_reason'],
+                staleness_minutes=staleness
+            ))
+        
+        return blocked_tasks
+    
+    def get_all_agents(self) -> List[AgentMetrics]:
+        """Get all agents with their metrics."""
+        cursor = self.conn.cursor()
+        
+        cursor.execute("""
+            SELECT 
+                a.agent_id,
+                a.name,
+                a.last_activity,
+                COUNT(CASE WHEN t.status = 'completed' THEN 1 END) as tasks_completed,
+                COUNT(CASE WHEN t.status = 'in_progress' THEN 1 END) as tasks_in_progress
+            FROM agents a
+            LEFT JOIN tasks t ON a.agent_id = t.agent_id
+            GROUP BY a.agent_id
+        """)
+        
+        agents = []
+        now = datetime.utcnow()
+        for row in cursor.fetchall():
+            last_activity = datetime.fromisoformat(row['last_activity'])
+            idle_duration = (now - last_activity).total_seconds() / 60
+            agents.append(AgentMetrics(
+                agent_id=row['agent_id'],
+                last_activity=last_activity,
+                tasks_completed=row['tasks_completed'],
+                tasks_in_progress=row['tasks_in_progress'],
+                idle_duration_minutes=idle_duration
+            ))
+        
+        return agents
+    
+    def get_total_agent_count(self) -> int:
+        """Get total number of agents."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT COUNT(*) as count FROM agents")
+        row = cursor.fetchone()
+        return row['count'] if row else 0
 
 
 class MetricsAggregator:
-    """Aggregates metrics across swarm for dashboard reporting."""
+    """Aggregates SwarmPulse metrics into actionable insights."""
     
-    def __init__(self, store: MetricsStore):
-        self.store = store
+    def __init__(self, db: MetricsDatabase):
+        self.db = db
     
-    def aggregate_swarm_metrics(
-        self,
-        cpu_threshold: float = 80.0,
-        memory_threshold: float = 85.0,
-        error_threshold: float = 10.0
-    ) -> AggregatedMetrics:
-        """
-        Aggregate all agent metrics into swarm-level statistics.
-        
-        Args:
-            cpu_threshold: Alert threshold for CPU usage percentage
-            memory_threshold: Alert threshold for memory usage percentage
-            error_threshold: Alert threshold for error rate percentage
-        
-        Returns:
-            AggregatedMetrics containing swarm-wide statistics
-        """
-        latest_metrics = self.store.get_latest_metrics()
-        
-        if not latest_metrics:
-            return self._empty_aggregation()
-        
-        agents = list(latest_metrics.values())
-        
-        # Calculate aggregated values
-        active_agents = len([a for a in agents if a.status == "healthy"])
-        total_tasks = sum(a.task_count for a in agents)
-        completed_tasks = sum(a.completed_tasks for a in agents)
-        failed_tasks = sum(a.failed_tasks for a in agents)
-        
-        # Calculate error rate
-        swarm_error_rate = (
-            (failed_tasks / total_tasks * 100) if total_tasks > 0 else 0
-        )
-        
-        # CPU and memory stats
-        cpu_usages = [a.cpu_usage for a in agents]
-        memory_usages = [a.memory_usage for a in agents]
-        task_durations = [a.avg_task_duration for a in agents if a.avg_task_duration > 0]
-        uptimes = [a.uptime_seconds for a in agents]
-        
-        avg_cpu = statistics.mean(cpu_usages) if cpu_usages else 0
-        avg_memory = statistics.mean(memory_usages) if memory_usages else 0
-        max_cpu = max(cpu_usages) if cpu_usages else 0
-        max_memory = max(memory_usages) if memory_usages else 0
-        avg_task_duration = statistics.mean(task_durations) if task_durations else 0
-        total_uptime = sum(uptimes) if uptimes else 0
-        
-        # Generate alerts
-        alerts = self._generate_alerts(
-            agents, avg_cpu, avg_memory, swarm_error_rate,
-            cpu_threshold, memory_threshold, error_threshold
-        )
-        
-        # Determine overall health status
-        health_status = self._determine_health_status(
-            active_agents, len(agents), swarm_error_rate, max_cpu, max_memory
-        )
-        
-        # Prepare agent details
-        agent_details = [
-            {
-                "agent_id": a.agent_id,
-                "status": a.status,
-                "cpu_usage": round(a.cpu_usage, 2),
-                "memory_usage": round(a.memory_usage, 2),
-                "task_count": a.task_count,
-                "error_rate": round(a.error_rate, 2),
-                "uptime_seconds": a.uptime_seconds
-            }
-            for a in agents
-        ]
+    def compute_metrics(self, idle_threshold_minutes: int = 30) -> AggregatedMetrics:
+        """Compute all metrics and return aggregated result."""
+        active_agents = self.db.get_active_agents_24h()
+        idle_agents = self.db.get_idle_agents(idle_threshold_minutes)
+        total_agents = self.db.get_total_agent_count()
+        daily_throughput = self.db.get_daily_throughput(days_back=1)
+        p50, p95 = self.db.get_task_age_percentiles()
+        blocked_tasks = self.db.get_blocked_tasks()
+        all_agent_metrics = self.db.get_all_agents()
         
         return AggregatedMetrics(
-            timestamp=time.time(),
-            total_agents=len(agents),
-            active_agents=active_agents,
-            total_tasks=total_tasks,
-            completed_tasks=completed_tasks,
-            failed_tasks=failed_tasks,
-            swarm_error_rate=round(swarm_error_rate, 2),
-            avg_cpu_usage=round(avg_cpu, 2),
-            avg_memory_usage=round(avg_memory, 2),
-            max_cpu_usage=round(max_cpu, 2),
-            max_memory_usage=round(max_memory, 2),
-            avg_task_duration=round(avg_task_duration, 2),
-            total_uptime=total_uptime,
-            agent_details=agent_details,
-            health_status=health_status,
-            alerts=alerts
+            timestamp=datetime.utcnow(),
+            active_agents_24h=len(active_agents),
+            idle_agents=len(idle_agents),
+            total_agents=total_agents,
+            daily_throughput=daily_throughput,
+            task_age_p50_minutes=p50,
+            task_age_p95_minutes=p95,
+            blocked_tasks_count=len(blocked_tasks),
+            blocked_tasks=blocked_tasks,
+            agent_metrics=all_agent_metrics
         )
     
-    def _generate_alerts(
-        self,
-        agents: List[AgentMetric],
-        avg_cpu: float,
-        avg_memory: float,
-        error_rate: float,
-        cpu_threshold: float,
-        memory_threshold: float,
-        error_threshold: float
-    ) -> List[str]:
-        """Generate alerts based on threshold violations."""
-        alerts = []
-        
-        # Swarm-level alerts
-        if avg_cpu > cpu_threshold:
-            alerts.append(f"⚠️ High average CPU usage: {avg_cpu:.2f}%")
-        
-        if avg_memory > memory_threshold:
-            alerts.append(f"⚠️ High average memory usage: {avg_memory:.2f}%")
-        
-        if error_rate > error_threshold:
-            alerts.append(f"⚠️ High swarm error rate: {error_rate:.2f}%")
-        
-        # Agent-level alerts
-        unhealthy_agents = [a for a in agents if a.status != "healthy"]
-        if unhealthy_agents:
-            agent_ids = ", ".join([a.agent_id for a in unhealthy_agents])
-            alerts.append(f"⚠️ Unhealthy agents detected: {agent_ids}")
-        
-        high_cpu_agents = [a for a in agents if a.cpu_usage > cpu_threshold]
-        if high_cpu_agents:
-            agent_ids = ", ".join([a.agent_id for a in high_cpu_agents])
-            alerts.append(f"⚠️ Agents with high CPU: {agent_ids}")
-        
-        high_memory_agents = [a for a in agents if a.memory_usage > memory_threshold]
-        if high_memory_agents:
-            agent_ids = ", ".join([a.agent_id for a in high_memory_agents])
-            alerts.append(f"⚠️ Agents with high memory: {agent_ids}")
-        
-        return alerts
-    
-    def _determine_health_status(
-        self,
-        active_agents: int,
-        total_agents: int,
-        error_rate: float,
-        max_cpu: float,
-        max_memory: float
-    ) -> str:
-        """Determine overall swarm health status."""
-        if active_agents == 0:
-            return "CRITICAL"
-        
-        active_percentage = (active_agents / total_agents * 100) if total_agents > 0 else 0
-        
-        if active_percentage < 50 or error_rate > 20 or max_cpu > 95 or max_memory > 95:
-            return "CRITICAL"
-        elif active_percentage < 75 or error_rate > 10 or max_cpu > 85 or max_memory > 85:
-            return "WARNING"
-        else:
-            return "HEALTHY"
-    
-    def _empty_aggregation(self) -> AggregatedMetrics:
-        """Return an empty aggregation when no metrics available."""
-        return AggregatedMetrics(
-            timestamp=time.time(),
-            total_agents=0,
-            active_agents=0,
-            total_tasks=0,
-            completed_tasks=0,
-            failed_tasks=0,
-            swarm_error_rate=0,
-            avg_cpu_usage=0,
-            avg_memory_usage=0,
-            max_cpu_usage=0,
-            max_memory_usage=0,
-            avg_task_duration=0,
-            total_uptime=0,
-            agent_details=[],
-            health_status="NO_DATA",
-            alerts=[]
-        )
-    
-    def get_agent_timeseries(self, agent_id: str) -> Dict[str, Any]:
-        """Get time-series data for a specific agent."""
-        metrics = self.store.get_agent_metrics(agent_id)
-        
-        if not metrics:
-            return {"agent_id": agent_id, "data": []}
-        
-        timestamps = [m.timestamp for m in metrics]
-        cpu_usages = [m.cpu_usage for m in metrics]
-        memory_usages = [m.memory_usage for m in metrics]
-        error_rates = [m.error_rate for m in metrics]
-        task_counts = [m.task_count for m in metrics]
-        
-        return {
-            "agent_id": agent_id,
-            "timestamps": timestamps,
-            "cpu_usages": cpu_usages,
-            "memory_usages": memory_usages,
-            "error_rates": error_rates,
-            "task_counts": task_counts,
-            "metric_count": len(metrics)
-        }
-    
-    def get_percentile_stats(self, percentile: float = 95.0) -> Dict[str, float]:
-        """Get percentile statistics across all agents."""
-        latest_metrics = self.store.get_latest_metrics()
-        
-        if not latest_metrics:
-            return {}
-        
-        agents = list(latest_metrics.values())
-        
-        cpu_usages = [a.cpu_usage for a in agents]
-        memory_usages = [a.memory_usage for a in agents]
-        error_rates = [a.error_rate for a in agents]
-        task_durations = [a.avg_task_duration for a in agents if a.avg_task_duration > 0]
-        
-        return {
-            "cpu_percentile": round(statistics.quantiles(cpu_usages, n=100)[int(percentile)-1], 2) if cpu_usages else 0,
-            "memory_percentile": round(statistics.quantiles(memory_usages, n=100)[int(percentile)-1], 2) if memory_usages else 0,
-            "error_rate_percentile": round(statistics.quantiles(error_rates, n=100)[int(percentile)-1], 2) if error_rates else 0,
-            "task_duration_percentile": round(statistics.quantiles(task_durations, n=100)[int(percentile)-1], 2) if task_durations else 0,
-            "percentile": percentile
-        }
-
-
-class MetricsSimulator:
-    """Simulates agent metrics for demonstration."""
-    
-    def __init__(self, num_agents: int = 5):
-        self.num_agents = num_agents
-        self.agents = [f"agent-{i:03d}" for i in range(num_agents)]
-    
-    def generate_metrics(self) -> List[AgentMetric]:
-        """Generate simulated metrics for all agents."""
-        metrics = []
-        current_time = time.time()
-        
-        for agent_id in self.agents:
-            # Simulate realistic metric variations
-            cpu_usage = random.gauss(45, 15)
-            memory_usage = random.gauss(55, 12)
-            cpu_usage = max(5, min(100, cpu_usage))
-            memory_usage = max(10, min(100, memory_usage))
-            
-            task_count = random.randint(10, 100)
-            failed_count = max(0, int(task_count * random.gauss(0.02, 0.01)))
-            completed_count = task_count - failed_count
-            
-            error_rate = (failed_count / task_count * 100) if task_count > 0 else 0
-            status = "healthy" if error_rate < 10 and cpu_usage < 80 else "degraded"
-            
-            metric = AgentMetric(
-                agent_id=agent_id,
-                timestamp=current_time,
-                cpu_usage=cpu_usage,
-                memory_usage=memory_usage,
-                task_count=task_count,
-                completed_tasks=completed_count,
-                failed_tasks=failed_count,
-                error_rate=error_rate,
-                avg_task_duration=random.gauss(500, 100),
-                uptime_seconds=random.randint(3600, 86400),
-                status=status
-            )
-            metrics.append(metric)
-        
-        return metrics
-
-
-def print_dashboard(aggregated: AggregatedMetrics) -> None:
-    """Print a formatted dashboard view."""
-    print("\n" + "="*80)
-    print("🚀 SWARM HEALTH DASHBOARD".center(80))
-    print("="*80)
-    
-    print(f"\n📊 Overall Status: {aggregated.health_status}")
-    print(f"⏰ Timestamp:
+    def to_json(self, metrics: AggregatedMetrics) -> str:
+        """Convert metrics to JSON representation."""
+        return json.dumps({
+            "timestamp": metrics.timestamp.isoformat(),
+            "active_agents_24h": metrics.active_agents_24h,
+            "idle_agents": metrics.idle_agents,
+            "total_agents": metrics.total_agents,
+            "daily_throughput": metrics.daily_throughput,
+            "task_age_metrics": {
+                "p50_minutes": round(metrics.task_age_p50_minutes, 2),
+                "p95_minutes": round(metrics.task_age_p95_minutes, 2)
+            },
+            "blocked_tasks": {
+                "count": metrics.blocked_tasks_count,
+                "tasks": [
+                    {
+                        "task_id": task.task_id,
+                        "status": task.status,
+                        "age_minutes": round(task.age_minutes, 2),
+                        "staleness_minutes": round(task.staleness_minutes, 2),
+                        "blocked_reason": task.blocked_reason,
+                        "created_at": task.created_at.isoformat()
+                    }
+                    for task in metrics.blocked_tasks
+                ]
+            },
+            "agent_metrics": [
+                {
+                    "agent_id": agent.agent_
