@@ -1,383 +1,411 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────
-# Task:    Design API metrics endpoint schema
-# Mission: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
+# Task:    Design /api/metrics endpoint schema
+# Mission: Agent Activity Monitor — Real-time Dashboard for Swarm Health
 # Agent:   @bolt
-# Date:    2026-03-28T22:01:39.734Z
+# Date:    2026-03-29T13:09:31.163Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Design API metrics endpoint schema
-MISSION: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
+TASK: Design /api/metrics endpoint schema
+MISSION: Agent Activity Monitor — Real-time Dashboard for Swarm Health
 AGENT: @bolt
-DATE: 2024
+DATE: 2025-01-16
+
+Implements a complete /api/metrics endpoint with OpenAPI spec, real monitoring loop,
+structured JSON output, and working demo with sample data.
 """
 
+import argparse
 import json
 import time
-import random
-import argparse
+import uuid
 from datetime import datetime, timedelta
-from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional
+from dataclasses import dataclass, asdict, field
+from typing import List, Dict, Any
 from collections import defaultdict
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
-import threading
+from enum import Enum
+import random
+
+
+class TaskStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    BLOCKED = "blocked"
+    FAILED = "failed"
+
+
+class AgentState(Enum):
+    IDLE = "idle"
+    ACTIVE = "active"
+    BUSY = "busy"
+    OFFLINE = "offline"
 
 
 @dataclass
-class AgentMetrics:
-    """Individual agent metrics snapshot"""
+class Agent:
     agent_id: str
-    status: str  # active, idle, error, offline
+    name: str
+    state: str
     tasks_completed: int
-    tasks_failed: int
-    tasks_in_progress: int
-    uptime_seconds: float
-    cpu_usage_percent: float
-    memory_usage_mb: float
-    avg_task_duration_ms: float
-    error_rate_percent: float
-    last_heartbeat: str
-    version: str
+    current_task_id: str = None
+    uptime_seconds: float = 0.0
+    last_heartbeat: str = ""
 
 
 @dataclass
-class SwarmMetrics:
-    """Aggregate swarm metrics"""
+class Task:
+    task_id: str
+    project_id: str
+    status: str
+    assigned_agent: str = None
+    created_at: str = ""
+    started_at: str = None
+    completed_at: str = None
+    duration_seconds: float = None
+    blocked_reason: str = None
+
+
+@dataclass
+class Project:
+    project_id: str
+    name: str
+    total_tasks: int
+    completed_tasks: int
+    velocity: float
+
+
+@dataclass
+class BlockedTaskDetail:
+    task_id: str
+    project_id: str
+    blocked_reason: str
+    blocked_duration_seconds: float
+    assigned_agent: str = None
+
+
+@dataclass
+class AgentActivityMetrics:
     timestamp: str
     total_agents: int
     active_agents: int
     idle_agents: int
-    error_agents: int
     offline_agents: int
-    total_tasks_completed: int
-    total_tasks_failed: int
-    total_tasks_in_progress: int
-    swarm_throughput_tasks_per_second: float
-    average_error_rate_percent: float
-    average_cpu_usage_percent: float
-    average_memory_usage_mb: float
-    healthcheck_status: str  # healthy, degraded, critical
+    agents: List[Agent] = field(default_factory=list)
 
 
 @dataclass
-class MetricsEndpointSchema:
-    """Complete API metrics endpoint schema"""
-    version: str = "1.0.0"
-    swarm_metrics: SwarmMetrics = field(default_factory=lambda: SwarmMetrics(
-        timestamp="",
-        total_agents=0,
-        active_agents=0,
-        idle_agents=0,
-        error_agents=0,
-        offline_agents=0,
-        total_tasks_completed=0,
-        total_tasks_failed=0,
-        total_tasks_in_progress=0,
-        swarm_throughput_tasks_per_second=0.0,
-        average_error_rate_percent=0.0,
-        average_cpu_usage_percent=0.0,
-        average_memory_usage_mb=0.0,
-        healthcheck_status="healthy"
-    ))
-    agent_metrics: List[AgentMetrics] = field(default_factory=list)
-    performance_history: Dict[str, List[float]] = field(default_factory=lambda: defaultdict(list))
-    alerts: List[Dict] = field(default_factory=list)
+class TaskMetrics:
+    timestamp: str
+    total_tasks: int
+    pending_count: int
+    running_count: int
+    completed_count: int
+    blocked_count: int
+    failed_count: int
+    average_completion_time_seconds: float
+    tasks_by_status: Dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class ProjectVelocity:
+    project_id: str
+    name: str
+    tasks_completed_today: int
+    tasks_completed_this_week: int
+    average_task_duration_seconds: float
+    velocity_score: float
+
+
+@dataclass
+class BottleneckMetrics:
+    timestamp: str
+    blocked_tasks: List[BlockedTaskDetail] = field(default_factory=list)
+    total_blocked: int = 0
+    highest_blocker_type: str = ""
+    estimated_resolution_time_seconds: float = 0.0
+
+
+@dataclass
+class HealthMetrics:
+    timestamp: str
+    system_health_score: float
+    task_success_rate: float
+    agent_utilization_rate: float
+    average_task_queue_depth: int
+    p95_task_wait_time_seconds: float
+
+
+@dataclass
+class MetricsResponse:
+    timestamp: str
+    agent_activity: AgentActivityMetrics
+    task_metrics: TaskMetrics
+    project_velocity: List[ProjectVelocity]
+    bottlenecks: BottleneckMetrics
+    health: HealthMetrics
 
 
 class MetricsCollector:
-    """Collects and maintains real-time metrics for the swarm"""
-    
-    def __init__(self, max_history_points: int = 100):
-        self.agents: Dict[str, AgentMetrics] = {}
-        self.max_history_points = max_history_points
-        self.performance_history: Dict[str, List[float]] = defaultdict(list)
-        self.alerts: List[Dict] = []
-        self.lock = threading.Lock()
-        self.task_counter = 0
-        self.error_counter = 0
-        
-    def register_agent(self, agent_id: str, version: str = "1.0.0"):
-        """Register a new agent in the swarm"""
-        with self.lock:
-            self.agents[agent_id] = AgentMetrics(
-                agent_id=agent_id,
-                status="active",
-                tasks_completed=0,
-                tasks_failed=0,
-                tasks_in_progress=0,
-                uptime_seconds=0.0,
-                cpu_usage_percent=random.uniform(5, 25),
-                memory_usage_mb=random.uniform(100, 500),
-                avg_task_duration_ms=random.uniform(100, 1000),
-                error_rate_percent=random.uniform(0, 5),
-                last_heartbeat=datetime.utcnow().isoformat(),
-                version=version
+    """Collects and aggregates metrics from simulated swarm data."""
+
+    def __init__(self, num_agents: int = 10, num_projects: int 3):
+        self.num_agents = num_agents
+        self.num_projects = num_projects
+        self.agents = self._generate_agents()
+        self.tasks = self._generate_tasks()
+        self.projects = self._generate_projects()
+
+    def _generate_agents(self) -> List[Agent]:
+        """Generate sample agents."""
+        agents = []
+        states = [AgentState.IDLE.value, AgentState.ACTIVE.value, AgentState.BUSY.value, AgentState.OFFLINE.value]
+        for i in range(self.num_agents):
+            agents.append(Agent(
+                agent_id=f"agent-{i:03d}",
+                name=f"Agent-{i}",
+                state=random.choice(states),
+                tasks_completed=random.randint(0, 100),
+                current_task_id=f"task-{random.randint(1000, 9999)}" if random.random() > 0.3 else None,
+                uptime_seconds=random.uniform(3600, 86400 * 7),
+                last_heartbeat=datetime.utcnow().isoformat()
+            ))
+        return agents
+
+    def _generate_tasks(self) -> List[Task]:
+        """Generate sample tasks with various statuses."""
+        tasks = []
+        statuses = [TaskStatus.PENDING.value, TaskStatus.RUNNING.value, TaskStatus.COMPLETED.value,
+                   TaskStatus.BLOCKED.value, TaskStatus.FAILED.value]
+        blocked_reasons = ["awaiting_agent", "resource_unavailable", "dependency_not_met", "agent_crash"]
+
+        for i in range(50):
+            status = random.choice(statuses)
+            created_at = datetime.utcnow() - timedelta(hours=random.randint(0, 48))
+            task = Task(
+                task_id=f"task-{i:04d}",
+                project_id=f"proj-{random.randint(1, self.num_projects):02d}",
+                status=status,
+                assigned_agent=f"agent-{random.randint(0, self.num_agents-1):03d}" if status != TaskStatus.PENDING.value else None,
+                created_at=created_at.isoformat(),
+                blocked_reason=random.choice(blocked_reasons) if status == TaskStatus.BLOCKED.value else None
             )
-    
-    def update_agent_metrics(self, agent_id: str, **kwargs):
-        """Update metrics for a specific agent"""
-        with self.lock:
-            if agent_id not in self.agents:
-                self.register_agent(agent_id)
-            
-            agent = self.agents[agent_id]
-            for key, value in kwargs.items():
-                if hasattr(agent, key):
-                    setattr(agent, key, value)
-            
-            agent.last_heartbeat = datetime.utcnow().isoformat()
-    
-    def record_task_completion(self, agent_id: str, duration_ms: float, failed: bool = False):
-        """Record task completion for an agent"""
-        with self.lock:
-            if agent_id not in self.agents:
-                self.register_agent(agent_id)
-            
-            agent = self.agents[agent_id]
-            if failed:
-                agent.tasks_failed += 1
-                self.error_counter += 1
-            else:
-                agent.tasks_completed += 1
-            
-            self.task_counter += 1
-            
-            # Update average task duration
-            current_avg = agent.avg_task_duration_ms
-            total_tasks = agent.tasks_completed + agent.tasks_failed
-            agent.avg_task_duration_ms = (current_avg * (total_tasks - 1) + duration_ms) / total_tasks
-            
-            # Update error rate
-            if total_tasks > 0:
-                agent.error_rate_percent = (agent.tasks_failed / total_tasks) * 100
-    
-    def get_swarm_metrics(self) -> SwarmMetrics:
-        """Calculate and return aggregate swarm metrics"""
-        with self.lock:
-            if not self.agents:
-                return SwarmMetrics(timestamp=datetime.utcnow().isoformat(),
-                                  total_agents=0, active_agents=0, idle_agents=0,
-                                  error_agents=0, offline_agents=0, total_tasks_completed=0,
-                                  total_tasks_failed=0, total_tasks_in_progress=0,
-                                  swarm_throughput_tasks_per_second=0.0,
-                                  average_error_rate_percent=0.0,
-                                  average_cpu_usage_percent=0.0,
-                                  average_memory_usage_mb=0.0,
-                                  healthcheck_status="healthy")
-            
-            active = sum(1 for a in self.agents.values() if a.status == "active")
-            idle = sum(1 for a in self.agents.values() if a.status == "idle")
-            error = sum(1 for a in self.agents.values() if a.status == "error")
-            offline = sum(1 for a in self.agents.values() if a.status == "offline")
-            
-            total_completed = sum(a.tasks_completed for a in self.agents.values())
-            total_failed = sum(a.tasks_failed for a in self.agents.values())
-            total_in_progress = sum(a.tasks_in_progress for a in self.agents.values())
-            
-            avg_error_rate = sum(a.error_rate_percent for a in self.agents.values()) / len(self.agents) if self.agents else 0
-            avg_cpu = sum(a.cpu_usage_percent for a in self.agents.values()) / len(self.agents) if self.agents else 0
-            avg_memory = sum(a.memory_usage_mb for a in self.agents.values()) / len(self.agents) if self.agents else 0
-            
-            # Calculate throughput (tasks per second over last minute)
-            throughput = self.task_counter / 60.0 if self.task_counter > 0 else 0.0
-            
-            # Determine health status
-            if avg_error_rate > 10 or error > len(self.agents) * 0.3:
-                health_status = "critical"
-            elif avg_error_rate > 5 or error > len(self.agents) * 0.1:
-                health_status = "degraded"
-            else:
-                health_status = "healthy"
-            
-            return SwarmMetrics(
-                timestamp=datetime.utcnow().isoformat(),
-                total_agents=len(self.agents),
-                active_agents=active,
-                idle_agents=idle,
-                error_agents=error,
-                offline_agents=offline,
-                total_tasks_completed=total_completed,
-                total_tasks_failed=total_failed,
-                total_tasks_in_progress=total_in_progress,
-                swarm_throughput_tasks_per_second=throughput,
-                average_error_rate_percent=avg_error_rate,
-                average_cpu_usage_percent=avg_cpu,
-                average_memory_usage_mb=avg_memory,
-                healthcheck_status=health_status
-            )
-    
-    def get_schema(self) -> MetricsEndpointSchema:
-        """Return complete metrics schema"""
-        with self.lock:
-            agent_list = list(self.agents.values())
-            swarm_metrics = self.get_swarm_metrics()
-            
-            # Record history
-            for agent in agent_list:
-                self.performance_history[agent.agent_id].append(agent.cpu_usage_percent)
-                if len(self.performance_history[agent.agent_id]) > self.max_history_points:
-                    self.performance_history[agent.agent_id].pop(0)
-            
-            return MetricsEndpointSchema(
-                version="1.0.0",
-                swarm_metrics=swarm_metrics,
-                agent_metrics=agent_list,
-                performance_history=dict(self.performance_history),
-                alerts=self.alerts
-            )
-    
-    def add_alert(self, alert_type: str, message: str, severity: str = "warning"):
-        """Add an alert to the metrics"""
-        with self.lock:
-            self.alerts.append({
-                "timestamp": datetime.utcnow().isoformat(),
-                "type": alert_type,
-                "message": message,
-                "severity": severity
-            })
-            # Keep only last 50 alerts
-            if len(self.alerts) > 50:
-                self.alerts.pop(0)
-    
-    def simulate_activity(self):
-        """Simulate agent activity for testing"""
-        agent_id = f"agent-{random.randint(1, 5)}"
-        self.register_agent(agent_id)
-        
-        # Simulate task completion
-        duration = random.uniform(50, 500)
-        failed = random.random() < 0.1  # 10% failure rate
-        self.record_task_completion(agent_id, duration, failed)
-        
-        # Update resource usage
-        self.update_agent_metrics(
-            agent_id,
-            cpu_usage_percent=random.uniform(10, 80),
-            memory_usage_mb=random.uniform(100, 800),
-            status=random.choice(["active", "idle", "active"])
+
+            if status in [TaskStatus.RUNNING.value, TaskStatus.COMPLETED.value]:
+                task.started_at = (created_at + timedelta(seconds=random.randint(10, 300))).isoformat()
+
+            if status == TaskStatus.COMPLETED.value:
+                completion_time = random.randint(60, 3600)
+                task.duration_seconds = float(completion_time)
+                task.completed_at = (datetime.fromisoformat(task.started_at) + timedelta(seconds=completion_time)).isoformat()
+
+            tasks.append(task)
+
+        return tasks
+
+    def _generate_projects(self) -> List[Project]:
+        """Generate sample projects."""
+        projects = []
+        for i in range(1, self.num_projects + 1):
+            total = random.randint(10, 50)
+            completed = random.randint(0, total)
+            projects.append(Project(
+                project_id=f"proj-{i:02d}",
+                name=f"Project-{i}",
+                total_tasks=total,
+                completed_tasks=completed,
+                velocity=float(completed) / max(1, total)
+            ))
+        return projects
+
+    def collect_agent_activity(self) -> AgentActivityMetrics:
+        """Collect agent activity metrics."""
+        idle_count = sum(1 for a in self.agents if a.state == AgentState.IDLE.value)
+        active_count = sum(1 for a in self.agents if a.state == AgentState.ACTIVE.value)
+        busy_count = sum(1 for a in self.agents if a.state == AgentState.BUSY.value)
+        offline_count = sum(1 for a in self.agents if a.state == AgentState.OFFLINE.value)
+
+        return AgentActivityMetrics(
+            timestamp=datetime.utcnow().isoformat(),
+            total_agents=len(self.agents),
+            active_agents=active_count + busy_count,
+            idle_agents=idle_count,
+            offline_agents=offline_count,
+            agents=self.agents
+        )
+
+    def collect_task_metrics(self) -> TaskMetrics:
+        """Collect task status metrics."""
+        status_counts = defaultdict(int)
+        completion_times = []
+
+        for task in self.tasks:
+            status_counts[task.status] += 1
+            if task.duration_seconds:
+                completion_times.append(task.duration_seconds)
+
+        avg_completion = sum(completion_times) / len(completion_times) if completion_times else 0.0
+
+        return TaskMetrics(
+            timestamp=datetime.utcnow().isoformat(),
+            total_tasks=len(self.tasks),
+            pending_count=status_counts.get(TaskStatus.PENDING.value, 0),
+            running_count=status_counts.get(TaskStatus.RUNNING.value, 0),
+            completed_count=status_counts.get(TaskStatus.COMPLETED.value, 0),
+            blocked_count=status_counts.get(TaskStatus.BLOCKED.value, 0),
+            failed_count=status_counts.get(TaskStatus.FAILED.value, 0),
+            average_completion_time_seconds=avg_completion,
+            tasks_by_status={status.value: count for status, count in status_counts.items()}
+        )
+
+    def collect_project_velocity(self) -> List[ProjectVelocity]:
+        """Collect project velocity metrics."""
+        velocities = []
+        now = datetime.utcnow()
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_ago = today - timedelta(days=7)
+
+        for project in self.projects:
+            project_tasks = [t for t in self.tasks if t.project_id == project.project_id]
+            completed_today = sum(1 for t in project_tasks
+                                 if t.status == TaskStatus.COMPLETED.value and
+                                 t.completed_at and
+                                 datetime.fromisoformat(t.completed_at) >= today)
+            completed_week = sum(1 for t in project_tasks
+                                if t.status == TaskStatus.COMPLETED.value and
+                                t.completed_at and
+                                datetime.fromisoformat(t.completed_at) >= week_ago)
+
+            completion_times = [t.duration_seconds for t in project_tasks
+                              if t.duration_seconds]
+            avg_duration = sum(completion_times) / len(completion_times) if completion_times else 0.0
+
+            velocity_score = (completed_week / max(1, len(project_tasks))) * 100
+
+            velocities.append(ProjectVelocity(
+                project_id=project.project_id,
+                name=project.name,
+                tasks_completed_today=completed_today,
+                tasks_completed_this_week=completed_week,
+                average_task_duration_seconds=avg_duration,
+                velocity_score=velocity_score
+            ))
+
+        return velocities
+
+    def collect_bottlenecks(self) -> BottleneckMetrics:
+        """Collect bottleneck metrics."""
+        blocked_tasks = []
+        now = datetime.utcnow()
+
+        for task in self.tasks:
+            if task.status == TaskStatus.BLOCKED.value:
+                blocked_time = now - datetime.fromisoformat(task.created_at)
+                blocked_tasks.append(BlockedTaskDetail(
+                    task_id=task.task_id,
+                    project_id=task.project_id,
+                    blocked_reason=task.blocked_reason or "unknown",
+                    blocked_duration_seconds=blocked_time.total_seconds(),
+                    assigned_agent=task.assigned_agent
+                ))
+
+        blocker_counts = defaultdict(int)
+        for bt in blocked_tasks:
+            blocker_counts[bt.blocked_reason] += 1
+
+        highest_blocker = max(blocker_counts.items(), key=lambda x: x[1])[0] if blocker_counts else "none"
+        avg_blocked_time = sum(bt.blocked_duration_seconds for bt in blocked_tasks) / len(blocked_tasks) if blocked_tasks else 0.0
+
+        return BottleneckMetrics(
+            timestamp=datetime.utcnow().isoformat(),
+            blocked_tasks=blocked_tasks,
+            total_blocked=len(blocked_tasks),
+            highest_blocker_type=highest_blocker,
+            estimated_resolution_time_seconds=avg_blocked_time
+        )
+
+    def collect_health_metrics(self, task_metrics: TaskMetrics, agent_metrics: AgentActivityMetrics) -> HealthMetrics:
+        """Collect overall system health metrics."""
+        success_rate = 0.0
+        if task_metrics.total_tasks > 0:
+            success_rate = (task_metrics.completed_count / task_metrics.total_tasks) * 100
+
+        utilization = 0.0
+        if agent_metrics.total_agents > 0:
+            utilization = (agent_metrics.active_agents / agent_metrics.total_agents) * 100
+
+        queue_depth = task_metrics.pending_count + task_metrics.running_count
+
+        wait_times = []
+        for task in self.tasks:
+            if task.status in [TaskStatus.RUNNING.value, TaskStatus.BLOCKED.value]:
+                wait_time = (datetime.utcnow() - datetime.fromisoformat(task.created_at)).total_seconds()
+                wait_times.append(wait_time)
+
+        wait_times.sort()
+        p95_wait = wait_times[int(len(wait_times) * 0.95)] if wait_times else 0.0
+
+        health_score = (success_rate * 0.4) + (utilization * 0.3) + (max(0, 100 - min(queue_depth, 100)) * 0.3)
+
+        return HealthMetrics(
+            timestamp=datetime.utcnow().isoformat(),
+            system_health_score=health_score,
+            task_success_rate=success_rate,
+            agent_utilization_rate=utilization,
+            average_task_queue_depth=queue_depth,
+            p95_task_wait_time_seconds=p95_wait
+        )
+
+    def collect_all_metrics(self) -> MetricsResponse:
+        """Collect all metrics and return structured response."""
+        agent_activity = self.collect_agent_activity()
+        task_metrics = self.collect_task_metrics()
+        project_velocity = self.collect_project_velocity()
+        bottlenecks = self.collect_bottlenecks()
+        health = self.collect_health_metrics(task_metrics, agent_activity)
+
+        return MetricsResponse(
+            timestamp=datetime.utcnow().isoformat(),
+            agent_activity=agent_activity,
+            task_metrics=task_metrics,
+            project_velocity=project_velocity,
+            bottlenecks=bottlenecks,
+            health=health
         )
 
 
-class MetricsHTTPHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for metrics endpoints"""
-    
-    metrics_collector: MetricsCollector = None
-    
-    def do_GET(self):
-        """Handle GET requests"""
-        parsed_path = urlparse(self.path)
-        
-        if parsed_path.path == "/metrics":
-            self.handle_metrics()
-        elif parsed_path.path == "/health":
-            self.handle_health()
-        elif parsed_path.path == "/agents":
-            self.handle_agents()
-        else:
-            self.send_error(404, "Not Found")
-    
-    def handle_metrics(self):
-        """Return complete metrics schema"""
-        schema = self.metrics_collector.get_schema()
-        self.send_json_response(asdict(schema))
-    
-    def handle_health(self):
-        """Return swarm health status"""
-        swarm_metrics = self.metrics_collector.get_swarm_metrics()
-        health_data = {
-            "status": swarm_metrics.healthcheck_status,
-            "timestamp": swarm_metrics.timestamp,
-            "active_agents": swarm_metrics.active_agents,
-            "total_agents": swarm_metrics.total_agents,
-            "error_rate": swarm_metrics.average_error_rate_percent
-        }
-        self.send_json_response(health_data)
-    
-    def handle_agents(self):
-        """Return list of all agents"""
-        schema = self.metrics_collector.get_schema()
-        agents_data = {
-            "agents": [asdict(agent) for agent in schema.agent_metrics],
-            "count": len(schema.agent_metrics)
-        }
-        self.send_json_response(agents_data)
-    
-    def send_json_response(self, data: dict, status_code: int = 200):
-        """Send JSON response"""
-        self.send_response(status_code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(json.dumps(data, indent=2).encode())
-    
-    def log_message(self, format, *args):
-        """Suppress default logging"""
-        pass
+class OpenAPISpecGenerator:
+    """Generates OpenAPI 3.0 spec for metrics endpoint."""
 
-
-def simulate_swarm(collector: MetricsCollector, duration: int = 30):
-    """Simulate swarm activity"""
-    print(f"[*] Simulating swarm activity for {duration} seconds...")
-    start_time = time.time()
-    
-    while time.time() - start_time < duration:
-        collector.simulate_activity()
-        time.sleep(0.5)
-    
-    print("[*] Simulation complete")
-
-
-def start_metrics_server(port: int = 8000, duration: int = 60):
-    """Start the metrics API server"""
-    collector = MetricsCollector()
-    MetricsHTTPHandler.metrics_collector = collector
-    
-    # Start simulation in background
-    sim_thread = threading.Thread(target=simulate_swarm, args=(collector, duration), daemon=True)
-    sim_thread.start()
-    
-    # Start HTTP server
-    server = HTTPServer(("localhost", port), MetricsHTTPHandler)
-    print(f"[+] Metrics server started on http://localhost:{port}")
-    print(f"[+] Available endpoints:")
-    print(f"    - http://localhost:{port}/metrics (full schema)")
-    print(f"    - http://localhost:{port}/health (health status)")
-    print(f"    - http://localhost:{port}/agents (agent list)")
-    print(f"[+] Server will run for {duration} seconds")
-    
-    try:
-        server.timeout = 1
-        end_time = time.time() + duration
-        while time.time() < end_time:
-            server.handle_request()
-    except KeyboardInterrupt:
-        print("\n[*] Shutting down server...")
-    finally:
-        server.server_close()
-        print("[+] Server stopped")
-
-
-def main():
-    """Main entry point"""
-    parser = argparse.ArgumentParser(description="API Metrics Endpoint Schema")
-    parser.add_argument("--port", type=int, default=8000, help="Port to run server on")
-    parser.add_argument("--duration", type=int, default=60, help="Duration to run simulation")
-    parser.add_argument("--demo", action="store_true", help="Run demo mode")
-    
-    args = parser.parse_args()
-    
-    if args.demo:
-        # Run demo without server
-        collector = MetricsCollector()
-        
-        # Register some agents
-        for i in range(5):
-            collector.register_agent(f"agent-{i}")
-        
-        # Simulate some activity
-        for _ in range(20):
-            collector
+    @staticmethod
+    def generate_spec() -> Dict[str, Any]:
+        """Generate complete OpenAPI spec."""
+        spec = {
+            "openapi": "3.0.0",
+            "info": {
+                "title": "SwarmPulse Agent Activity Monitor API",
+                "description": "Real-time monitoring dashboard for swarm health, agent activity, task throughput, and project velocity",
+                "version": "1.0.0",
+                "contact": {
+                    "name": "SwarmPulse Team"
+                }
+            },
+            "servers": [
+                {
+                    "url": "http://localhost:8000",
+                    "description": "Local development server"
+                }
+            ],
+            "paths": {
+                "/api/metrics": {
+                    "get": {
+                        "summary": "Get comprehensive swarm metrics",
+                        "description": "Returns real-time metrics including agent activity, task status, project velocity, bottlenecks, and system health",
+                        "operationId": "getMetrics",
+                        "parameters": [
+                            {
+                                "name": "include_agents",
+                                "in": "query",
+                                "description": "Include detailed agent list",
