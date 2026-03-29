@@ -1,428 +1,413 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────
-# Task:    OAuth 2.0 Implementation Audit
+# Task:    OAuth 2.0 implementation audit
 # Mission: API Authentication Bypass Detector
-# Agent:   @sue
-# Date:    2026-03-29T13:08:38.499Z
+# Agent:   @clio
+# Date:    2026-03-29T13:17:47.453Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 OAuth 2.0 Implementation Audit
-API Authentication Bypass Detector
-@sue agent, SwarmPulse network
-2024-01-15
+Mission: API Authentication Bypass Detector
+Agent: @clio
+Date: 2024
 """
 
-import json
 import argparse
-import sys
+import json
 import re
-import base64
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Any
-from dataclasses import dataclass, asdict
-from urllib.parse import urlparse, parse_qs
+import sys
 import hashlib
 import hmac
-
-
-@dataclass
-class AuditFinding:
-    service_name: str
-    vulnerability_type: str
-    severity: str
-    details: str
-    endpoint: str
-    timestamp: str
-    remediation: str
-
-
-@dataclass
-class ServiceConfig:
-    name: str
-    token_endpoint: str
-    authorize_endpoint: str
-    userinfo_endpoint: str
-    revoke_endpoint: str
-    client_id: str
-    client_secret: str
-    redirect_uri: str
-
-
-class JWTAnalyzer:
-    """Analyzes JWT tokens for security issues."""
-    
-    def __init__(self):
-        self.findings = []
-    
-    def decode_jwt_part(self, part: str) -> Dict[str, Any]:
-        """Decode JWT header or payload without verification."""
-        try:
-            padding = 4 - len(part) % 4
-            if padding != 4:
-                part += '=' * padding
-            decoded = base64.urlsafe_b64decode(part)
-            return json.loads(decoded)
-        except Exception:
-            return {}
-    
-    def analyze_token(self, token: str, service_name: str) -> List[AuditFinding]:
-        """Analyze JWT token for vulnerabilities."""
-        findings = []
-        
-        parts = token.split('.')
-        if len(parts) != 3:
-            findings.append(AuditFinding(
-                service_name=service_name,
-                vulnerability_type="Invalid JWT Format",
-                severity="HIGH",
-                details="Token does not have 3 parts (header.payload.signature)",
-                endpoint="token_endpoint",
-                timestamp=datetime.now().isoformat(),
-                remediation="Ensure proper JWT format with header, payload, and signature"
-            ))
-            return findings
-        
-        header = self.decode_jwt_part(parts[0])
-        payload = self.decode_jwt_part(parts[1])
-        
-        if header.get('alg') == 'none':
-            findings.append(AuditFinding(
-                service_name=service_name,
-                vulnerability_type="JWT Algorithm Confusion (alg:none)",
-                severity="CRITICAL",
-                details="JWT uses 'none' algorithm allowing signature bypass",
-                endpoint="token_endpoint",
-                timestamp=datetime.now().isoformat(),
-                remediation="Set explicit algorithm (RS256/HS256) in token generation"
-            ))
-        
-        if header.get('alg') not in ['RS256', 'HS256', 'HS512', 'RS512']:
-            findings.append(AuditFinding(
-                service_name=service_name,
-                vulnerability_type="Weak JWT Algorithm",
-                severity="HIGH",
-                details=f"JWT uses weak algorithm: {header.get('alg')}",
-                endpoint="token_endpoint",
-                timestamp=datetime.now().isoformat(),
-                remediation="Use asymmetric algorithms (RS256) or strong HMAC (HS512)"
-            ))
-        
-        if 'exp' not in payload:
-            findings.append(AuditFinding(
-                service_name=service_name,
-                vulnerability_type="Missing Token Expiration",
-                severity="HIGH",
-                details="JWT token does not include expiration claim (exp)",
-                endpoint="token_endpoint",
-                timestamp=datetime.now().isoformat(),
-                remediation="Add 'exp' claim with appropriate TTL (15-60 minutes for access tokens)"
-            ))
-        else:
-            try:
-                exp_time = payload['exp']
-                if exp_time > datetime.now().timestamp() + 86400:
-                    findings.append(AuditFinding(
-                        service_name=service_name,
-                        vulnerability_type="Excessive Token Lifetime",
-                        severity="MEDIUM",
-                        details=f"Token expiration exceeds 24 hours",
-                        endpoint="token_endpoint",
-                        timestamp=datetime.now().isoformat(),
-                        remediation="Reduce token TTL to 15-60 minutes"
-                    ))
-            except (TypeError, ValueError):
-                pass
-        
-        if 'iat' not in payload:
-            findings.append(AuditFinding(
-                service_name=service_name,
-                vulnerability_type="Missing Issued-At Claim",
-                severity="MEDIUM",
-                details="JWT token does not include issued-at claim (iat)",
-                endpoint="token_endpoint",
-                timestamp=datetime.now().isoformat(),
-                remediation="Include 'iat' claim for token age validation"
-            ))
-        
-        return findings
+import base64
+from datetime import datetime
+from urllib.parse import urlparse, parse_qs
+from typing import Dict, List, Tuple, Any, Optional
 
 
 class OAuth2Auditor:
-    """Comprehensive OAuth 2.0 security auditor."""
+    """Comprehensive OAuth 2.0 implementation audit scanner."""
     
-    def __init__(self, config_file: str = None):
-        self.services: List[ServiceConfig] = []
-        self.findings: List[AuditFinding] = []
-        self.jwt_analyzer = JWTAnalyzer()
-        
-        if config_file:
-            self.load_config(config_file)
+    def __init__(self, verbose: bool = False):
+        self.verbose = verbose
+        self.findings: List[Dict[str, Any]] = []
+        self.severity_levels = {
+            "CRITICAL": 4,
+            "HIGH": 3,
+            "MEDIUM": 2,
+            "LOW": 1,
+            "INFO": 0
+        }
     
-    def load_config(self, config_file: str):
-        """Load service configurations from JSON file."""
-        try:
-            with open(config_file, 'r') as f:
-                data = json.load(f)
-                for service in data.get('services', []):
-                    self.services.append(ServiceConfig(**service))
-        except FileNotFoundError:
-            print(f"Config file not found: {config_file}", file=sys.stderr)
+    def log(self, message: str):
+        if self.verbose:
+            print(f"[DEBUG] {message}")
     
-    def add_service(self, service: ServiceConfig):
-        """Add a service configuration for auditing."""
-        self.services.append(service)
+    def add_finding(self, severity: str, finding_type: str, description: str, 
+                   remediation: str, endpoint: str = ""):
+        """Record a security finding."""
+        self.findings.append({
+            "severity": severity,
+            "type": finding_type,
+            "description": description,
+            "remediation": remediation,
+            "endpoint": endpoint,
+            "timestamp": datetime.now().isoformat()
+        })
+        self.log(f"Found {severity}: {finding_type}")
     
-    def audit_token_leakage(self, service: ServiceConfig) -> List[AuditFinding]:
-        """Check for token leakage vulnerabilities."""
-        findings = []
+    def audit_client_registration(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Audit OAuth 2.0 client registration endpoint."""
+        results = {
+            "endpoint": config.get("registration_endpoint", ""),
+            "issues": []
+        }
         
-        if not service.token_endpoint.startswith('https'):
-            findings.append(AuditFinding(
-                service_name=service.name,
-                vulnerability_type="Token Endpoint Not HTTPS",
-                severity="CRITICAL",
-                details=f"Token endpoint uses insecure protocol: {service.token_endpoint}",
-                endpoint="token_endpoint",
-                timestamp=datetime.now().isoformat(),
-                remediation="Use HTTPS for all OAuth 2.0 endpoints"
-            ))
+        # Check for open registration (no authentication required)
+        if config.get("registration_requires_auth") is False:
+            self.add_finding(
+                "HIGH",
+                "OPEN_CLIENT_REGISTRATION",
+                "Client registration endpoint allows unauthenticated registration",
+                "Require authentication or implement CAPTCHA/approval workflow for client registration",
+                config.get("registration_endpoint", "")
+            )
+            results["issues"].append("Open client registration enabled")
         
-        if service.client_secret in service.redirect_uri:
-            findings.append(AuditFinding(
-                service_name=service.name,
-                vulnerability_type="Client Secret in Redirect URI",
-                severity="CRITICAL",
-                details="Client secret exposed in redirect URI",
-                endpoint="authorize_endpoint",
-                timestamp=datetime.now().isoformat(),
-                remediation="Never include client_secret in redirect_uri"
-            ))
+        # Check for client secret handling
+        if config.get("client_secret_in_url") is True:
+            self.add_finding(
+                "CRITICAL",
+                "CLIENT_SECRET_EXPOSURE",
+                "Client secret transmitted in URL parameters",
+                "Always transmit client credentials via request body with POST method",
+                config.get("registration_endpoint", "")
+            )
+            results["issues"].append("Client secret exposure in URL")
         
-        if 'localhost' in service.redirect_uri and ':' in service.redirect_uri:
-            port = service.redirect_uri.split(':')[-1].split('/')[0]
-            findings.append(AuditFinding(
-                service_name=service.name,
-                vulnerability_type="Localhost Redirect in Production",
-                severity="HIGH",
-                details=f"Redirect URI uses localhost:{port} - potential dev/prod mix",
-                endpoint="authorize_endpoint",
-                timestamp=datetime.now().isoformat(),
-                remediation="Remove localhost redirects from production configurations"
-            ))
+        # Check for HTTPS enforcement
+        if config.get("uses_https") is False:
+            self.add_finding(
+                "CRITICAL",
+                "UNENCRYPTED_TRANSPORT",
+                "OAuth endpoint does not use HTTPS",
+                "Enforce HTTPS/TLS 1.2+ for all OAuth endpoints",
+                config.get("registration_endpoint", "")
+            )
+            results["issues"].append("No HTTPS enforcement")
         
-        return findings
+        # Check for redirect URI validation
+        if config.get("redirect_uri_validation") == "none":
+            self.add_finding(
+                "CRITICAL",
+                "REDIRECT_URI_VALIDATION_MISSING",
+                "No redirect URI validation performed",
+                "Implement strict whitelist-based redirect URI validation",
+                config.get("registration_endpoint", "")
+            )
+            results["issues"].append("Missing redirect URI validation")
+        elif config.get("redirect_uri_validation") == "loose":
+            self.add_finding(
+                "HIGH",
+                "REDIRECT_URI_VALIDATION_LOOSE",
+                "Redirect URI validation uses loose matching (wildcard, suffix matching)",
+                "Implement exact matching for redirect URIs with full domain validation",
+                config.get("registration_endpoint", "")
+            )
+            results["issues"].append("Loose redirect URI validation")
+        
+        return results
     
-    def audit_scope_validation(self, service: ServiceConfig) -> List[AuditFinding]:
-        """Audit scope validation and authorization."""
-        findings = []
+    def audit_authorization_endpoint(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Audit OAuth 2.0 authorization endpoint."""
+        results = {
+            "endpoint": config.get("authorization_endpoint", ""),
+            "issues": []
+        }
         
-        critical_scopes = ['admin', 'root', 'superuser', 'write:all', 'read:all', '*']
+        # Check for response_type parameter manipulation
+        if config.get("validates_response_type") is False:
+            self.add_finding(
+                "MEDIUM",
+                "INVALID_RESPONSE_TYPE_ACCEPTED",
+                "Authorization endpoint accepts invalid response_type values",
+                "Validate response_type against registered values (code, token, id_token, etc.)",
+                config.get("authorization_endpoint", "")
+            )
+            results["issues"].append("Invalid response_type not rejected")
         
-        for scope in critical_scopes:
-            if scope in service.client_id.lower():
-                findings.append(AuditFinding(
-                    service_name=service.name,
-                    vulnerability_type="Overly Permissive Scope",
-                    severity="HIGH",
-                    details=f"Service configuration includes dangerous scope pattern: {scope}",
-                    endpoint="authorize_endpoint",
-                    timestamp=datetime.now().isoformat(),
-                    remediation="Use principle of least privilege - request only needed scopes"
-                ))
+        # Check for PKCE enforcement
+        if config.get("pkce_required") is False and config.get("pkce_supported") is True:
+            self.add_finding(
+                "HIGH",
+                "PKCE_NOT_ENFORCED",
+                "PKCE not enforced for public clients (browser/mobile)",
+                "Enforce PKCE (RFC 7636) for all public client flows",
+                config.get("authorization_endpoint", "")
+            )
+            results["issues"].append("PKCE not enforced")
         
-        findings.append(AuditFinding(
-            service_name=service.name,
-            vulnerability_type="Scope Validation Required",
-            severity="MEDIUM",
-            details="Verify that scopes are properly validated on token generation",
-            endpoint="token_endpoint",
-            timestamp=datetime.now().isoformat(),
-            remediation="Validate requested scopes against allowed scopes per user/client"
-        ))
+        # Check for state parameter validation
+        if config.get("validates_state") is False:
+            self.add_finding(
+                "CRITICAL",
+                "STATE_PARAMETER_NOT_VALIDATED",
+                "State parameter not validated or enforcement optional",
+                "Validate state parameter in authorization response; make it mandatory",
+                config.get("authorization_endpoint", "")
+            )
+            results["issues"].append("State parameter not validated")
         
-        return findings
+        # Check for state parameter strength
+        if config.get("state_length_minimum", 0) < 20:
+            self.add_finding(
+                "MEDIUM",
+                "WEAK_STATE_PARAMETER",
+                "State parameter minimum length less than 20 bytes",
+                "Enforce minimum 32-byte cryptographically random state values",
+                config.get("authorization_endpoint", "")
+            )
+            results["issues"].append("Weak state parameter enforcement")
+        
+        # Check for implicit flow usage
+        if config.get("allows_implicit_flow") is True:
+            self.add_finding(
+                "HIGH",
+                "IMPLICIT_FLOW_ENABLED",
+                "Implicit grant flow is enabled and allowed",
+                "Disable implicit flow; use authorization code flow with PKCE instead",
+                config.get("authorization_endpoint", "")
+            )
+            results["issues"].append("Implicit flow enabled")
+        
+        # Check for form_post response mode
+        if config.get("form_post_response_mode_default") is True:
+            results["issues"].append("Form POST response mode enabled (security check)")
+        
+        return results
     
-    def audit_refresh_token_security(self, service: ServiceConfig) -> List[AuditFinding]:
-        """Audit refresh token handling."""
-        findings = []
+    def audit_token_endpoint(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Audit OAuth 2.0 token endpoint."""
+        results = {
+            "endpoint": config.get("token_endpoint", ""),
+            "issues": []
+        }
         
-        if not service.revoke_endpoint.startswith('https'):
-            findings.append(AuditFinding(
-                service_name=service.name,
-                vulnerability_type="Insecure Revoke Endpoint",
-                severity="HIGH",
-                details="Token revoke endpoint does not use HTTPS",
-                endpoint="revoke_endpoint",
-                timestamp=datetime.now().isoformat(),
-                remediation="Use HTTPS for revoke endpoint"
-            ))
+        # Check for token endpoint authentication
+        if config.get("token_endpoint_auth_required") is False:
+            self.add_finding(
+                "HIGH",
+                "TOKEN_ENDPOINT_NO_AUTH",
+                "Token endpoint does not require client authentication",
+                "Require client authentication (client_secret, mTLS, or signed JWT) at token endpoint",
+                config.get("token_endpoint", "")
+            )
+            results["issues"].append("No token endpoint authentication")
         
-        findings.append(AuditFinding(
-            service_name=service.name,
-            vulnerability_type="Refresh Token Rotation Not Verified",
-            severity="MEDIUM",
-            details="Refresh token rotation policy not confirmed",
-            endpoint="token_endpoint",
-            timestamp=datetime.now().isoformat(),
-            remediation="Implement refresh token rotation - issue new token with each refresh"
-        ))
+        # Check for client authentication methods
+        auth_methods = config.get("token_endpoint_auth_methods", [])
+        if "client_secret_basic" not in auth_methods and "client_secret_post" in auth_methods:
+            self.add_finding(
+                "MEDIUM",
+                "WEAK_CLIENT_AUTH_METHOD",
+                "Only client_secret_post method supported (client_secret_basic more secure)",
+                "Support client_secret_basic as primary method; only use _post as fallback",
+                config.get("token_endpoint", "")
+            )
+            results["issues"].append("Weak client authentication method")
         
-        findings.append(AuditFinding(
-            service_name=service.name,
-            vulnerability_type="Refresh Token Storage Not Verified",
-            severity="HIGH",
-            details="Refresh tokens must be stored securely with limited access",
-            endpoint="token_endpoint",
-            timestamp=datetime.now().isoformat(),
-            remediation="Store refresh tokens in secure storage, use RBAC for database access"
-        ))
+        # Check for client_secret plaintext storage (conceptual)
+        if config.get("client_secret_hashed") is False:
+            self.add_finding(
+                "CRITICAL",
+                "CLIENT_SECRET_PLAINTEXT_STORAGE",
+                "Client secrets stored in plaintext in database",
+                "Hash all client secrets using bcrypt/scrypt with salt before storage",
+                config.get("token_endpoint", "")
+            )
+            results["issues"].append("Client secrets not hashed")
         
-        findings.append(AuditFinding(
-            service_name=service.name,
-            vulnerability_type="Refresh Token TTL Not Verified",
-            severity="MEDIUM",
-            details="Refresh token lifetime needs validation",
-            endpoint="token_endpoint",
-            timestamp=datetime.now().isoformat(),
-            remediation="Set refresh token TTL to days/weeks, not years"
-        ))
+        # Check for token expiration
+        if config.get("access_token_expires_seconds", 0) > 3600:
+            self.add_finding(
+                "MEDIUM",
+                "LONG_TOKEN_LIFETIME",
+                "Access token lifetime exceeds 1 hour",
+                "Reduce access token lifetime to 15-60 minutes based on use case",
+                config.get("token_endpoint", "")
+            )
+            results["issues"].append("Long token lifetime")
         
-        return findings
+        # Check for refresh token rotation
+        if config.get("refresh_token_rotation") is False:
+            self.add_finding(
+                "MEDIUM",
+                "NO_REFRESH_TOKEN_ROTATION",
+                "Refresh tokens not rotated on use",
+                "Implement refresh token rotation to limit compromise window",
+                config.get("token_endpoint", "")
+            )
+            results["issues"].append("No refresh token rotation")
+        
+        # Check for refresh token expiration
+        if config.get("refresh_token_expires_seconds", float('inf')) == float('inf'):
+            self.add_finding(
+                "HIGH",
+                "REFRESH_TOKEN_NO_EXPIRATION",
+                "Refresh tokens do not expire",
+                "Set refresh token expiration to 7-30 days or implement absolute timeout",
+                config.get("token_endpoint", "")
+            )
+            results["issues"].append("Refresh token never expires")
+        
+        return results
     
-    def audit_idor_risks(self, service: ServiceConfig) -> List[AuditFinding]:
-        """Audit IDOR (Insecure Direct Object Reference) risks."""
-        findings = []
+    def audit_resource_server(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Audit OAuth 2.0 resource server implementation."""
+        results = {
+            "endpoint": config.get("resource_endpoint", ""),
+            "issues": []
+        }
         
-        findings.append(AuditFinding(
-            service_name=service.name,
-            vulnerability_type="IDOR Risk - User Context Validation",
-            severity="HIGH",
-            details="Verify that userinfo endpoint validates user context for token",
-            endpoint="userinfo_endpoint",
-            timestamp=datetime.now().isoformat(),
-            remediation="Validate that token's 'sub' claim matches requested resource owner"
-        ))
+        # Check for token validation
+        if config.get("validates_token_signature") is False:
+            self.add_finding(
+                "CRITICAL",
+                "TOKEN_SIGNATURE_NOT_VALIDATED",
+                "Resource server does not validate token signature",
+                "Always validate JWT signature using provider's public key",
+                config.get("resource_endpoint", "")
+            )
+            results["issues"].append("Token signature not validated")
         
-        if 'user' in service.userinfo_endpoint or 'profile' in service.userinfo_endpoint:
-            findings.append(AuditFinding(
-                service_name=service.name,
-                vulnerability_type="Potential IDOR in Path",
-                severity="HIGH",
-                details=f"Userinfo endpoint path may be vulnerable to ID manipulation: {service.userinfo_endpoint}",
-                endpoint="userinfo_endpoint",
-                timestamp=datetime.now().isoformat(),
-                remediation="Use token claims for identification, not path parameters"
-            ))
+        # Check for token expiration validation
+        if config.get("validates_token_expiration") is False:
+            self.add_finding(
+                "CRITICAL",
+                "TOKEN_EXPIRATION_NOT_VALIDATED",
+                "Resource server does not validate token expiration",
+                "Always check 'exp' claim and reject expired tokens",
+                config.get("resource_endpoint", "")
+            )
+            results["issues"].append("Token expiration not validated")
         
-        return findings
+        # Check for scope validation
+        if config.get("validates_token_scope") is False:
+            self.add_finding(
+                "HIGH",
+                "SCOPE_NOT_VALIDATED",
+                "Resource server does not validate token scope",
+                "Validate 'scope' claim matches required scopes for requested resource",
+                config.get("resource_endpoint", "")
+            )
+            results["issues"].append("Scope not validated")
+        
+        # Check for token binding
+        if config.get("supports_token_binding") is False:
+            results["issues"].append("Token binding not supported (informational)")
+        
+        # Check for revocation endpoint
+        if config.get("has_revocation_endpoint") is False:
+            self.add_finding(
+                "MEDIUM",
+                "NO_REVOCATION_ENDPOINT",
+                "No token revocation endpoint available",
+                "Implement RFC 7009 token revocation endpoint for user logout",
+                config.get("resource_endpoint", "")
+            )
+            results["issues"].append("No revocation endpoint")
+        
+        return results
     
-    def audit_mass_assignment_risks(self, service: ServiceConfig) -> List[AuditFinding]:
-        """Audit mass assignment vulnerability risks."""
-        findings = []
+    def audit_jwt_handling(self, token_samples: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Audit JWT token construction and validation."""
+        results = {
+            "tokens_analyzed": len(token_samples),
+            "issues": []
+        }
         
-        findings.append(AuditFinding(
-            service_name=service.name,
-            vulnerability_type="Mass Assignment Risk",
-            severity="MEDIUM",
-            details="Verify token response only includes necessary claims",
-            endpoint="token_endpoint",
-            timestamp=datetime.now().isoformat(),
-            remediation="Whitelist token response fields, reject unexpected claims"
-        ))
+        for idx, token_data in enumerate(token_samples):
+            # Check for algorithm verification bypass (alg: none)
+            if token_data.get("algorithm") == "none":
+                self.add_finding(
+                    "CRITICAL",
+                    "JWT_ALG_NONE_ACCEPTED",
+                    f"JWT token {idx} uses 'none' algorithm",
+                    "Reject 'alg: none' tokens; validate algorithm against whitelist",
+                    f"token_{idx}"
+                )
+                results["issues"].append(f"Token {idx}: alg=none vulnerability")
+            
+            # Check for weak algorithm
+            if token_data.get("algorithm", "").startswith("HS"):
+                self.add_finding(
+                    "MEDIUM",
+                    "WEAK_JWT_ALGORITHM",
+                    f"JWT token {idx} uses HMAC-based algorithm (HS256/HS384/HS512)",
+                    "Use RSA (RS256+) or EC (ES256+) algorithms for asymmetric verification",
+                    f"token_{idx}"
+                )
+                results["issues"].append(f"Token {idx}: weak HMAC algorithm")
+            
+            # Check for missing header validation
+            if "algorithm" not in token_data or "typ" not in token_data:
+                self.add_finding(
+                    "HIGH",
+                    "JWT_HEADER_VALIDATION_WEAK",
+                    f"JWT token {idx} missing algorithm or type validation",
+                    "Validate and enforce JWT headers; set alg whitelist",
+                    f"token_{idx}"
+                )
+                results["issues"].append(f"Token {idx}: weak header validation")
+            
+            # Check for critical claims
+            payload = token_data.get("payload", {})
+            required_claims = {"iss", "sub", "aud", "exp"}
+            missing_claims = required_claims - set(payload.keys())
+            
+            if missing_claims:
+                self.add_finding(
+                    "HIGH",
+                    "JWT_MISSING_CLAIMS",
+                    f"JWT token {idx} missing claims: {missing_claims}",
+                    f"Include all required claims: {required_claims}",
+                    f"token_{idx}"
+                )
+                results["issues"].append(f"Token {idx}: missing claims {missing_claims}")
         
-        findings.append(AuditFinding(
-            service_name=service.name,
-            vulnerability_type="Missing Response Type Validation",
-            severity="MEDIUM",
-            details="Verify response_type parameter is strictly validated",
-            endpoint="authorize_endpoint",
-            timestamp=datetime.now().isoformat(),
-            remediation="Only accept 'code' or 'token' (not 'code token'), reject unknown types"
-        ))
-        
-        return findings
+        return results
     
-    def audit_pkce_compliance(self, service: ServiceConfig) -> List[AuditFinding]:
-        """Audit PKCE (Proof Key for Public Clients) compliance."""
-        findings = []
+    def audit_scope_handling(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Audit OAuth 2.0 scope handling and principle of least privilege."""
+        results = {
+            "scope_model": config.get("scope_model", "unknown"),
+            "issues": []
+        }
         
-        findings.append(AuditFinding(
-            service_name=service.name,
-            vulnerability_type="PKCE Not Verified",
-            severity="HIGH",
-            details="Public clients must use PKCE for authorization code flow",
-            endpoint="authorize_endpoint",
-            timestamp=datetime.now().isoformat(),
-            remediation="Require code_challenge and code_verifier for all public clients"
-        ))
+        # Check for overly broad default scopes
+        default_scopes = config.get("default_scopes", [])
+        if not default_scopes or len(default_scopes) == 0:
+            self.add_finding(
+                "MEDIUM",
+                "NO_DEFAULT_SCOPE",
+                "No default scope specified; uses all requested scopes",
+                "Define minimal default scope; require explicit user consent for expanded scopes",
+                ""
+            )
+            results["issues"].append("No default scope defined")
         
-        return findings
-    
-    def audit_state_parameter(self, service: ServiceConfig) -> List[AuditFinding]:
-        """Audit state parameter handling."""
-        findings = []
+        defined_scopes = config.get("defined_scopes", {})
+        for scope_name, scope_desc in defined_scopes.items():
+            if len(scope_name) > 50:
+                results["issues"].append(f"Scope '{scope_name}' excessively permissive")
         
-        findings.append(AuditFinding(
-            service_name=service.name,
-            vulnerability_type="CSRF Protection via State Parameter",
-            severity="MEDIUM",
-            details="Verify state parameter is cryptographically random and validated",
-            endpoint="authorize_endpoint",
-            timestamp=datetime.now().isoformat(),
-            remediation="Generate random state, store in session, validate on callback"
-        ))
-        
-        return findings
-    
-    def audit_client_authentication(self, service: ServiceConfig) -> List[AuditFinding]:
-        """Audit client authentication mechanisms."""
-        findings = []
-        
-        if len(service.client_secret) < 32:
-            findings.append(AuditFinding(
-                service_name=service.name,
-                vulnerability_type="Weak Client Secret",
-                severity="HIGH",
-                details=f"Client secret too short ({len(service.client_secret)} chars, need 32+)",
-                endpoint="token_endpoint",
-                timestamp=datetime.now().isoformat(),
-                remediation="Use cryptographically random secrets of 32+ characters"
-            ))
-        
-        findings.append(AuditFinding(
-            service_name=service.name,
-            vulnerability_type="Client Authentication Method Not Verified",
-            severity="MEDIUM",
-            details="Verify client_secret_basic or client_secret_post is used, not query param",
-            endpoint="token_endpoint",
-            timestamp=datetime.now().isoformat(),
-                remediation="Use HTTP Basic Auth (client_secret_basic) or POST body, never query params"
-        ))
-        
-        return findings
-    
-    def audit_redirect_uri_validation(self, service: ServiceConfig) -> List[AuditFinding]:
-        """Audit redirect URI validation."""
-        findings = []
-        
-        if '*' in service.redirect_uri:
-            findings.append(AuditFinding(
-                service_name=service.name,
-                vulnerability_type="Overly Permissive Redirect URI",
-                severity="CRITICAL",
-                details="Redirect URI contains wildcard pattern",
-                endpoint="authorize_endpoint",
-                timestamp=datetime.now().isoformat(),
-                remediation="Use exact redirect URI match, never wildcards"
-            ))
-        
-        if 'http://' in service.redirect_uri and 'localhost' not in service.redirect_uri:
-            findings.append(AuditFinding(
-                service_name=service.name,
-                vulnerability_type="Non-HTTPS Redirect URI",
-                severity="CRITICAL",
-                details="Redirect URI uses insecure HTTP for non-localhost",
-                endpoint="authorize_endpoint",
-                timestamp=datetime.now().
+        # Check for scope granularity
+        scope_count = len(defined_scopes)
+        if scope_count < 5:
+            self.add_finding(
+                "MEDIUM",
+                "INSUFFICIENT_SCOPE_GRANULARITY",
+                f"Only {scope_count} scopes defined; insufficient granularity",
+                "Implement fine-grained scopes for different API operations",
+                ""
