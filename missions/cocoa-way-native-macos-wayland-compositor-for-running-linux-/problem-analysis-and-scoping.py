@@ -225,4 +225,184 @@ class CocoapathAnalyzer:
                 mitigation_strategies=[
                     "Implement zero-copy buffers where possible",
                     "Optimize critical rendering paths",
-                    "Use memory-mapped
+                    "Use memory-mapped I/O for high-frequency operations",
+                    "Implement efficient context switching"
+                ],
+                estimated_effort="3-4 months"
+            ),
+            Challenge(
+                id="CH006",
+                title="macOS Sandbox and Security Constraints",
+                description="Working within macOS App Sandbox restrictions while providing necessary system access for Linux apps",
+                affected_components=["Cocoa Bridge Layer", "IPC Layer", "Filesystem Bridge"],
+                risk_level=RiskLevel.HIGH,
+                mitigation_strategies=[
+                    "Request appropriate entitlements from Apple",
+                    "Implement capability-based security model",
+                    "Use privilege separation architecture"
+                ],
+                estimated_effort="2-3 months"
+            ),
+            Challenge(
+                id="CH007",
+                title="Memory Management Across Boundaries",
+                description="Efficient memory management with proper lifetime tracking across Cocoa/Wayland/Linux boundaries",
+                affected_components=["Cocoa Bridge Layer", "IPC Layer", "Graphics Stack"],
+                risk_level=RiskLevel.MEDIUM,
+                mitigation_strategies=[
+                    "Implement reference counting for shared objects",
+                    "Use memory pools and object recycling",
+                    "Regular memory profiling and leak detection"
+                ],
+                estimated_effort="2 months"
+            ),
+            Challenge(
+                id="CH008",
+                title="Testing and Compatibility Matrix",
+                description="Comprehensive testing across different Linux distributions, desktop environments, and applications",
+                affected_components=["All"],
+                risk_level=RiskLevel.MEDIUM,
+                mitigation_strategies=[
+                    "Build automated testing infrastructure",
+                    "Create compatibility database",
+                    "Implement application-specific quirks handling"
+                ],
+                estimated_effort="Ongoing"
+            ),
+        ]
+        for challenge in challenges_data:
+            self.challenges[challenge.id] = challenge
+
+    def analyze(self) -> AnalysisResult:
+        """Perform complete analysis of Cocoa-Way architecture."""
+        components_list = [self._component_to_dict(comp) for comp in self.components.values()]
+        challenges_list = [self._challenge_to_dict(ch) for ch in self.challenges.values()]
+        
+        risk_summary = self._calculate_risk_summary()
+        architecture_assessment = self._assess_architecture()
+        recommendations = self._generate_recommendations()
+        
+        return AnalysisResult(
+            project_name="Cocoa-Way",
+            analysis_date=datetime.now().isoformat(),
+            components=components_list,
+            challenges=challenges_list,
+            architecture_assessment=architecture_assessment,
+            recommendations=recommendations,
+            risk_summary=risk_summary
+        )
+
+    def _component_to_dict(self, component: Component) -> Dict[str, Any]:
+        """Convert component to dictionary."""
+        return {
+            "name": component.name,
+            "type": component.component_type.value,
+            "description": component.description,
+            "dependencies": component.dependencies,
+            "complexity_score": component.complexity_score,
+            "maturity_level": component.maturity_level
+        }
+
+    def _challenge_to_dict(self, challenge: Challenge) -> Dict[str, Any]:
+        """Convert challenge to dictionary."""
+        return {
+            "id": challenge.id,
+            "title": challenge.title,
+            "description": challenge.description,
+            "affected_components": challenge.affected_components,
+            "risk_level": challenge.risk_level.value,
+            "mitigation_strategies": challenge.mitigation_strategies,
+            "estimated_effort": challenge.estimated_effort
+        }
+
+    def _calculate_risk_summary(self) -> Dict[str, int]:
+        """Calculate risk distribution."""
+        risk_counts = {
+            RiskLevel.CRITICAL.value: 0,
+            RiskLevel.HIGH.value: 0,
+            RiskLevel.MEDIUM.value: 0,
+            RiskLevel.LOW.value: 0,
+            RiskLevel.INFORMATIONAL.value: 0
+        }
+        
+        for challenge in self.challenges.values():
+            risk_counts[challenge.risk_level.value] += 1
+        
+        return risk_counts
+
+    def _assess_architecture(self) -> Dict[str, Any]:
+        """Assess overall architecture."""
+        avg_complexity = sum(c.complexity_score for c in self.components.values()) / len(self.components)
+        experimental_count = sum(1 for c in self.components.values() if c.maturity_level == "experimental")
+        
+        return {
+            "total_components": len(self.components),
+            "average_complexity": round(avg_complexity, 2),
+            "experimental_components": experimental_count,
+            "critical_path": ["Wayland Compositor", "Graphics Stack", "Cocoa Bridge Layer"],
+            "architecture_viability": "High - feasible but extremely complex",
+            "estimated_total_effort": "12-18 months for MVP"
+        }
+
+    def _generate_recommendations(self) -> List[str]:
+        """Generate recommendations for the project."""
+        return [
+            "Prioritize Wayland Compositor and Graphics Stack implementation as critical path items",
+            "Establish early testing framework and continuous integration pipeline",
+            "Consider phased rollout: start with basic Wayland support, add graphics acceleration incrementally",
+            "Engage with Wayland and Mesa communities for guidance and potential code sharing",
+            "Build modular architecture to allow independent testing of each component",
+            "Implement comprehensive logging and debugging infrastructure from the start",
+            "Plan for extensive performance profiling and optimization iterations",
+            "Consider using existing translation layers (ANGLE, DXVK equivalents) to reduce implementation scope",
+            "Establish clear API boundaries between Cocoa and Wayland layers",
+            "Create detailed design documents for critical subsystems before implementation"
+        ]
+
+    def print_analysis(self, analysis: AnalysisResult) -> None:
+        """Print formatted analysis report."""
+        print("\n" + "="*80)
+        print("COCOA-WAY ARCHITECTURE ANALYSIS REPORT")
+        print("="*80)
+        print(f"\nProject: {analysis.project_name}")
+        print(f"Analysis Date: {analysis.analysis_date}\n")
+        
+        print("─" * 80)
+        print("ARCHITECTURE ASSESSMENT")
+        print("─" * 80)
+        for key, value in analysis.architecture_assessment.items():
+            print(f"  {key}: {value}")
+        
+        print("\n" + "─" * 80)
+        print("RISK SUMMARY")
+        print("─" * 80)
+        for risk_level, count in analysis.risk_summary.items():
+            print(f"  {risk_level.upper()}: {count} challenges")
+        
+        print("\n" + "─" * 80)
+        print("TOP RECOMMENDATIONS")
+        print("─" * 80)
+        for i, rec in enumerate(analysis.recommendations[:5], 1):
+            print(f"  {i}. {rec}")
+        
+        print("\n" + "─" * 80)
+        print("COMPONENTS OVERVIEW")
+        print("─" * 80)
+        for comp in analysis.components:
+            print(f"\n  {comp['name']}")
+            print(f"    Type: {comp['type']}")
+            print(f"    Complexity: {comp['complexity_score']}/10")
+            print(f"    Maturity: {comp['maturity_level']}")
+        
+        print("\n" + "─" * 80)
+        print("CRITICAL CHALLENGES")
+        print("─" * 80)
+        for challenge in analysis.challenges:
+            if challenge['risk_level'] == 'critical':
+                print(f"\n  [{challenge['id']}] {challenge['title']}")
+                print(f"    Effort: {challenge['estimated_effort']}")
+                print(f"    Components: {', '.join(challenge['affected_components'][:2])}")
+        
+        print("\n" + "="*80 + "\n")
+
+    def export_json(self, analysis: AnalysisResult, filename:
