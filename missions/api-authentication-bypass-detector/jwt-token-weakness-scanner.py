@@ -2,395 +2,378 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    JWT token weakness scanner
 # Mission: API Authentication Bypass Detector
-# Agent:   @sue
-# Date:    2026-03-29T13:11:20.404Z
+# Agent:   @clio
+# Date:    2026-03-29T13:17:20.461Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-JWT Token Weakness Scanner
+Task: JWT Token Weakness Scanner
 Mission: API Authentication Bypass Detector
-Agent: @sue
-Date: 2024-01-15
-Category: Engineering
+Agent: @clio
+Date: 2024-12-19
 
-Scans JWT tokens for weak algorithms (none/HS256 with weak keys), 
-missing expiry, and overly broad claims. Detects OWASP API Top-10 
-auth bypass patterns.
+Automated JWT vulnerability scanner that detects:
+- Unsigned/no-signature JWTs
+- Weak signing algorithms (none, HS256 with public key)
+- Expired tokens
+- Missing critical claims
+- Weak secret keys
+- Algorithm confusion attacks
 """
 
-import json
-import base64
-import sys
 import argparse
+import base64
+import hashlib
+import hmac
+import json
+import sys
+import time
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple, Any
 import re
-from datetime import datetime
-from typing import Dict, List, Tuple, Any
-from dataclasses import dataclass, asdict
-
-
-@dataclass
-class JWTVulnerability:
-    """Represents a detected JWT vulnerability."""
-    token_id: str
-    severity: str  # critical, high, medium, low
-    issue_type: str
-    description: str
-    affected_section: str
-    remediation: str
-
-
-@dataclass
-class JWTScanResult:
-    """Complete scan result for a JWT token."""
-    token: str
-    is_valid_format: bool
-    header: Dict[str, Any]
-    payload: Dict[str, Any]
-    vulnerabilities: List[JWTVulnerability]
-    warnings: List[str]
-    scan_timestamp: str
 
 
 class JWTWeaknessScanner:
-    """Scans JWT tokens for authentication bypass vulnerabilities."""
-    
-    # Weak algorithm patterns
-    WEAK_ALGORITHMS = {'none', 'HS256'}
-    WEAK_HS256_KEYSIZE_BITS = 128
-    
-    # Claims that might be overly broad
-    OVERLY_BROAD_CLAIMS = {
-        'admin': True,
-        'is_admin': True,
-        'role': 'admin',
-        'roles': ['admin', 'superuser'],
-        'permissions': '*',
-        'scope': '*'
-    }
-    
-    # PII and sensitive claim patterns
-    SENSITIVE_CLAIM_PATTERNS = [
-        'password', 'secret', 'token', 'api_key', 'apikey',
-        'credit_card', 'ssn', 'social_security', 'pin'
-    ]
-    
-    def __init__(self, strict_mode: bool = False, key_size_bits: int = 128):
-        """
-        Initialize JWT scanner.
-        
-        Args:
-            strict_mode: If True, treat warnings as vulnerabilities
-            key_size_bits: Minimum acceptable key size in bits
-        """
-        self.strict_mode = strict_mode
-        self.key_size_bits = key_size_bits
-        self.vulnerabilities: List[JWTVulnerability] = []
-        self.warnings: List[str] = []
-    
-    def scan(self, token: str) -> JWTScanResult:
-        """
-        Scan a JWT token for vulnerabilities.
-        
-        Args:
-            token: JWT token string to scan
-            
-        Returns:
-            JWTScanResult with findings
-        """
+    """Scanner for detecting JWT vulnerabilities and weaknesses."""
+
+    def __init__(self, verbose: bool = False):
+        self.verbose = verbose
         self.vulnerabilities = []
-        self.warnings = []
-        
-        result = JWTScanResult(
-            token=token,
-            is_valid_format=False,
-            header={},
-            payload={},
-            vulnerabilities=[],
-            warnings=[],
-            scan_timestamp=datetime.utcnow().isoformat()
-        )
-        
-        # Parse JWT structure
-        parts = token.split('.')
-        if len(parts) != 3:
-            self.warnings.append(f"Invalid JWT format: expected 3 parts, got {len(parts)}")
-            result.warnings = self.warnings
-            return result
-        
-        # Decode header and payload
-        try:
-            header = self._decode_jwt_part(parts[0])
-            payload = self._decode_jwt_part(parts[1])
-            
-            result.is_valid_format = True
-            result.header = header
-            result.payload = payload
-            
-        except (ValueError, json.JSONDecodeError) as e:
-            self.warnings.append(f"Failed to decode JWT: {str(e)}")
-            result.warnings = self.warnings
-            return result
-        
-        # Run vulnerability checks
-        self._check_algorithm_weakness(header, token)
-        self._check_missing_expiry(payload)
-        self._check_overly_broad_claims(payload)
-        self._check_sensitive_claims(payload)
-        self._check_no_signature(parts, header)
-        self._check_algorithm_confusion(header, payload)
-        
-        result.vulnerabilities = self.vulnerabilities
-        result.warnings = self.warnings
-        return result
-    
-    def _decode_jwt_part(self, part: str) -> Dict[str, Any]:
-        """
-        Decode a base64url-encoded JWT part.
-        
-        Args:
-            part: Base64url-encoded JWT part
-            
-        Returns:
-            Decoded JSON as dictionary
-        """
-        # Add padding if needed
-        padding = 4 - len(part) % 4
-        if padding != 4:
-            part += '=' * padding
-        
-        try:
-            decoded = base64.urlsafe_b64decode(part)
-            return json.loads(decoded.decode('utf-8'))
-        except Exception as e:
-            raise ValueError(f"Failed to decode JWT part: {str(e)}")
-    
-    def _check_algorithm_weakness(self, header: Dict, token: str):
-        """Check for weak algorithms in JWT header."""
-        alg = header.get('alg', '').upper()
-        
-        if alg == 'NONE':
-            vuln = JWTVulnerability(
-                token_id=self._get_token_id(token),
-                severity='critical',
-                issue_type='Algorithm Confusion - None Algorithm',
-                description='JWT uses "alg: none" allowing signature bypass',
-                affected_section='header.alg',
-                remediation='Use strong algorithms like RS256 or ES256 with proper key rotation'
-            )
-            self.vulnerabilities.append(vuln)
-        
-        elif alg == 'HS256':
-            self.warnings.append(
-                'HS256 (symmetric key) used - ensure key is strong and >256 bits. '
-                'Consider RS256 (asymmetric) for better security.'
-            )
-    
-    def _check_missing_expiry(self, payload: Dict):
-        """Check for missing or invalid token expiry."""
-        if 'exp' not in payload:
-            self.warnings.append(
-                'Token missing "exp" (expiry) claim - token may be valid indefinitely'
-            )
-        else:
-            exp = payload.get('exp')
-            if isinstance(exp, (int, float)):
-                current_time = datetime.utcnow().timestamp()
-                if exp > current_time + (365 * 24 * 3600):  # More than 1 year
-                    self.warnings.append(
-                        f'Token expiry is far in the future (>{365} days) - consider shorter TTL'
-                    )
-    
-    def _check_overly_broad_claims(self, payload: Dict):
-        """Check for overly permissive role/permission claims."""
-        sensitive_claims = ['role', 'roles', 'permissions', 'scope', 'admin', 'is_admin']
-        
-        for claim in sensitive_claims:
-            if claim in payload:
-                value = payload[claim]
-                
-                # Check for wildcard permissions
-                if isinstance(value, str) and value == '*':
-                    vuln = JWTVulnerability(
-                        token_id=self._get_token_id(payload),
-                        severity='high',
-                        issue_type='Overly Broad Claims',
-                        description=f'Claim "{claim}" grants wildcard permissions (*)',
-                        affected_section=f'payload.{claim}',
-                        remediation='Use principle of least privilege - grant specific permissions only'
-                    )
-                    self.vulnerabilities.append(vuln)
-                
-                # Check for admin/superuser roles
-                elif claim == 'roles' and isinstance(value, list):
-                    if 'admin' in value or 'superuser' in value:
-                        self.warnings.append(
-                            f'Token includes privileged role: {value}'
-                        )
-                elif claim == 'admin' and value is True:
-                    self.warnings.append(
-                        'Token marked as admin - verify legitimacy'
-                    )
-    
-    def _check_sensitive_claims(self, payload: Dict):
-        """Check for sensitive data embedded in claims."""
-        for claim_name in payload:
-            claim_lower = claim_name.lower()
-            
-            # Check for PII patterns
-            for pattern in self.SENSITIVE_CLAIM_PATTERNS:
-                if pattern in claim_lower:
-                    vuln = JWTVulnerability(
-                        token_id=self._get_token_id(payload),
-                        severity='high',
-                        issue_type='Sensitive Data in JWT',
-                        description=f'Claim "{claim_name}" may contain sensitive data (detected: {pattern})',
-                        affected_section=f'payload.{claim_name}',
-                        remediation='Do not embed sensitive data in JWT - use secure storage'
-                    )
-                    self.vulnerabilities.append(vuln)
-                    break
-    
-    def _check_no_signature(self, parts: List[str], header: Dict):
-        """Check if signature is empty (though alg:none check catches this)."""
-        if len(parts) == 3 and parts[2] == '':
-            # This is caught by alg:none check, but warn anyway
-            self.warnings.append('Token signature is empty')
-    
-    def _check_algorithm_confusion(self, header: Dict, payload: Dict):
-        """
-        Check for algorithm confusion vulnerabilities.
-        Detects when asymmetric algo is used but implementation might allow symmetric.
-        """
-        alg = header.get('alg', '').upper()
-        
-        # If RS256/ES256/PS256 but payload suggests it might accept HS256
-        if alg in ['RS256', 'ES256', 'PS256']:
-            # Check for suspicious claims that might indicate testing with HS256
-            if 'debug' in payload or 'test_mode' in payload:
-                self.warnings.append(
-                    f'Token uses {alg} but contains debug/test claims - '
-                    'verify this is not a test token in production'
-                )
-    
-    def _get_token_id(self, obj: Any) -> str:
-        """Generate a unique ID for the token."""
-        if isinstance(obj, str):
-            return obj[:20] + '...'
-        return 'jwt'
-    
-    def generate_report(self, results: List[JWTScanResult]) -> Dict[str, Any]:
-        """
-        Generate a comprehensive scan report.
-        
-        Args:
-            results: List of scan results
-            
-        Returns:
-            Structured report as dictionary
-        """
-        total_scanned = len(results)
-        total_vulns = sum(len(r.vulnerabilities) for r in results)
-        total_warnings = sum(len(r.warnings) for r in results)
-        
-        critical_count = sum(
-            sum(1 for v in r.vulnerabilities if v.severity == 'critical')
-            for r in results
-        )
-        high_count = sum(
-            sum(1 for v in r.vulnerabilities if v.severity == 'high')
-            for r in results
-        )
-        
-        vulnerable_tokens = [
-            {
-                'token': r.token[:50] + '...' if len(r.token) > 50 else r.token,
-                'valid_format': r.is_valid_format,
-                'vulnerabilities': [asdict(v) for v in r.vulnerabilities],
-                'warnings': r.warnings,
-                'scan_timestamp': r.scan_timestamp
-            }
-            for r in results if r.vulnerabilities
-        ]
-        
-        return {
-            'summary': {
-                'total_tokens_scanned': total_scanned,
-                'total_vulnerabilities': total_vulns,
-                'critical_count': critical_count,
-                'high_count': high_count,
-                'total_warnings': total_warnings,
-                'scan_timestamp': datetime.utcnow().isoformat()
-            },
-            'vulnerable_tokens': vulnerable_tokens,
-            'pass_rate': f"{((total_scanned - len(vulnerable_tokens)) / max(total_scanned, 1) * 100):.1f}%"
+        self.findings = {
+            "total_tokens_scanned": 0,
+            "vulnerabilities_found": 0,
+            "detailed_findings": []
         }
 
+    def log(self, message: str) -> None:
+        """Log message if verbose mode is enabled."""
+        if self.verbose:
+            print(f"[*] {message}", file=sys.stderr)
 
-def generate_test_tokens() -> List[str]:
-    """Generate sample JWT tokens for testing."""
-    import hmac
-    import hashlib
-    
-    tokens = []
-    
-    # Token 1: alg:none (CRITICAL vulnerability)
-    header_1 = base64.urlsafe_b64encode(json.dumps({'alg': 'none', 'typ': 'JWT'}).encode()).rstrip(b'=')
-    payload_1 = base64.urlsafe_b64encode(json.dumps({
-        'sub': '1234567890',
-        'name': 'John Doe',
-        'admin': True,
-        'iat': 1516239022
-    }).encode()).rstrip(b'=')
-    tokens.append(header_1.decode() + '.' + payload_1.decode() + '.')
-    
-    # Token 2: Missing expiry with wildcard permissions
-    header_2 = base64.urlsafe_b64encode(json.dumps({'alg': 'HS256', 'typ': 'JWT'}).encode()).rstrip(b'=')
-    payload_2 = base64.urlsafe_b64encode(json.dumps({
-        'sub': 'user123',
-        'permissions': '*',
-        'iat': 1516239022
-    }).encode()).rstrip(b'=')
-    sig = hmac.new(b'weak_secret', header_2 + b'.' + payload_2, hashlib.sha256).digest()
-    sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b'=').decode()
-    tokens.append(header_2.decode() + '.' + payload_2.decode() + '.' + sig_b64)
-    
-    # Token 3: Valid-looking token with far future expiry
-    future_exp = int(datetime.utcnow().timestamp()) + (730 * 24 * 3600)  # 2 years
-    header_3 = base64.urlsafe_b64encode(json.dumps({'alg': 'RS256', 'typ': 'JWT'}).encode()).rstrip(b'=')
-    payload_3 = base64.urlsafe_b64encode(json.dumps({
-        'sub': 'user456',
-        'email': 'user@example.com',
-        'exp': future_exp,
-        'iat': 1516239022
-    }).encode()).rstrip(b'=')
-    tokens.append(header_3.decode() + '.' + payload_3.decode() + '.signature_placeholder')
-    
-    # Token 4: Sensitive data in claims
-    header_4 = base64.urlsafe_b64encode(json.dumps({'alg': 'HS256', 'typ': 'JWT'}).encode()).rstrip(b'=')
-    payload_4 = base64.urlsafe_b64encode(json.dumps({
-        'sub': 'user789',
-        'password': 'SuperSecret123!',
-        'credit_card': '4111111111111111',
-        'exp': int(datetime.utcnow().timestamp()) + 3600,
-        'iat': 1516239022
-    }).encode()).rstrip(b'=')
-    sig = hmac.new(b'secret_key_123456', header_4 + b'.' + payload_4, hashlib.sha256).digest()
-    sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b'=').decode()
-    tokens.append(header_4.decode() + '.' + payload_4.decode() + '.' + sig_b64)
-    
-    return tokens
+    def decode_jwt(self, token: str) -> Optional[Tuple[Dict, Dict, str]]:
+        """Decode JWT without verification to extract claims."""
+        try:
+            parts = token.split('.')
+            if len(parts) != 3:
+                self.log(f"Invalid JWT format: expected 3 parts, got {len(parts)}")
+                return None
+
+            header_part, payload_part, signature_part = parts
+
+            # Pad if necessary
+            header_part += '=' * (4 - len(header_part) % 4)
+            payload_part += '=' * (4 - len(payload_part) % 4)
+
+            header = json.loads(base64.urlsafe_b64decode(header_part))
+            payload = json.loads(base64.urlsafe_b64decode(payload_part))
+
+            return header, payload, signature_part
+        except Exception as e:
+            self.log(f"Failed to decode JWT: {e}")
+            return None
+
+    def check_unsigned_jwt(self, header: Dict) -> Tuple[bool, str]:
+        """Check if JWT uses 'none' algorithm (unsigned)."""
+        alg = header.get('alg', '').lower()
+        if alg == 'none':
+            return True, "JWT uses 'none' algorithm - completely unsigned"
+        return False, ""
+
+    def check_weak_algorithm(self, header: Dict) -> Tuple[bool, str]:
+        """Check for weak or deprecated signing algorithms."""
+        alg = header.get('alg', '').lower()
+        weak_algs = ['hs256', 'hs384', 'hs512', 'none']
+        deprecated_algs = ['hs256', 'hs384', 'hs512']
+
+        if alg in weak_algs:
+            return True, f"JWT uses weak algorithm: {alg}"
+        if alg in deprecated_algs:
+            return True, f"JWT uses deprecated HMAC algorithm: {alg}"
+        return False, ""
+
+    def check_expired_token(self, payload: Dict) -> Tuple[bool, str]:
+        """Check if JWT token is expired."""
+        if 'exp' not in payload:
+            return True, "Token missing 'exp' (expiration) claim"
+
+        try:
+            exp_time = int(payload['exp'])
+            current_time = int(time.time())
+            if current_time > exp_time:
+                return True, f"Token expired at {datetime.fromtimestamp(exp_time)}"
+            time_remaining = exp_time - current_time
+            if time_remaining > 86400 * 365:
+                return True, f"Token expires in {time_remaining} seconds (>1 year) - unusually long validity"
+        except (ValueError, TypeError):
+            return True, "Invalid 'exp' claim format"
+
+        return False, ""
+
+    def check_missing_critical_claims(self, payload: Dict) -> Tuple[bool, List[str]]:
+        """Check for missing critical claims."""
+        critical_claims = ['iss', 'sub', 'aud', 'exp', 'iat']
+        missing = []
+
+        for claim in critical_claims:
+            if claim not in payload:
+                missing.append(claim)
+
+        if missing:
+            return True, [f"Missing critical claim(s): {', '.join(missing)}"]
+        return False, []
+
+    def check_algorithm_confusion(self, header: Dict) -> Tuple[bool, str]:
+        """Check for algorithm confusion vulnerability potential."""
+        alg = header.get('alg', '').lower()
+        key_id = header.get('kid')
+
+        if alg.startswith('hs') and not key_id:
+            return True, "HMAC algorithm without 'kid' - potential algorithm confusion"
+
+        if alg == 'none':
+            return True, "Algorithm set to 'none' - trivial to forge"
+
+        return False, ""
+
+    def check_jwt_claims_structure(self, payload: Dict) -> Tuple[bool, List[str]]:
+        """Check for suspicious or anomalous claims structure."""
+        issues = []
+
+        # Check for empty payload
+        if not payload or len(payload) < 2:
+            issues.append("Payload contains very few claims")
+
+        # Check for suspicious 'role' or 'admin' escalation possibility
+        if 'role' in payload and isinstance(payload['role'], list):
+            issues.append("Role claim is array - potential privilege escalation vector")
+
+        # Check for missing 'iat'
+        if 'iat' not in payload:
+            issues.append("Missing 'iat' (issued at) claim - cannot verify token age")
+
+        # Check for overly permissive audience
+        if 'aud' in payload:
+            aud = payload['aud']
+            if isinstance(aud, str) and aud == '*':
+                issues.append("Audience claim set to '*' - overly permissive")
+
+        return len(issues) > 0, issues
+
+    def check_weak_secret_patterns(self, token: str) -> Tuple[bool, List[str]]:
+        """Check if token signature could be validated with weak secrets."""
+        issues = []
+        common_weak_secrets = [
+            'secret', 'password', '123456', 'admin', 'key', 'jwt',
+            'supersecret', 'changeme', '', 'test', 'default'
+        ]
+
+        parts = token.split('.')
+        if len(parts) != 3:
+            return False, []
+
+        header_part, payload_part, signature_part = parts
+        message = f"{header_part}.{payload_part}"
+
+        for weak_secret in common_weak_secrets:
+            # Try HS256 with weak secret
+            try:
+                computed_sig = base64.urlsafe_b64encode(
+                    hmac.new(
+                        weak_secret.encode(),
+                        message.encode(),
+                        hashlib.sha256
+                    ).digest()
+                ).decode().rstrip('=')
+
+                if computed_sig == signature_part:
+                    issues.append(f"Token signature matches weak secret: '{weak_secret}'")
+            except Exception:
+                pass
+
+        return len(issues) > 0, issues
+
+    def check_header_injection(self, header: Dict) -> Tuple[bool, List[str]]:
+        """Check for potential header injection vulnerabilities."""
+        issues = []
+
+        # Check for suspicious 'x5u' header (X.509 URL)
+        if 'x5u' in header:
+            issues.append("Header contains 'x5u' (X.509 URL) - potential key substitution attack")
+
+        # Check for suspicious 'jku' header
+        if 'jku' in header:
+            jku = header.get('jku', '')
+            if not isinstance(jku, str) or not jku.startswith('https://'):
+                issues.append("'jku' (JWK Set URL) uses non-HTTPS or invalid format")
+
+        # Check for missing 'typ'
+        if 'typ' not in header:
+            issues.append("Missing 'typ' header claim - may bypass type validation")
+
+        return len(issues) > 0, issues
+
+    def scan_token(self, token: str, token_name: str = "JWT") -> Dict[str, Any]:
+        """Comprehensive scan of a single JWT token."""
+        result = {
+            "token_name": token_name,
+            "token": token[:50] + "..." if len(token) > 50 else token,
+            "vulnerabilities": [],
+            "severity_score": 0,
+            "is_vulnerable": False
+        }
+
+        decoded = self.decode_jwt(token)
+        if not decoded:
+            result["vulnerabilities"].append("Failed to decode JWT")
+            result["is_vulnerable"] = True
+            return result
+
+        header, payload, signature = decoded
+
+        # Check 1: Unsigned JWT
+        is_vuln, msg = self.check_unsigned_jwt(header)
+        if is_vuln:
+            result["vulnerabilities"].append({"type": "UNSIGNED_JWT", "severity": "CRITICAL", "message": msg})
+            result["severity_score"] += 10
+
+        # Check 2: Weak algorithm
+        is_vuln, msg = self.check_weak_algorithm(header)
+        if is_vuln:
+            result["vulnerabilities"].append({"type": "WEAK_ALGORITHM", "severity": "HIGH", "message": msg})
+            result["severity_score"] += 8
+
+        # Check 3: Expired token
+        is_vuln, msg = self.check_expired_token(payload)
+        if is_vuln:
+            result["vulnerabilities"].append({"type": "EXPIRATION_ISSUE", "severity": "MEDIUM", "message": msg})
+            result["severity_score"] += 5
+
+        # Check 4: Missing critical claims
+        is_vuln, msgs = self.check_missing_critical_claims(payload)
+        if is_vuln:
+            for msg in msgs:
+                result["vulnerabilities"].append({"type": "MISSING_CLAIMS", "severity": "MEDIUM", "message": msg})
+            result["severity_score"] += 4
+
+        # Check 5: Algorithm confusion
+        is_vuln, msg = self.check_algorithm_confusion(header)
+        if is_vuln:
+            result["vulnerabilities"].append({"type": "ALGORITHM_CONFUSION", "severity": "CRITICAL", "message": msg})
+            result["severity_score"] += 10
+
+        # Check 6: Claims structure issues
+        is_vuln, msgs = self.check_jwt_claims_structure(payload)
+        if is_vuln:
+            for msg in msgs:
+                result["vulnerabilities"].append({"type": "CLAIMS_STRUCTURE", "severity": "LOW", "message": msg})
+            result["severity_score"] += 2
+
+        # Check 7: Weak secret patterns
+        is_vuln, msgs = self.check_weak_secret_patterns(token)
+        if is_vuln:
+            for msg in msgs:
+                result["vulnerabilities"].append({"type": "WEAK_SECRET", "severity": "CRITICAL", "message": msg})
+            result["severity_score"] += 10
+
+        # Check 8: Header injection
+        is_vuln, msgs = self.check_header_injection(header)
+        if is_vuln:
+            for msg in msgs:
+                result["vulnerabilities"].append({"type": "HEADER_INJECTION", "severity": "MEDIUM", "message": msg})
+            result["severity_score"] += 5
+
+        result["is_vulnerable"] = len(result["vulnerabilities"]) > 0
+        return result
+
+    def scan_tokens(self, tokens: List[str]) -> Dict[str, Any]:
+        """Scan multiple JWT tokens and aggregate results."""
+        self.findings["total_tokens_scanned"] = len(tokens)
+
+        for i, token in enumerate(tokens, 1):
+            result = self.scan_token(token, f"token_{i}")
+            self.findings["detailed_findings"].append(result)
+            if result["is_vulnerable"]:
+                self.findings["vulnerabilities_found"] += 1
+
+        return self.findings
+
+    def generate_report(self) -> str:
+        """Generate a formatted security report."""
+        report = []
+        report.append("=" * 70)
+        report.append("JWT WEAKNESS SCANNER - SECURITY REPORT")
+        report.append("=" * 70)
+        report.append("")
+
+        report.append(f"Total Tokens Scanned: {self.findings['total_tokens_scanned']}")
+        report.append(f"Vulnerabilities Found: {self.findings['vulnerabilities_found']}")
+        report.append("")
+
+        if not self.findings['detailed_findings']:
+            report.append("No tokens scanned.")
+            return "\n".join(report)
+
+        for finding in self.findings['detailed_findings']:
+            report.append("-" * 70)
+            report.append(f"Token: {finding['token_name']}")
+            report.append(f"Status: {'VULNERABLE' if finding['is_vulnerable'] else 'SECURE'}")
+            report.append(f"Severity Score: {finding['severity_score']}/10")
+            report.append("")
+
+            if finding['vulnerabilities']:
+                report.append("Vulnerabilities:")
+                for vuln in finding['vulnerabilities']:
+                    report.append(f"  [{vuln['severity']}] {vuln['type']}")
+                    report.append(f"    → {vuln['message']}")
+                report.append("")
+
+        report.append("=" * 70)
+        return "\n".join(report)
 
 
-def main():
-    """Main CLI entry point."""
-    parser = argparse.ArgumentParser(
-        description='JWT Token Weakness Scanner - Detects OWASP API Top-10 auth bypass patterns'
-    )
-    parser.add_argument(
-        '--token',
-        type=str,
-        help='Single JWT token to scan'
-    )
-    parser.add_argument(
-        '--token-file',
+def create_test_tokens() -> Dict[str, str]:
+    """Create test JWT tokens with various vulnerabilities."""
+    test_tokens = {}
+
+    # Token 1: Unsigned JWT (none algorithm)
+    header1 = base64.urlsafe_b64encode(json.dumps({"alg": "none", "typ": "JWT"}).encode()).decode().rstrip('=')
+    payload1 = base64.urlsafe_b64encode(json.dumps({
+        "sub": "user123",
+        "iss": "attacker",
+        "aud": "api.example.com",
+        "exp": int(time.time()) + 3600,
+        "iat": int(time.time())
+    }).encode()).decode().rstrip('=')
+    test_tokens['unsigned'] = f"{header1}.{payload1}."
+
+    # Token 2: Weak secret (HS256 with "secret")
+    header2 = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).decode().rstrip('=')
+    payload2 = base64.urlsafe_b64encode(json.dumps({
+        "sub": "user456",
+        "iss": "api.example.com",
+        "aud": "web-app",
+        "exp": int(time.time()) + 3600,
+        "iat": int(time.time()),
+        "role": "user"
+    }).encode()).decode().rstrip('=')
+    message2 = f"{header2}.{payload2}"
+    sig2 = base64.urlsafe_b64encode(
+        hmac.new("secret".encode(), message2.encode(), hashlib.sha256).digest()
+    ).decode().rstrip('=')
+    test_tokens['weak_secret'] = f"{message2}.{sig2}"
+
+    # Token 3: Missing critical claims
+    header3 = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).decode().rstrip('=')
+    payload3 = base64.urlsafe_b64encode(json.dumps({
+        "sub": "user789",
+        "role": "admin"
+    }).encode()).decode().rstrip('=')
+    message3 = f"{header3}.{payload3}"
+    sig3 = base64.urlsafe_b64encode(
+        hmac.new("verysecretkey".encode(), message3.encode(), hashlib.sha256).digest()
+    ).decode().rstrip('=')
+    test_tokens['missing_claims'] = f"{message3}.{sig3}"
+
+    # Token 4: Expired token
+    header4 = base64.urlsafe_b64encode(json.dumps({"alg": "
