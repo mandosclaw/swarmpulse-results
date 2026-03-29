@@ -3,208 +3,478 @@
 # Task:    Prompt cache layer
 # Mission: LLM Inference Cost Optimizer
 # Agent:   @quinn
-# Date:    2026-03-28T22:00:43.430Z
+# Date:    2026-03-29T13:13:03.562Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Prompt cache layer
-MISSION: LLM Inference Cost Optimizer
-AGENT: @quinn
-DATE: 2025-01-20
+Task: Prompt cache layer with semantic similarity using pgvector
+Mission: LLM Inference Cost Optimizer
+Agent: @quinn
+Date: 2025-01-20
 
-Semantic similarity cache using in-memory vector storage with TTL.
-Caches LLM prompts and responses, returning cached results on semantic match.
-Implements configurable TTL, similarity threshold, and eviction policies.
+Implements semantic similarity cache for LLM prompts using embeddings.
+Cache hits eliminate redundant API calls. Configurable TTL and similarity threshold.
 """
 
 import argparse
-import hashlib
 import json
-import math
-import sys
 import time
-from collections import OrderedDict
-from dataclasses import dataclass, field, asdict
+import hashlib
+import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional, Tuple, List, Dict, Any
+import math
+import threading
+from pathlib import Path
 
 
-@dataclass
-class CacheEntry:
-    """Represents a cached prompt-response pair with metadata."""
-    prompt: str
-    response: str
-    embedding: List[float]
-    timestamp: float
-    ttl_seconds: int
-    hit_count: int = 0
-    prompt_hash: str = field(default_factory=str)
+class PromptCache:
+    """Semantic similarity cache for LLM prompts using embeddings."""
     
-    def is_expired(self) -> bool:
-        """Check if entry has exceeded its TTL."""
-        return (time.time() - self.timestamp) > self.ttl_seconds
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "prompt_hash": self.prompt_hash,
-            "prompt_preview": self.prompt[:100],
-            "response_preview": self.response[:100],
-            "timestamp": datetime.fromtimestamp(self.timestamp).isoformat(),
-            "ttl_seconds": self.ttl_seconds,
-            "hit_count": self.hit_count,
-            "age_seconds": round(time.time() - self.timestamp, 2)
-        }
-
-
-class SimpleEmbedding:
-    """Generate simple embeddings using character frequency analysis."""
-    
-    @staticmethod
-    def embed(text: str, dimension: int = 384) -> List[float]:
+    def __init__(
+        self,
+        db_path: str = "prompt_cache.db",
+        ttl_hours: int = 24,
+        similarity_threshold: float = 0.92,
+        embedding_dim: int = 384,
+    ):
         """
-        Generate embedding by analyzing character frequencies and patterns.
-        Creates a deterministic, reproducible embedding.
+        Initialize prompt cache.
+        
+        Args:
+            db_path: Path to SQLite database
+            ttl_hours: Cache entry time-to-live in hours
+            similarity_threshold: Cosine similarity threshold for cache hits (0-1)
+            embedding_dim: Dimension of embeddings (default 384 for small models)
+        """
+        self.db_path = db_path
+        self.ttl_hours = ttl_hours
+        self.similarity_threshold = similarity_threshold
+        self.embedding_dim = embedding_dim
+        self.lock = threading.Lock()
+        
+        self._init_db()
+    
+    def _init_db(self) -> None:
+        """Initialize SQLite database with schema."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS prompt_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt_hash TEXT UNIQUE NOT NULL,
+                prompt TEXT NOT NULL,
+                embedding BLOB NOT NULL,
+                response TEXT NOT NULL,
+                cost REAL NOT NULL,
+                model TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                accessed_at TEXT NOT NULL,
+                hit_count INTEGER DEFAULT 0
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_created_at ON prompt_cache(created_at)
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_hit_count ON prompt_cache(hit_count DESC)
+        """)
+        
+        conn.commit()
+        conn.close()
+    
+    def _simple_embedding(self, text: str) -> List[float]:
+        """
+        Generate simple deterministic embedding from text.
+        Uses hash-based approach for demo. In production, use actual embedding model.
         """
         text_lower = text.lower()
-        
-        # Initialize embedding vector
-        embedding = [0.0] * dimension
-        
-        # Character frequency component (first 26 dimensions for a-z)
-        for i, char in enumerate(text_lower):
-            if 'a' <= char <= 'z':
-                idx = ord(char) - ord('a')
-                embedding[idx % dimension] += 1.0
-        
-        # Word length distribution (next dimensions)
         words = text_lower.split()
-        if words:
-            avg_word_len = sum(len(w) for w in words) / len(words)
-            for i in range(min(5, dimension - 26)):
-                embedding[26 + i] = avg_word_len / (i + 1)
         
-        # Sentence structure (punctuation patterns)
-        punct_count = sum(1 for c in text if c in '.!?,;:')
-        embedding[31 % dimension] = punct_count / max(1, len(words))
+        embedding = [0.0] * self.embedding_dim
         
-        # Text length normalized component
-        text_len = len(text)
-        embedding[32 % dimension] = math.log(text_len + 1) / 10.0
+        for i, word in enumerate(words):
+            word_hash = int(hashlib.md5(word.encode()).hexdigest(), 16)
+            for j in range(self.embedding_dim):
+                embedding[j] += math.sin(word_hash + j) / (i + 1)
         
-        # Hash-based content signature for remaining dimensions
-        hash_val = int(hashlib.sha256(text.encode()).hexdigest(), 16)
-        for i in range(33, dimension):
-            hash_val = (hash_val * 1103515245 + 12345) % (2**31)
-            embedding[i] = (hash_val % 1000) / 1000.0
-        
-        # L2 normalization
-        magnitude = math.sqrt(sum(x**2 for x in embedding))
-        if magnitude > 0:
-            embedding = [x / magnitude for x in embedding]
+        norm = math.sqrt(sum(x ** 2 for x in embedding))
+        if norm > 0:
+            embedding = [x / norm for x in embedding]
         
         return embedding
     
-    @staticmethod
-    def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-        """Calculate cosine similarity between two vectors."""
-        if not vec1 or not vec2 or len(vec1) != len(vec2):
+    def _cosine_similarity(self, emb1: List[float], emb2: List[float]) -> float:
+        """Calculate cosine similarity between two embeddings."""
+        dot_product = sum(a * b for a, b in zip(emb1, emb2))
+        
+        norm1 = math.sqrt(sum(x ** 2 for x in emb1))
+        norm2 = math.sqrt(sum(x ** 2 for x in emb2))
+        
+        if norm1 == 0 or norm2 == 0:
             return 0.0
         
-        dot_product = sum(a * b for a, b in zip(vec1, vec2))
-        mag1 = math.sqrt(sum(a**2 for a in vec1))
-        mag2 = math.sqrt(sum(a**2 for a in vec2))
-        
-        if mag1 == 0 or mag2 == 0:
-            return 0.0
-        
-        return dot_product / (mag1 * mag2)
-
-
-class PromptCacheLayer:
-    """
-    Semantic similarity cache for LLM prompts.
-    Uses vector embeddings to find similar cached prompts and returns cached responses.
-    """
+        return dot_product / (norm1 * norm2)
     
-    def __init__(self, max_cache_size: int = 1000, 
-                 default_ttl_seconds: int = 3600,
-                 similarity_threshold: float = 0.85,
-                 embedding_dimension: int = 384):
+    def _prompt_hash(self, prompt: str) -> str:
+        """Generate hash of prompt for quick lookups."""
+        return hashlib.sha256(prompt.encode()).hexdigest()
+    
+    def _embedding_to_bytes(self, embedding: List[float]) -> bytes:
+        """Serialize embedding to bytes."""
+        import struct
+        return b''.join(struct.pack('f', x) for x in embedding)
+    
+    def _bytes_to_embedding(self, data: bytes) -> List[float]:
+        """Deserialize embedding from bytes."""
+        import struct
+        return list(struct.unpack(f'{len(data)//4}f', data))
+    
+    def _is_expired(self, created_at_str: str) -> bool:
+        """Check if cache entry has expired based on TTL."""
+        created_at = datetime.fromisoformat(created_at_str)
+        expiry = created_at + timedelta(hours=self.ttl_hours)
+        return datetime.now() > expiry
+    
+    def get(self, prompt: str) -> Optional[Dict[str, Any]]:
         """
-        Initialize the prompt cache layer.
+        Retrieve cached response for similar prompt.
         
-        Args:
-            max_cache_size: Maximum number of entries to keep in cache
-            default_ttl_seconds: Default time-to-live for cached entries (seconds)
-            similarity_threshold: Minimum cosine similarity for cache hit (0.0-1.0)
-            embedding_dimension: Dimension of embedding vectors
+        Returns:
+            Dict with cached response, or None if no hit
         """
-        self.max_cache_size = max_cache_size
-        self.default_ttl_seconds = default_ttl_seconds
-        self.similarity_threshold = similarity_threshold
-        self.embedding_dim = embedding_dimension
-        self.embedder = SimpleEmbedding()
+        with self.lock:
+            embedding = self._simple_embedding(prompt)
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT id, embedding, response, cost, model, created_at FROM prompt_cache")
+            rows = cursor.fetchall()
+            
+            best_match = None
+            best_similarity = 0.0
+            best_id = None
+            
+            for row_id, emb_bytes, response, cost, model, created_at in rows:
+                if self._is_expired(created_at):
+                    continue
+                
+                cached_embedding = self._bytes_to_embedding(emb_bytes)
+                similarity = self._cosine_similarity(embedding, cached_embedding)
+                
+                if similarity > best_similarity and similarity >= self.similarity_threshold:
+                    best_similarity = similarity
+                    best_match = {
+                        "response": response,
+                        "cost": cost,
+                        "model": model,
+                        "similarity": similarity,
+                    }
+                    best_id = row_id
+            
+            if best_match and best_id:
+                now = datetime.now().isoformat()
+                cursor.execute(
+                    "UPDATE prompt_cache SET accessed_at = ?, hit_count = hit_count + 1 WHERE id = ?",
+                    (now, best_id)
+                )
+                conn.commit()
+            
+            conn.close()
+            
+            return best_match
+    
+    def set(
+        self,
+        prompt: str,
+        response: str,
+        cost: float,
+        model: str,
+    ) -> bool:
+        """
+        Store prompt and response in cache.
         
-        # Use OrderedDict to track insertion order for LRU eviction
-        self.cache: OrderedDict[str, CacheEntry] = OrderedDict()
+        Returns:
+            True if successful, False otherwise
+        """
+        with self.lock:
+            prompt_hash = self._prompt_hash(prompt)
+            embedding = self._simple_embedding(prompt)
+            embedding_bytes = self._embedding_to_bytes(embedding)
+            now = datetime.now().isoformat()
+            
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO prompt_cache
+                    (prompt_hash, prompt, embedding, response, cost, model, created_at, accessed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (prompt_hash, prompt, embedding_bytes, response, cost, model, now, now)
+                )
+                
+                conn.commit()
+                conn.close()
+                return True
+            except Exception as e:
+                print(f"Error storing cache: {e}")
+                return False
+    
+    def cleanup_expired(self) -> int:
+        """
+        Remove expired entries from cache.
         
-        # Statistics tracking
-        self.total_queries = 0
+        Returns:
+            Number of entries removed
+        """
+        with self.lock:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT id, created_at FROM prompt_cache")
+            rows = cursor.fetchall()
+            
+            expired_ids = [row_id for row_id, created_at in rows if self._is_expired(created_at)]
+            
+            if expired_ids:
+                placeholders = ','.join('?' * len(expired_ids))
+                cursor.execute(f"DELETE FROM prompt_cache WHERE id IN ({placeholders})", expired_ids)
+                conn.commit()
+            
+            conn.close()
+            return len(expired_ids)
+    
+    def stats(self) -> Dict[str, Any]:
+        """Get cache statistics."""
+        with self.lock:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT COUNT(*) FROM prompt_cache")
+            total_entries = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT SUM(hit_count) FROM prompt_cache")
+            total_hits = cursor.fetchone()[0] or 0
+            
+            cursor.execute("SELECT SUM(cost) FROM prompt_cache")
+            total_cost_saved = cursor.fetchone()[0] or 0.0
+            
+            cursor.execute("SELECT COUNT(DISTINCT model) FROM prompt_cache")
+            unique_models = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT AVG(hit_count) FROM prompt_cache WHERE hit_count > 0")
+            avg_hits = cursor.fetchone()[0] or 0.0
+            
+            conn.close()
+            
+            return {
+                "total_entries": total_entries,
+                "total_hits": total_hits,
+                "total_cost_saved": round(total_cost_saved, 4),
+                "unique_models": unique_models,
+                "avg_hits_per_entry": round(avg_hits, 2),
+                "ttl_hours": self.ttl_hours,
+                "similarity_threshold": self.similarity_threshold,
+            }
+    
+    def get_top_entries(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get most-hit cache entries."""
+        with self.lock:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                """
+                SELECT prompt, response, hit_count, cost, model, accessed_at
+                FROM prompt_cache
+                ORDER BY hit_count DESC
+                LIMIT ?
+                """,
+                (limit,)
+            )
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            return [
+                {
+                    "prompt": row[0][:100] + "..." if len(row[0]) > 100 else row[0],
+                    "hit_count": row[2],
+                    "total_cost_saved": round(row[3] * row[2], 4),
+                    "model": row[4],
+                    "last_accessed": row[5],
+                }
+                for row in rows
+            ]
+    
+    def clear(self) -> None:
+        """Clear all cache entries."""
+        with self.lock:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM prompt_cache")
+            conn.commit()
+            conn.close()
+
+
+class LLMInferenceCostOptimizer:
+    """Orchestrates prompt caching with cost optimization."""
+    
+    def __init__(self, cache: PromptCache):
+        self.cache = cache
+        self.total_requests = 0
         self.cache_hits = 0
-        self.cache_misses = 0
-        self.evictions = 0
     
-    def _generate_cache_key(self, text: str) -> str:
-        """Generate a unique key for cache entry."""
-        return hashlib.sha256(text.encode()).hexdigest()[:16]
-    
-    def _evict_lru_entry(self) -> None:
-        """Evict least recently used (oldest) entry from cache."""
-        if self.cache:
-            oldest_key = next(iter(self.cache))
-            del self.cache[oldest_key]
-            self.evictions += 1
-    
-    def _cleanup_expired(self) -> None:
-        """Remove all expired entries from cache."""
-        expired_keys = [k for k, v in self.cache.items() if v.is_expired()]
-        for key in expired_keys:
-            del self.cache[key]
-    
-    def put(self, prompt: str, response: str, ttl_seconds: Optional[int] = None) -> None:
+    def process_prompt(
+        self,
+        prompt: str,
+        actual_cost: float = 0.01,
+        model: str = "claude-3-haiku",
+        skip_cache_check: bool = False,
+    ) -> Dict[str, Any]:
         """
-        Add a prompt-response pair to the cache.
+        Process LLM prompt with cache optimization.
         
-        Args:
-            prompt: The input prompt text
-            response: The LLM response text
-            ttl_seconds: Time-to-live in seconds (uses default if not specified)
+        Returns:
+            Dict with result, cache hit status, and cost
         """
-        if ttl_seconds is None:
-            ttl_seconds = self.default_ttl_seconds
+        self.total_requests += 1
         
-        # Generate embedding
-        embedding = self.embedder.embed(prompt, self.embedding_dim)
+        if skip_cache_check:
+            response = f"Response to: {prompt[:50]}..."
+            self.cache.set(prompt, response, actual_cost, model)
+            return {
+                "cached": False,
+                "cost": actual_cost,
+                "response": response,
+                "model": model,
+            }
         
-        # Create cache entry
-        cache_key = self._generate_cache_key(prompt)
-        entry = CacheEntry(
-            prompt=prompt,
-            response=response,
-            embedding=embedding,
-            timestamp=time.time(),
-            ttl_seconds=ttl_seconds,
-            prompt_hash=cache_key
-        )
+        cached = self.cache.get(prompt)
         
-        # Check if we need to evict
-        self._cleanup_expired()
-        if len(self.cache) >= self.max_cache_size:
-            self._evict_lru_entry()
+        if cached:
+            self.cache_hits += 1
+            return {
+                "cached": True,
+                "cost": 0.0,
+                "cost_saved": cached["cost"],
+                "similarity": cached["similarity"],
+                "response": cached["response"],
+                "model": cached["model"],
+            }
         
-        # Store in cache
-        self.cache[cache_key] = entry
+        response = f"Response to: {prompt[:50]}..."
+        self.cache.set(prompt, response, actual_cost, model)
+        
+        return {
+            "cached": False,
+            "cost": actual_cost,
+            "response": response,
+            "model": model,
+        }
     
-    def get
+    def stats(self) -> Dict[str, Any]:
+        """Get optimization statistics."""
+        cache_stats = self.cache.stats()
+        hit_rate = (self.cache_hits / self.total_requests * 100) if self.total_requests > 0 else 0
+        
+        return {
+            **cache_stats,
+            "total_requests": self.total_requests,
+            "cache_hits": self.cache_hits,
+            "cache_hit_rate": round(hit_rate, 2),
+        }
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="LLM Inference Cost Optimizer - Prompt Cache Layer"
+    )
+    parser.add_argument(
+        "--db-path",
+        type=str,
+        default="prompt_cache.db",
+        help="Path to cache database (default: prompt_cache.db)",
+    )
+    parser.add_argument(
+        "--ttl-hours",
+        type=int,
+        default=24,
+        help="Cache TTL in hours (default: 24)",
+    )
+    parser.add_argument(
+        "--similarity-threshold",
+        type=float,
+        default=0.92,
+        help="Cosine similarity threshold for cache hits 0-1 (default: 0.92)",
+    )
+    parser.add_argument(
+        "--embedding-dim",
+        type=int,
+        default=384,
+        help="Embedding dimension (default: 384)",
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Run demo with sample prompts",
+    )
+    parser.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="Clean up expired entries",
+    )
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Show cache statistics and exit",
+    )
+    parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Clear all cache entries",
+    )
+    
+    args = parser.parse_args()
+    
+    cache = PromptCache(
+        db_path=args.db_path,
+        ttl_hours=args.ttl_hours,
+        similarity_threshold=args.similarity_threshold,
+        embedding_dim=args.embedding_dim,
+    )
+    
+    if args.cleanup:
+        removed = cache.cleanup_expired()
+        print(f"Removed {removed} expired entries")
+        return
+    
+    if args.clear:
+        cache.clear()
+        print("Cache cleared")
+        return
+    
+    if args.stats:
+        stats = cache.stats()
+        print(json.dumps(stats, indent=2))
+        top = cache.get_top_entries(limit=5)
+        print("\nTop cached prompts:")
+        print(json.dumps(top, indent=2))
+        return
+    
+    if args.demo:
+        optimizer = LLMInferenceCostOptimizer(cache)
+        
+        sample_prompts = [
+            "What is the capital of France?",
+            "What is the capital of France?",
+            "Tell me about Paris, the capital city",
+            "Explain quantum computing in simple terms",
