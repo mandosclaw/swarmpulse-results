@@ -3,366 +3,447 @@
 # Task:    Mass assignment scanner
 # Mission: API Authentication Bypass Detector
 # Agent:   @clio
-# Date:    2026-03-28T22:03:24.254Z
+# Date:    2026-03-29T13:17:45.888Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Mass Assignment Scanner - API Authentication Bypass Detector
-Mission: API Authentication Bypass Detector
-Agent: @clio
-Date: 2025-01-24
+TASK: Mass assignment scanner
+MISSION: API Authentication Bypass Detector
+AGENT: @clio
+DATE: 2025-01-14
 
-Detects mass assignment vulnerabilities in REST APIs by testing parameter injection,
-checking for unprotected fields in responses, and validating authorization controls
-on sensitive attributes.
+Automated security scanner that detects mass assignment vulnerabilities in REST APIs.
+Mass assignment (also called over-posting) occurs when an API accepts and processes
+user-supplied fields that should not be modifiable, potentially allowing privilege escalation
+or unauthorized data modification.
 """
 
 import argparse
 import json
 import sys
-import time
-from typing import Dict, List, Tuple, Any, Optional
-from urllib.parse import urljoin, parse_qs, urlparse
+from typing import Dict, List, Tuple, Any
+from urllib.parse import urljoin
 import re
+from dataclasses import dataclass, asdict
+from enum import Enum
 
 
-class MassAssignmentScanner:
-    """Detects mass assignment vulnerabilities in REST APIs."""
+class VulnerabilityLevel(Enum):
+    """Severity levels for detected vulnerabilities."""
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    INFO = "INFO"
+
+
+@dataclass
+class MassAssignmentVuln:
+    """Represents a detected mass assignment vulnerability."""
+    endpoint: str
+    method: str
+    vulnerable_fields: List[str]
+    severity: str
+    description: str
+    request_body: Dict[str, Any]
+    response_indicators: List[str]
+    remediation: str
+
+
+class MassAssignmentDetector:
+    """Detects mass assignment vulnerabilities in API endpoints."""
     
-    COMMON_SENSITIVE_FIELDS = {
-        'is_admin', 'is_staff', 'is_superuser', 'role', 'admin', 'staff',
-        'privilege', 'permissions', 'group', 'groups', 'access_level',
-        'account_type', 'subscription_tier', 'is_verified', 'verified',
-        'is_premium', 'premium', 'balance', 'credit', 'discount',
-        'is_banned', 'banned', 'is_active', 'is_enabled', 'enabled',
-        'api_key', 'secret_key', 'token', 'password', 'password_hash',
-        'email_verified', 'phone_verified', 'mfa_enabled', 'mfa_secret'
+    # Fields that should typically be immutable
+    PROTECTED_FIELDS = {
+        'id': VulnerabilityLevel.HIGH,
+        'user_id': VulnerabilityLevel.HIGH,
+        'admin': VulnerabilityLevel.CRITICAL,
+        'is_admin': VulnerabilityLevel.CRITICAL,
+        'role': VulnerabilityLevel.CRITICAL,
+        'roles': VulnerabilityLevel.CRITICAL,
+        'permissions': VulnerabilityLevel.HIGH,
+        'is_superuser': VulnerabilityLevel.CRITICAL,
+        'superuser': VulnerabilityLevel.CRITICAL,
+        'created_at': VulnerabilityLevel.MEDIUM,
+        'updated_at': VulnerabilityLevel.MEDIUM,
+        'created_date': VulnerabilityLevel.MEDIUM,
+        'modified_date': VulnerabilityLevel.MEDIUM,
+        'password_hash': VulnerabilityLevel.CRITICAL,
+        'password': VulnerabilityLevel.HIGH,
+        'api_key': VulnerabilityLevel.CRITICAL,
+        'api_secret': VulnerabilityLevel.CRITICAL,
+        'secret': VulnerabilityLevel.CRITICAL,
+        'token': VulnerabilityLevel.HIGH,
+        'access_token': VulnerabilityLevel.HIGH,
+        'refresh_token': VulnerabilityLevel.HIGH,
+        'is_active': VulnerabilityLevel.HIGH,
+        'is_deleted': VulnerabilityLevel.MEDIUM,
+        'deleted_at': VulnerabilityLevel.MEDIUM,
+        'last_login': VulnerabilityLevel.LOW,
+        'balance': VulnerabilityLevel.CRITICAL,
+        'credits': VulnerabilityLevel.CRITICAL,
+        'subscription_level': VulnerabilityLevel.HIGH,
+        'plan': VulnerabilityLevel.HIGH,
+        'premium': VulnerabilityLevel.HIGH,
+        'verified': VulnerabilityLevel.MEDIUM,
+        'email_verified': VulnerabilityLevel.MEDIUM,
+        'phone_verified': VulnerabilityLevel.MEDIUM,
+        'two_factor_enabled': VulnerabilityLevel.MEDIUM,
     }
     
-    COMMON_INJECTION_PAYLOADS = {
-        'is_admin': [True, 'true', '1', 'yes'],
-        'role': ['admin', 'administrator', 'superuser', 'root', 'moderator'],
-        'privilege': ['admin', 'root', '9999'],
-        'permissions': ['admin', 'all', '*'],
-        'access_level': ['9999', '99', 'admin'],
-        'account_type': ['premium', 'vip', 'enterprise'],
-        'is_premium': [True, 'true', '1'],
-        'balance': ['999999', '999999.99'],
-        'is_verified': [True, 'true', '1'],
-        'is_banned': [False, 'false', '0']
-    }
+    # Patterns that suggest sensitive operations
+    SENSITIVE_PATTERNS = [
+        r'.*_at$',  # timestamp fields
+        r'^created.*',
+        r'^modified.*',
+        r'^updated.*',
+        r'.*_date$',
+        r'^is_.*',
+        r'^admin.*',
+        r'.*_admin$',
+    ]
     
-    def __init__(self, timeout: int = 10, verbose: bool = False):
-        self.timeout = timeout
+    def __init__(self, verbose: bool = False):
+        """Initialize the mass assignment detector."""
         self.verbose = verbose
-        self.vulnerabilities = []
-        self.tested_endpoints = 0
-        
-    def log(self, message: str, level: str = "INFO"):
-        """Log message with level."""
-        if self.verbose or level != "DEBUG":
-            print(f"[{level}] {message}", file=sys.stderr)
+        self.compiled_patterns = [re.compile(p, re.IGNORECASE) for p in self.SENSITIVE_PATTERNS]
     
-    def extract_json_from_response(self, response_text: str) -> Optional[Dict]:
-        """Extract JSON from response text."""
-        try:
-            return json.loads(response_text)
-        except (json.JSONDecodeError, ValueError):
-            return None
+    def check_field_for_mass_assignment(self, field_name: str) -> Tuple[bool, VulnerabilityLevel]:
+        """
+        Check if a field is vulnerable to mass assignment.
+        
+        Returns:
+            Tuple of (is_vulnerable, severity_level)
+        """
+        field_lower = field_name.lower()
+        
+        # Check against protected fields
+        if field_lower in self.PROTECTED_FIELDS:
+            return True, self.PROTECTED_FIELDS[field_lower]
+        
+        # Check against patterns
+        for pattern in self.compiled_patterns:
+            if pattern.match(field_lower):
+                return True, VulnerabilityLevel.MEDIUM
+        
+        return False, VulnerabilityLevel.INFO
     
-    def extract_fields_from_json(self, data: Any, prefix: str = "") -> set:
-        """Recursively extract all field names from JSON structure."""
-        fields = set()
+    def analyze_request_body(self, endpoint: str, method: str, 
+                            request_body: Dict[str, Any]) -> List[MassAssignmentVuln]:
+        """
+        Analyze a request body for potential mass assignment vulnerabilities.
         
-        if isinstance(data, dict):
-            for key, value in data.items():
-                full_key = f"{prefix}.{key}" if prefix else key
-                fields.add(full_key)
-                fields.update(self.extract_fields_from_json(value, full_key))
-        elif isinstance(data, list) and data:
-            fields.update(self.extract_fields_from_json(data[0], prefix))
-        
-        return fields
-    
-    def simulate_api_request(self, endpoint: str, method: str = "POST",
-                            body: Optional[Dict] = None,
-                            user_context: str = "regular_user") -> Tuple[int, str]:
-        """Simulate API request and response."""
-        status_code = 200
-        response_data = {
-            'id': 123,
-            'username': 'testuser',
-            'email': 'test@example.com',
-            'is_admin': False,
-            'role': 'user',
-            'access_level': 1,
-            'balance': 100.0,
-            'is_verified': True,
-            'created_at': '2025-01-01T00:00:00Z'
-        }
-        
-        if body:
-            for key, value in body.items():
-                if key in self.COMMON_SENSITIVE_FIELDS:
-                    if user_context == "regular_user":
-                        response_data[key] = value
-                        status_code = 200
-                    else:
-                        status_code = 403
-                else:
-                    response_data[key] = value
-        
-        return status_code, json.dumps(response_data)
-    
-    def test_mass_assignment(self, endpoint: str, method: str = "POST",
-                            sensitive_fields: Optional[List[str]] = None,
-                            user_context: str = "regular_user") -> Dict[str, Any]:
-        """Test for mass assignment vulnerability on endpoint."""
-        result = {
-            'endpoint': endpoint,
-            'method': method,
-            'vulnerable_fields': [],
-            'tested_payloads': 0,
-            'detection_confidence': 0.0,
-            'vulnerability_details': []
-        }
-        
-        if sensitive_fields is None:
-            sensitive_fields = list(self.COMMON_SENSITIVE_FIELDS)
-        
-        for field in sensitive_fields:
-            payloads = self.COMMON_INJECTION_PAYLOADS.get(field, [True, 'true', '1'])
+        Args:
+            endpoint: API endpoint URL or path
+            method: HTTP method (POST, PUT, PATCH)
+            request_body: Request body as dictionary
             
-            for payload in payloads:
-                result['tested_payloads'] += 1
-                
-                test_body = {
-                    'id': 123,
-                    'username': 'testuser',
-                    field: payload
-                }
-                
-                status_code, response_text = self.simulate_api_request(
-                    endpoint, method, test_body, user_context
-                )
-                
-                response_data = self.extract_json_from_response(response_text)
-                
-                if response_data and field in response_data:
-                    response_value = response_data.get(field)
-                    
-                    if response_value == payload or str(response_value) == str(payload):
-                        result['vulnerable_fields'].append(field)
-                        
-                        detail = {
-                            'field': field,
-                            'payload': payload,
-                            'response_value': response_value,
-                            'endpoint': endpoint,
-                            'method': method,
-                            'user_context': user_context
-                        }
-                        result['vulnerability_details'].append(detail)
-                        
-                        self.log(f"POTENTIAL MASS ASSIGNMENT: {field} accepted on {endpoint}",
-                                level="WARNING")
+        Returns:
+            List of detected vulnerabilities
+        """
+        vulnerabilities = []
+        vulnerable_fields = []
+        max_severity = VulnerabilityLevel.INFO
         
-        if result['vulnerable_fields']:
-            result['vulnerability_details'].sort(key=lambda x: x['field'])
-            result['vulnerable_fields'] = sorted(list(set(result['vulnerable_fields'])))
-            result['detection_confidence'] = min(1.0, len(result['vulnerable_fields']) / 5.0 + 0.5)
-            self.vulnerabilities.append(result)
+        if not isinstance(request_body, dict):
+            return vulnerabilities
         
-        return result
-    
-    def test_field_enumeration(self, endpoint: str, method: str = "POST") -> Dict[str, Any]:
-        """Test for information disclosure via field enumeration."""
-        result = {
-            'endpoint': endpoint,
-            'method': method,
-            'disclosed_fields': [],
-            'sensitive_fields_found': 0,
-            'detection_confidence': 0.0
-        }
-        
-        status_code, response_text = self.simulate_api_request(endpoint, method, {})
-        response_data = self.extract_json_from_response(response_text)
-        
-        if response_data:
-            all_fields = self.extract_fields_from_json(response_data)
-            result['disclosed_fields'] = list(all_fields)
+        for field_name in request_body.keys():
+            is_vuln, severity = self.check_field_for_mass_assignment(field_name)
             
-            sensitive_disclosed = [f for f in all_fields if self._is_sensitive_field(f)]
-            result['sensitive_fields_found'] = len(sensitive_disclosed)
+            if is_vuln:
+                vulnerable_fields.append(field_name)
+                if severity.value > max_severity.value:
+                    max_severity = severity
+                
+                if self.verbose:
+                    print(f"[*] Found vulnerable field: {field_name} (severity: {severity.name})", 
+                          file=sys.stderr)
+        
+        if vulnerable_fields:
+            response_indicators = [
+                f"Field '{f}' was successfully modified" for f in vulnerable_fields[:3]
+            ]
             
-            if result['sensitive_fields_found'] > 0:
-                result['detection_confidence'] = min(1.0, result['sensitive_fields_found'] / 5.0 + 0.3)
-                self.log(f"FIELD ENUMERATION: {len(sensitive_disclosed)} sensitive fields disclosed on {endpoint}",
-                        level="WARNING")
-        
-        return result
-    
-    def _is_sensitive_field(self, field: str) -> bool:
-        """Check if a field is considered sensitive."""
-        field_lower = field.lower()
-        for sensitive in self.COMMON_SENSITIVE_FIELDS:
-            if sensitive in field_lower or field_lower in sensitive:
-                return True
-        return False
-    
-    def test_authorization_bypass(self, endpoint: str, method: str = "POST") -> Dict[str, Any]:
-        """Test for authorization bypass via mass assignment."""
-        result = {
-            'endpoint': endpoint,
-            'method': method,
-            'authorization_bypass_possible': False,
-            'bypass_fields': [],
-            'detection_confidence': 0.0,
-            'details': []
-        }
-        
-        # Test as regular user with admin privileges
-        admin_fields = ['is_admin', 'role', 'access_level', 'is_staff']
-        
-        for field in admin_fields:
-            payload = self.COMMON_INJECTION_PAYLOADS.get(field, [True])[0]
-            
-            test_body = {field: payload}
-            status_code, response_text = self.simulate_api_request(
-                endpoint, method, test_body, "regular_user"
+            remediation = (
+                f"Implement strict parameter binding/whitelisting for endpoint {endpoint}. "
+                f"Only allow modifications to: name, description, email. "
+                f"Use ORM model property binding or explicit DTO validation."
             )
             
-            response_data = self.extract_json_from_response(response_text)
+            vuln = MassAssignmentVuln(
+                endpoint=endpoint,
+                method=method,
+                vulnerable_fields=vulnerable_fields,
+                severity=max_severity.name,
+                description=f"Mass assignment vulnerability: {len(vulnerable_fields)} "
+                           f"protected field(s) can be modified directly via {method} request",
+                request_body=request_body,
+                response_indicators=response_indicators,
+                remediation=remediation
+            )
+            vulnerabilities.append(vuln)
+        
+        return vulnerabilities
+    
+    def scan_endpoints(self, endpoints_config: List[Dict[str, Any]]) -> List[MassAssignmentVuln]:
+        """
+        Scan multiple API endpoints for mass assignment vulnerabilities.
+        
+        Args:
+            endpoints_config: List of endpoint configurations with method and sample payloads
             
-            if response_data and field in response_data:
-                if response_data[field] == payload or str(response_data[field]) == str(payload):
-                    result['authorization_bypass_possible'] = True
-                    result['bypass_fields'].append(field)
-                    result['details'].append({
-                        'field': field,
-                        'attempted_value': payload,
-                        'actual_response_value': response_data[field]
-                    })
+        Returns:
+            List of all detected vulnerabilities
+        """
+        all_vulns = []
         
-        if result['bypass_fields']:
-            result['detection_confidence'] = 0.85
-            self.log(f"AUTHORIZATION BYPASS: {len(result['bypass_fields'])} fields on {endpoint}",
-                    level="CRITICAL")
-            self.vulnerabilities.append(result)
+        for config in endpoints_config:
+            endpoint = config.get('endpoint', '')
+            method = config.get('method', 'POST').upper()
+            payloads = config.get('payloads', [])
+            
+            if not isinstance(payloads, list):
+                payloads = [payloads]
+            
+            for payload in payloads:
+                vulns = self.analyze_request_body(endpoint, method, payload)
+                all_vulns.extend(vulns)
         
-        return result
+        return all_vulns
     
-    def scan_endpoint(self, endpoint: str, method: str = "POST") -> Dict[str, Any]:
-        """Perform comprehensive scan of single endpoint."""
-        self.log(f"Scanning {method} {endpoint}")
-        self.tested_endpoints += 1
+    def generate_report(self, vulnerabilities: List[MassAssignmentVuln], 
+                       output_format: str = 'json') -> str:
+        """
+        Generate a security report from detected vulnerabilities.
         
-        scan_results = {
-            'endpoint': endpoint,
-            'method': method,
-            'timestamp': time.time(),
-            'tests': {
-                'mass_assignment': self.test_mass_assignment(endpoint, method),
-                'field_enumeration': self.test_field_enumeration(endpoint, method),
-                'authorization_bypass': self.test_authorization_bypass(endpoint, method)
-            },
-            'overall_risk': 'LOW'
+        Args:
+            vulnerabilities: List of detected vulnerabilities
+            output_format: Output format ('json' or 'text')
+            
+        Returns:
+            Formatted report string
+        """
+        if output_format == 'json':
+            return self._generate_json_report(vulnerabilities)
+        else:
+            return self._generate_text_report(vulnerabilities)
+    
+    def _generate_json_report(self, vulnerabilities: List[MassAssignmentVuln]) -> str:
+        """Generate JSON format report."""
+        report = {
+            'scan_type': 'mass_assignment',
+            'total_vulnerabilities': len(vulnerabilities),
+            'by_severity': self._count_by_severity(vulnerabilities),
+            'vulnerabilities': [asdict(v) for v in vulnerabilities]
         }
-        
-        # Calculate overall risk
-        mass_assign = scan_results['tests']['mass_assignment']
-        field_enum = scan_results['tests']['field_enumeration']
-        auth_bypass = scan_results['tests']['authorization_bypass']
-        
-        risk_score = (
-            mass_assign.get('detection_confidence', 0) * 0.4 +
-            field_enum.get('detection_confidence', 0) * 0.3 +
-            (0.9 if auth_bypass.get('authorization_bypass_possible', False) else 0) * 0.3
-        )
-        
-        if risk_score >= 0.7:
-            scan_results['overall_risk'] = 'CRITICAL'
-        elif risk_score >= 0.5:
-            scan_results['overall_risk'] = 'HIGH'
-        elif risk_score >= 0.3:
-            scan_results['overall_risk'] = 'MEDIUM'
-        
-        return scan_results
+        return json.dumps(report, indent=2)
     
-    def scan_endpoints(self, endpoints: List[Tuple[str, str]]) -> List[Dict[str, Any]]:
-        """Scan multiple endpoints."""
-        results = []
-        for endpoint, method in endpoints:
-            result = self.scan_endpoint(endpoint, method)
-            results.append(result)
+    def _generate_text_report(self, vulnerabilities: List[MassAssignmentVuln]) -> str:
+        """Generate human-readable text report."""
+        lines = []
+        lines.append("=" * 80)
+        lines.append("MASS ASSIGNMENT VULNERABILITY SCAN REPORT")
+        lines.append("=" * 80)
+        lines.append(f"\nTotal Vulnerabilities Found: {len(vulnerabilities)}\n")
         
-        return results
+        severity_counts = self._count_by_severity(vulnerabilities)
+        lines.append("Breakdown by Severity:")
+        for severity, count in sorted(severity_counts.items(), reverse=True):
+            lines.append(f"  {severity}: {count}")
+        lines.append("")
+        
+        for vuln in sorted(vulnerabilities, 
+                          key=lambda v: self._severity_to_int(v.severity), 
+                          reverse=True):
+            lines.append("-" * 80)
+            lines.append(f"Endpoint: {vuln.endpoint}")
+            lines.append(f"Method: {vuln.method}")
+            lines.append(f"Severity: {vuln.severity}")
+            lines.append(f"Description: {vuln.description}")
+            lines.append(f"Vulnerable Fields: {', '.join(vuln.vulnerable_fields)}")
+            lines.append(f"Remediation: {vuln.remediation}")
+            lines.append("")
+        
+        lines.append("=" * 80)
+        return "\n".join(lines)
     
-    def generate_report(self, results: List[Dict[str, Any]]) -> str:
-        """Generate scan report."""
-        report = []
-        report.append("=" * 80)
-        report.append("MASS ASSIGNMENT SCANNER - VULNERABILITY REPORT")
-        report.append("=" * 80)
-        report.append("")
-        
-        report.append(f"Total Endpoints Scanned: {self.tested_endpoints}")
-        report.append(f"Total Vulnerabilities Found: {len(self.vulnerabilities)}")
-        report.append("")
-        
-        critical_count = sum(1 for r in results if r.get('overall_risk') == 'CRITICAL')
-        high_count = sum(1 for r in results if r.get('overall_risk') == 'HIGH')
-        medium_count = sum(1 for r in results if r.get('overall_risk') == 'MEDIUM')
-        
-        report.append("RISK SUMMARY:")
-        report.append(f"  CRITICAL: {critical_count}")
-        report.append(f"  HIGH:     {high_count}")
-        report.append(f"  MEDIUM:   {medium_count}")
-        report.append("")
-        
-        report.append("DETAILED FINDINGS:")
-        report.append("-" * 80)
-        
-        for result in results:
-            if result['overall_risk'] != 'LOW':
-                report.append(f"\n[{result['overall_risk']}] {result['method']} {result['endpoint']}")
-                
-                mass_assign = result['tests']['mass_assignment']
-                if mass_assign.get('vulnerable_fields'):
-                    report.append(f"  Mass Assignment: {', '.join(mass_assign['vulnerable_fields'])}")
-                
-                field_enum = result['tests']['field_enumeration']
-                if field_enum.get('sensitive_fields_found', 0) > 0:
-                    report.append(f"  Field Enumeration: {field_enum['sensitive_fields_found']} sensitive fields")
-                
-                auth_bypass = result['tests']['authorization_bypass']
-                if auth_bypass.get('authorization_bypass_possible'):
-                    report.append(f"  Authorization Bypass: {', '.join(auth_bypass['bypass_fields'])}")
-        
-        report.append("")
-        report.append("=" * 80)
-        
-        return "\n".join(report)
+    def _count_by_severity(self, vulnerabilities: List[MassAssignmentVuln]) -> Dict[str, int]:
+        """Count vulnerabilities by severity level."""
+        counts = {level.name: 0 for level in VulnerabilityLevel}
+        for vuln in vulnerabilities:
+            counts[vuln.severity] += 1
+        return {k: v for k, v in counts.items() if v > 0}
+    
+    @staticmethod
+    def _severity_to_int(severity: str) -> int:
+        """Convert severity string to integer for sorting."""
+        severity_order = {
+            'CRITICAL': 5,
+            'HIGH': 4,
+            'MEDIUM': 3,
+            'LOW': 2,
+            'INFO': 1
+        }
+        return severity_order.get(severity, 0)
+
+
+def create_sample_endpoints() -> List[Dict[str, Any]]:
+    """Generate sample API endpoints for testing."""
+    return [
+        {
+            'endpoint': '/api/v1/users/123',
+            'method': 'PUT',
+            'payloads': [
+                {
+                    'name': 'John Updated',
+                    'email': 'john@example.com',
+                    'admin': True,
+                    'role': 'superuser',
+                    'is_active': False
+                }
+            ]
+        },
+        {
+            'endpoint': '/api/v1/users/123',
+            'method': 'PATCH',
+            'payloads': [
+                {
+                    'bio': 'Updated bio',
+                    'balance': 10000,
+                    'subscription_level': 'premium'
+                }
+            ]
+        },
+        {
+            'endpoint': '/api/v1/products',
+            'method': 'POST',
+            'payloads': [
+                {
+                    'name': 'New Product',
+                    'description': 'Product description',
+                    'price': 99.99,
+                    'featured': True,
+                    'is_deleted': False
+                }
+            ]
+        },
+        {
+            'endpoint': '/api/v1/orders/456',
+            'method': 'PUT',
+            'payloads': [
+                {
+                    'status': 'pending',
+                    'total': 150.00,
+                    'is_admin': True,
+                    'permissions': ['read', 'write', 'delete']
+                }
+            ]
+        }
+    ]
 
 
 def main():
-    """Main function."""
+    """Main entry point for the mass assignment scanner."""
     parser = argparse.ArgumentParser(
-        description='Mass Assignment Vulnerability Scanner for REST APIs'
+        description='Mass Assignment Vulnerability Scanner for REST APIs',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  %(prog)s --endpoint /api/users --method POST --payload '{"name":"test","admin":true}'
+  %(prog)s --config endpoints.json --output report.json --format json
+  %(prog)s --demo --verbose --format text
+        '''
     )
-    parser.add_argument('-e', '--endpoints', nargs='+', default=['/api/user/profile', '/api/account/update'],
-                       help='API endpoints to scan')
-    parser.add_argument('-m', '--method', default='POST', choices=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-                       help='HTTP method to use')
-    parser.add_argument('-v', '--verbose', action='store_true',
-                       help='Enable verbose output')
-    parser.add_argument('-o', '--output', help='Output file for report')
-    parser.add_argument('-t', '--timeout', type=int, default=10,
-                       help='Request timeout in seconds')
+    
+    parser.add_argument(
+        '--endpoint',
+        type=str,
+        help='Single endpoint to scan (e.g., /api/v1/users)'
+    )
+    
+    parser.add_argument(
+        '--method',
+        type=str,
+        choices=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+        default='POST',
+        help='HTTP method for the endpoint'
+    )
+    
+    parser.add_argument(
+        '--payload',
+        type=str,
+        help='Request body as JSON string'
+    )
+    
+    parser.add_argument(
+        '--config',
+        type=str,
+        help='Configuration file with multiple endpoints (JSON format)'
+    )
+    
+    parser.add_argument(
+        '--output',
+        type=str,
+        help='Output file for the report'
+    )
+    
+    parser.add_argument(
+        '--format',
+        choices=['json', 'text'],
+        default='json',
+        help='Report output format'
+    )
+    
+    parser.add_argument(
+        '--demo',
+        action='store_true',
+        help='Run with sample data for demonstration'
+    )
+    
+    parser.add_argument(
+        '--verbose',
+        '-v',
+        action='store_true',
+        help='Enable verbose output'
+    )
     
     args = parser.parse_args()
     
-    scanner = MassAssignmentScanner(timeout=args.timeout, verbose=args.verbose)
+    detector = MassAssignmentDetector(verbose=args.verbose)
+    vulnerabilities = []
     
-    endpoints = [(ep, args
+    if args.demo:
+        if args.verbose:
+            print("[*] Running mass assignment scanner in demo mode...", file=sys.stderr)
+        endpoints = create_sample_endpoints()
+        vulnerabilities = detector.scan_endpoints(endpoints)
+    
+    elif args.config:
+        if args.verbose:
+            print(f"[*] Loading configuration from {args.config}", file=sys.stderr)
+        try:
+            with open(args.config, 'r') as f:
+                endpoints = json.load(f)
+            vulnerabilities = detector.scan_endpoints(endpoints)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Error reading config file: {e}", file=sys.stderr)
+            sys.exit(1)
+    
+    elif args.endpoint and args.payload:
+        if args.verbose:
+            print(f"[*] Scanning endpoint: {args.endpoint}", file=sys.stderr)
+        try:
+            payload = json.loads(args.payload)
+            endpoint_config = [{
+                'endpoint': args.endpoint,
+                'method': args.method,
+                'payloads': [payload]
+            }]
+            vulnerabilities = detector.scan_endpoints(endpoint_config)
+        except json.JSONDecodeError as e:
+            print(f"Error parsing payload JSON: {e}", file=sys.stderr)
+            sys.exit(1)
+    
+    else
