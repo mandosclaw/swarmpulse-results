@@ -171,4 +171,161 @@ class UKGridAnalyzer:
             'total_balance_events': len(grid_data),
             'average_balance_mw': round(statistics.mean(balances), 2),
             'max_surplus_mw': round(max(balances), 2),
-            'max_deficit_
+            'max_deficit_mw': round(min(balances), 2),
+            'deficit_hours': len([b for b in balances if b < 0]),
+            'surplus_hours': len([b for b in balances if b > 0]),
+        }
+        
+        return analysis
+    
+    def generate_report(self, grid_data: List[Dict]) -> Dict[str, Any]:
+        """Generate comprehensive analysis report"""
+        self.log("Generating comprehensive report")
+        
+        report = {
+            'metadata': {
+                'analysis_timestamp': self.timestamp,
+                'data_points': len(grid_data),
+                'analysis_period_days': len(set([d['timestamp'].split('T')[0] for d in grid_data]))
+            },
+            'renewable_penetration': self.analyze_renewable_penetration(grid_data),
+            'grid_balance': self.analyze_grid_balance(grid_data),
+            'core_challenges': self.identify_core_challenges(grid_data),
+            'summary': self.generate_summary(grid_data)
+        }
+        
+        self.analysis_results = report
+        return report
+    
+    def generate_summary(self, grid_data: List[Dict]) -> Dict[str, Any]:
+        """Generate executive summary of findings"""
+        penetration = self.analyze_renewable_penetration(grid_data)
+        challenges = self.identify_core_challenges(grid_data)
+        
+        summary = {
+            'achieving_90_percent_target': penetration['hours_above_90_percent'] > 0,
+            'current_capability': f"{penetration['average_renewable_percentage']}% average renewable generation",
+            'target_gap': f"{90 - penetration['average_renewable_percentage']:.1f} percentage points above current average",
+            'key_technical_barriers': [
+                'Variability Management: Wind and solar output varies significantly by hour and season',
+                'Grid Stability: Renewable sources lack natural inertia of synchronous generators',
+                'Energy Storage: Requires unprecedented storage capacity (hundreds of GWh)',
+                'Transmission: Grid infrastructure cannot handle concentrated renewable generation',
+                'Seasonal Balance: Winter solar deficit requires long-duration storage solutions'
+            ],
+            'estimated_storage_requirement_gwh': round(max([d['balance_mw'] for d in grid_data if d['balance_mw'] < 0]) / 1000 * 24, 1),
+            'critical_success_factors': [
+                'Deploy 100+ GWh of energy storage (batteries, hydro, hydrogen)',
+                'Upgrade transmission network significantly',
+                'Implement smart demand response and flexible loads',
+                'Develop synthetic inertia and grid-forming converters',
+                'Integrate cross-border interconnections for smoothing'
+            ]
+        }
+        
+        return summary
+    
+    def export_json(self, filepath: str) -> None:
+        """Export analysis results to JSON file"""
+        with open(filepath, 'w') as f:
+            json.dump(self.analysis_results, f, indent=2, default=str)
+        self.log(f"Analysis results exported to {filepath}")
+    
+    def print_report(self) -> None:
+        """Print analysis report to console"""
+        print("\n" + "="*80)
+        print("UK GRID RENEWABLE ENERGY ANALYSIS REPORT".center(80))
+        print("="*80 + "\n")
+        
+        if not self.analysis_results:
+            print("No analysis results available. Run analysis first.")
+            return
+        
+        report = self.analysis_results
+        
+        # Metadata
+        print("METADATA")
+        print("-" * 80)
+        for key, value in report['metadata'].items():
+            print(f"  {key}: {value}")
+        
+        # Renewable Penetration
+        print("\nRENEWABLE ENERGY PENETRATION")
+        print("-" * 80)
+        penetration = report['renewable_penetration']
+        print(f"  Average Renewable Generation: {penetration['average_renewable_percentage']}%")
+        print(f"  Peak Renewable Generation: {penetration['peak_renewable_percentage']}%")
+        print(f"  Minimum Renewable Generation: {penetration['minimum_renewable_percentage']}%")
+        print(f"  Median Renewable Generation: {penetration['median_renewable_percentage']}%")
+        print(f"  Standard Deviation: {penetration['std_dev_renewable_percentage']}%")
+        print(f"  Hours Above 90%: {penetration['hours_above_90_percent']}")
+        print(f"  Hours Below 50%: {penetration['hours_below_50_percent']}")
+        
+        # Grid Balance
+        print("\nGRID BALANCE ANALYSIS")
+        print("-" * 80)
+        balance = report['grid_balance']
+        print(f"  Average Balance: {balance['average_balance_mw']} MW")
+        print(f"  Maximum Surplus: {balance['max_surplus_mw']} MW")
+        print(f"  Maximum Deficit: {balance['max_deficit_mw']} MW")
+        print(f"  Deficit Hours: {balance['deficit_hours']}")
+        print(f"  Surplus Hours: {balance['surplus_hours']}")
+        
+        # Core Challenges
+        print("\nCORE TECHNICAL CHALLENGES")
+        print("-" * 80)
+        challenges = report['core_challenges']
+        for challenge_name, challenge_data in challenges.items():
+            print(f"\n  {challenge_name.upper().replace('_', ' ')}")
+            print(f"    Description: {challenge_data['description']}")
+            print(f"    Impact: {challenge_data['impact']}")
+        
+        # Summary
+        print("\nEXECUTIVE SUMMARY")
+        print("-" * 80)
+        summary = report['summary']
+        print(f"  Target Achievement (90%+): {'Yes' if summary['achieving_90_percent_target'] else 'No'}")
+        print(f"  Current Capability: {summary['current_capability']}")
+        print(f"  Target Gap: {summary['target_gap']}")
+        print(f"  Estimated Storage Requirement: {summary['estimated_storage_requirement_gwh']} GWh")
+        print("\n  Key Technical Barriers:")
+        for barrier in summary['key_technical_barriers']:
+            print(f"    • {barrier}")
+        print("\n  Critical Success Factors:")
+        for factor in summary['critical_success_factors']:
+            print(f"    • {factor}")
+        
+        print("\n" + "="*80 + "\n")
+
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description='UK Grid Renewable Energy Analysis - Research and document core problems'
+    )
+    parser.add_argument('--days', type=int, default=7, help='Days of grid data to simulate (default: 7)')
+    parser.add_argument('--verbose', action='store_true', help='Enable verbose logging')
+    parser.add_argument('--export-json', type=str, help='Export analysis results to JSON file')
+    
+    args = parser.parse_args()
+    
+    # Create analyzer
+    analyzer = UKGridAnalyzer(verbose=args.verbose)
+    
+    # Generate data and run analysis
+    grid_data = analyzer.generate_synthetic_grid_data(days=args.days)
+    report = analyzer.generate_report(grid_data)
+    
+    # Print report
+    analyzer.print_report()
+    
+    # Export JSON if requested
+    if args.export_json:
+        analyzer.export_json(args.export_json)
+        print(f"✓ Analysis exported to {args.export_json}")
+    
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
