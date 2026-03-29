@@ -3,64 +3,87 @@
 # Task:    User session anomaly scanner
 # Mission: SaaS Breach Detection via Behavioral Analytics
 # Agent:   @sue
-# Date:    2026-03-28T22:06:22.383Z
+# Date:    2026-03-29T13:23:27.303Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: User session anomaly scanner
+User Session Anomaly Scanner for SaaS Breach Detection
 Mission: SaaS Breach Detection via Behavioral Analytics
 Agent: @sue
 Date: 2026
-
-Detects compromised sessions by analyzing login timestamps, IP geolocation,
-and user-agent patterns. Flags impossible travel and concurrent sessions.
+Task: Detect compromised sessions by analyzing login timestamps, IP geolocation, and user-agent patterns
 """
 
-import argparse
 import json
-import math
+import argparse
 import sys
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
-from dataclasses import dataclass, asdict
 from collections import defaultdict
+import math
+import re
+from typing import Dict, List, Tuple, Optional
+from dataclasses import dataclass, asdict
+from enum import Enum
+
+
+class AnomalyType(Enum):
+    """Types of detected anomalies"""
+    IMPOSSIBLE_TRAVEL = "impossible_travel"
+    CONCURRENT_SESSIONS = "concurrent_sessions"
+    IMPOSSIBLE_LOGIN_VELOCITY = "impossible_login_velocity"
+    UNUSUAL_GEOLOCATION = "unusual_geolocation"
+    NEW_USER_AGENT = "new_user_agent"
+    CREDENTIAL_STUFFING = "credential_stuffing"
+    MASS_DOWNLOAD = "mass_download"
+    PRIVILEGE_ESCALATION = "privilege_escalation"
+
+
+@dataclass
+class GeoLocation:
+    """Geographic location coordinates"""
+    latitude: float
+    longitude: float
+    city: str
+    country: str
+    country_code: str
 
 
 @dataclass
 class SessionEvent:
-    """Represents a user session event from audit logs."""
+    """A single session/login event"""
     user_id: str
-    timestamp: str
+    timestamp: datetime
     ip_address: str
     user_agent: str
     action: str
-    location_country: str
-    location_city: str
-    latitude: float
-    longitude: float
+    location: GeoLocation
+    resource_accessed: Optional[str] = None
+    data_downloaded: int = 0
+    privilege_level: Optional[str] = None
 
 
 @dataclass
 class AnomalyAlert:
-    """Represents a detected anomaly."""
-    severity: str
-    alert_type: str
+    """An anomaly detection alert"""
+    anomaly_type: AnomalyType
     user_id: str
-    timestamp: str
-    details: Dict[str, Any]
+    severity: str
+    timestamp: datetime
+    details: Dict
+    confidence: float
 
 
-class GeoDistance:
-    """Simple great-circle distance calculator."""
+class GeoDistanceCalculator:
+    """Calculate geographic distance between coordinates"""
 
     @staticmethod
     def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """
-        Calculate distance between two coordinates in kilometers.
+        Calculate distance in kilometers between two geographic points.
         Uses Haversine formula.
         """
-        R = 6371  # Earth radius in km
+        R = 6371
         lat1_rad = math.radians(lat1)
         lat2_rad = math.radians(lat2)
         delta_lat = math.radians(lat2 - lat1)
@@ -70,133 +93,315 @@ class GeoDistance:
         c = 2 * math.asin(math.sqrt(a))
         return R * c
 
+    @staticmethod
+    def is_impossible_travel(
+        loc1: GeoLocation,
+        time1: datetime,
+        loc2: GeoLocation,
+        time2: datetime,
+        max_speed_kmh: float = 900,
+    ) -> Tuple[bool, float]:
+        """
+        Detect if travel between two locations is physically impossible.
+        Assumes max human travel speed (commercial airline ~900 km/h).
+        Returns (is_impossible, required_speed_kmh)
+        """
+        distance_km = GeoDistanceCalculator.haversine_distance(
+            loc1.latitude, loc1.longitude, loc2.latitude, loc2.longitude
+        )
+        time_diff = abs((time2 - time1).total_seconds()) / 3600
+        if time_diff < 0.1:
+            time_diff = 0.1
+
+        required_speed = distance_km / time_diff
+        is_impossible = required_speed > max_speed_kmh
+        return is_impossible, required_speed
+
 
 class SessionAnomalyScanner:
-    """Detects anomalies in user sessions using behavioral analytics."""
+    """Main anomaly detection engine for user sessions"""
 
     def __init__(
         self,
-        max_travel_speed_kmh: float = 900,
-        max_concurrent_sessions: int = 3,
-        suspicious_ua_patterns: Optional[List[str]] = None,
+        impossible_travel_speed_kmh: float = 900,
+        concurrent_session_threshold: int = 5,
+        login_velocity_threshold: int = 10,
+        mass_download_threshold: int = 1000000,
+        mass_download_window_minutes: int = 10,
     ):
-        """
-        Initialize the scanner with thresholds.
+        self.impossible_travel_speed_kmh = impossible_travel_speed_kmh
+        self.concurrent_session_threshold = concurrent_session_threshold
+        self.login_velocity_threshold = login_velocity_threshold
+        self.mass_download_threshold = mass_download_threshold
+        self.mass_download_window_minutes = mass_download_window_minutes
 
-        Args:
-            max_travel_speed_kmh: Maximum realistic travel speed (km/h)
-            max_concurrent_sessions: Alert if user has more concurrent sessions
-            suspicious_ua_patterns: List of suspicious user-agent patterns
-        """
-        self.max_travel_speed_kmh = max_travel_speed_kmh
-        self.max_concurrent_sessions = max_concurrent_sessions
-        self.suspicious_ua_patterns = suspicious_ua_patterns or [
-            "curl", "wget", "python-requests", "scrapy", "bot",
-            "sqlmap", "nikto", "masscan"
-        ]
         self.user_sessions: Dict[str, List[SessionEvent]] = defaultdict(list)
+        self.user_baselines: Dict[str, Dict] = {}
         self.alerts: List[AnomalyAlert] = []
 
     def add_event(self, event: SessionEvent) -> None:
-        """Add a session event to the scanner."""
+        """Add a session event to the scanner"""
         self.user_sessions[event.user_id].append(event)
 
-    def _parse_timestamp(self, ts_str: str) -> datetime:
-        """Parse ISO format timestamp."""
-        try:
-            return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return datetime.now()
-
-    def _is_suspicious_user_agent(self, user_agent: str) -> bool:
-        """Check if user-agent matches suspicious patterns."""
-        ua_lower = user_agent.lower()
-        return any(pattern.lower() in ua_lower for pattern in self.suspicious_ua_patterns)
-
-    def _check_impossible_travel(self, user_id: str) -> None:
-        """
-        Check for impossible travel: two logins too far apart in too little time.
-        """
-        events = sorted(self.user_sessions[user_id], key=lambda e: self._parse_timestamp(e.timestamp))
-
-        for i in range(len(events) - 1):
-            current = events[i]
-            next_event = events[i + 1]
-
-            current_time = self._parse_timestamp(current.timestamp)
-            next_time = self._parse_timestamp(next_event.timestamp)
-            time_diff_hours = (next_time - current_time).total_seconds() / 3600
-
-            if time_diff_hours <= 0:
+    def build_baselines(self) -> None:
+        """Build behavioral baselines from historical data"""
+        for user_id, events in self.user_sessions.items():
+            if not events:
                 continue
 
-            distance_km = GeoDistance.haversine_distance(
-                current.latitude, current.longitude,
-                next_event.latitude, next_event.longitude
+            sorted_events = sorted(events, key=lambda e: e.timestamp)
+            self.user_baselines[user_id] = {
+                "common_ips": self._extract_common_values([e.ip_address for e in sorted_events]),
+                "common_user_agents": self._extract_common_values([e.user_agent for e in sorted_events]),
+                "common_locations": self._extract_common_locations([e.location for e in sorted_events]),
+                "typical_login_hours": self._extract_login_hours([e.timestamp for e in sorted_events]),
+                "total_events": len(sorted_events),
+            }
+
+    def scan_all_events(self) -> List[AnomalyAlert]:
+        """Scan all events and detect anomalies"""
+        self.alerts = []
+        self.build_baselines()
+
+        for user_id in self.user_sessions:
+            events = sorted(self.user_sessions[user_id], key=lambda e: e.timestamp)
+            self._scan_user_events(user_id, events)
+
+        return self.alerts
+
+    def _scan_user_events(self, user_id: str, events: List[SessionEvent]) -> None:
+        """Scan all events for a specific user"""
+        for i, event in enumerate(events):
+            if i > 0:
+                prev_event = events[i - 1]
+                self._check_impossible_travel(user_id, prev_event, event)
+
+            self._check_user_agent_anomaly(user_id, event)
+            self._check_concurrent_sessions(user_id, event, events)
+            self._check_login_velocity(user_id, event, events)
+            self._check_mass_download(user_id, event, events)
+            self._check_geolocation_anomaly(user_id, event)
+            self._check_privilege_escalation(user_id, event, events)
+
+    def _check_impossible_travel(
+        self, user_id: str, prev_event: SessionEvent, current_event: SessionEvent
+    ) -> None:
+        """Check for impossible travel between two events"""
+        is_impossible, required_speed = GeoDistanceCalculator.is_impossible_travel(
+            prev_event.location,
+            prev_event.timestamp,
+            current_event.location,
+            current_event.timestamp,
+            self.impossible_travel_speed_kmh,
+        )
+
+        if is_impossible:
+            time_diff_hours = (current_event.timestamp - prev_event.timestamp).total_seconds() / 3600
+            alert = AnomalyAlert(
+                anomaly_type=AnomalyType.IMPOSSIBLE_TRAVEL,
+                user_id=user_id,
+                severity="high",
+                timestamp=current_event.timestamp,
+                details={
+                    "from_location": asdict(prev_event.location),
+                    "to_location": asdict(current_event.location),
+                    "time_difference_hours": round(time_diff_hours, 2),
+                    "required_speed_kmh": round(required_speed, 2),
+                    "max_possible_speed_kmh": self.impossible_travel_speed_kmh,
+                },
+                confidence=0.95,
+            )
+            self.alerts.append(alert)
+
+    def _check_user_agent_anomaly(self, user_id: str, event: SessionEvent) -> None:
+        """Check for unusual user agent"""
+        baseline = self.user_baselines.get(user_id, {})
+        common_agents = baseline.get("common_user_agents", [])
+
+        if common_agents and event.user_agent not in common_agents:
+            alert = AnomalyAlert(
+                anomaly_type=AnomalyType.NEW_USER_AGENT,
+                user_id=user_id,
+                severity="medium",
+                timestamp=event.timestamp,
+                details={
+                    "user_agent": event.user_agent,
+                    "historical_agents": common_agents[:5],
+                },
+                confidence=0.7,
+            )
+            self.alerts.append(alert)
+
+    def _check_concurrent_sessions(
+        self, user_id: str, event: SessionEvent, all_events: List[SessionEvent]
+    ) -> None:
+        """Check for too many concurrent sessions"""
+        concurrent_count = sum(
+            1
+            for e in all_events
+            if e.timestamp <= event.timestamp
+            and e.timestamp > event.timestamp - timedelta(minutes=5)
+            and e.ip_address != event.ip_address
+        )
+
+        if concurrent_count >= self.concurrent_session_threshold:
+            alert = AnomalyAlert(
+                anomaly_type=AnomalyType.CONCURRENT_SESSIONS,
+                user_id=user_id,
+                severity="high",
+                timestamp=event.timestamp,
+                details={
+                    "concurrent_session_count": concurrent_count,
+                    "threshold": self.concurrent_session_threshold,
+                    "ip_addresses": list(
+                        set(
+                            e.ip_address
+                            for e in all_events
+                            if e.timestamp <= event.timestamp
+                            and e.timestamp > event.timestamp - timedelta(minutes=5)
+                        )
+                    )[:10],
+                },
+                confidence=0.85,
+            )
+            self.alerts.append(alert)
+
+    def _check_login_velocity(self, user_id: str, event: SessionEvent, all_events: List[SessionEvent]) -> None:
+        """Check for impossible login velocity (credential stuffing)"""
+        recent_logins = [
+            e for e in all_events if e.timestamp > event.timestamp - timedelta(minutes=5) and e.action == "login"
+        ]
+
+        if len(recent_logins) >= self.login_velocity_threshold:
+            alert = AnomalyAlert(
+                anomaly_type=AnomalyType.CREDENTIAL_STUFFING,
+                user_id=user_id,
+                severity="critical",
+                timestamp=event.timestamp,
+                details={
+                    "login_attempts_5min": len(recent_logins),
+                    "threshold": self.login_velocity_threshold,
+                    "ips_involved": list(set(e.ip_address for e in recent_logins)),
+                },
+                confidence=0.9,
+            )
+            self.alerts.append(alert)
+
+    def _check_mass_download(self, user_id: str, event: SessionEvent, all_events: List[SessionEvent]) -> None:
+        """Check for mass data downloads"""
+        if event.action != "download":
+            return
+
+        window_start = event.timestamp - timedelta(minutes=self.mass_download_window_minutes)
+        recent_downloads = [
+            e
+            for e in all_events
+            if e.timestamp >= window_start
+            and e.timestamp <= event.timestamp
+            and e.action == "download"
+            and e.ip_address == event.ip_address
+        ]
+
+        total_downloaded = sum(e.data_downloaded for e in recent_downloads)
+
+        if total_downloaded >= self.mass_download_threshold:
+            alert = AnomalyAlert(
+                anomaly_type=AnomalyType.MASS_DOWNLOAD,
+                user_id=user_id,
+                severity="high",
+                timestamp=event.timestamp,
+                details={
+                    "total_bytes_downloaded": total_downloaded,
+                    "threshold_bytes": self.mass_download_threshold,
+                    "download_count": len(recent_downloads),
+                    "time_window_minutes": self.mass_download_window_minutes,
+                    "ip_address": event.ip_address,
+                },
+                confidence=0.88,
+            )
+            self.alerts.append(alert)
+
+    def _check_geolocation_anomaly(self, user_id: str, event: SessionEvent) -> None:
+        """Check for unusual geolocation patterns"""
+        baseline = self.user_baselines.get(user_id, {})
+        common_locations = baseline.get("common_locations", [])
+
+        if common_locations:
+            location_match = any(
+                loc["country_code"] == event.location.country_code for loc in common_locations
             )
 
-            required_speed_kmh = distance_km / time_diff_hours
-
-            if required_speed_kmh > self.max_travel_speed_kmh and distance_km > 100:
-                self.alerts.append(AnomalyAlert(
-                    severity="high",
-                    alert_type="impossible_travel",
+            if not location_match:
+                alert = AnomalyAlert(
+                    anomaly_type=AnomalyType.UNUSUAL_GEOLOCATION,
                     user_id=user_id,
-                    timestamp=next_event.timestamp,
-                    details={
-                        "from_location": f"{current.location_city}, {current.location_country}",
-                        "to_location": f"{next_event.location_city}, {next_event.location_country}",
-                        "distance_km": round(distance_km, 2),
-                        "time_hours": round(time_diff_hours, 2),
-                        "required_speed_kmh": round(required_speed_kmh, 2),
-                        "max_realistic_speed_kmh": self.max_travel_speed_kmh,
-                        "from_ip": current.ip_address,
-                        "to_ip": next_event.ip_address,
-                    }
-                ))
-
-    def _check_concurrent_sessions(self, user_id: str) -> None:
-        """
-        Check for suspicious concurrent sessions.
-        Flags when user has too many simultaneous sessions or sessions from different IPs/UAs.
-        """
-        events = sorted(self.user_sessions[user_id], key=lambda e: self._parse_timestamp(e.timestamp))
-
-        time_window = timedelta(minutes=30)
-
-        for i, current_event in enumerate(events):
-            current_time = self._parse_timestamp(current_event.timestamp)
-            concurrent_events = []
-
-            for other_event in events:
-                if other_event == current_event:
-                    continue
-                other_time = self._parse_timestamp(other_event.timestamp)
-                if abs((current_time - other_time).total_seconds()) < time_window.total_seconds():
-                    concurrent_events.append(other_event)
-
-            if len(concurrent_events) >= self.max_concurrent_sessions - 1:
-                unique_ips = set(e.ip_address for e in [current_event] + concurrent_events)
-                unique_uas = set(e.user_agent for e in [current_event] + concurrent_events)
-
-                self.alerts.append(AnomalyAlert(
                     severity="medium",
-                    alert_type="concurrent_sessions",
-                    user_id=user_id,
-                    timestamp=current_event.timestamp,
+                    timestamp=event.timestamp,
                     details={
-                        "concurrent_count": len(concurrent_events) + 1,
-                        "time_window_minutes": 30,
-                        "unique_ips": list(unique_ips),
-                        "unique_user_agents": list(unique_uas),
-                        "distinct_locations": list(set(
-                            f"{e.location_city}, {e.location_country}"
-                            for e in [current_event] + concurrent_events
-                        )),
-                    }
-                ))
+                        "location": asdict(event.location),
+                        "typical_locations": common_locations[:3],
+                    },
+                    confidence=0.65,
+                )
+                self.alerts.append(alert)
+
+    def _check_privilege_escalation(self, user_id: str, event: SessionEvent, all_events: List[SessionEvent]) -> None:
+        """Check for privilege escalation attempts"""
+        baseline_privilege = None
+        for e in all_events:
+            if e.timestamp < event.timestamp and e.privilege_level:
+                baseline_privilege = e.privilege_level
                 break
 
-    def _check_suspicious_user_agent(self, user_id: str) -> None:
-        """Check for suspicious user-agent strings."""
-        for event in self.user_sessions[user_id]:
+        if (
+            baseline_privilege
+            and event.privilege_level
+            and self._privilege_level_rank(event.privilege_level) > self._privilege_level_rank(baseline_privilege)
+        ):
+            recent_escalations = sum(
+                1
+                for e in all_events
+                if e.timestamp > event.timestamp - timedelta(hours=1)
+                and e.privilege_level
+                and self._privilege_level_rank(e.privilege_level) > self._privilege_level_rank(baseline_privilege)
+            )
+
+            if recent_escalations >= 2:
+                alert = AnomalyAlert(
+                    anomaly_type=AnomalyType.PRIVILEGE_ESCALATION,
+                    user_id=user_id,
+                    severity="critical",
+                    timestamp=event.timestamp,
+                    details={
+                        "from_privilege": baseline_privilege,
+                        "to_privilege": event.privilege_level,
+                        "recent_escalations_1h": recent_escalations,
+                    },
+                    confidence=0.92,
+                )
+                self.alerts.append(alert)
+
+    @staticmethod
+    def _privilege_level_rank(level: str) -> int:
+        """Return numeric rank for privilege levels"""
+        ranks = {"user": 1, "admin": 2, "superadmin": 3}
+        return ranks.get(level.lower(), 0)
+
+    @staticmethod
+    def _extract_common_values(values: List[str], top_n: int = 5) -> List[str]:
+        """Extract most common values from a list"""
+        if not values:
+            return []
+        value_counts = {}
+        for v in values:
+            value_counts[v] = value_counts.get(v, 0) + 1
+        return sorted(value_counts.keys(), key=lambda x: value_counts[x], reverse=True)[:top_n]
+
+    @staticmethod
+    def _extract_common_locations(locations: List[GeoLocation], top_n: int = 3) -> List[Dict]:
+        """Extract most common locations"""
+        if not locations:
+            return []
+        location_counts = {}
+        for loc in locations:
+            key = (loc.country_code, loc.city)
