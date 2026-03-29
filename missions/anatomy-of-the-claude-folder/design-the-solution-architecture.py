@@ -241,6 +241,16 @@ class ClaudeFolderAnalyzer:
             }
         }
 
+    def _calculate_risk_score(self, risk_level: str) -> float:
+        """Convert risk level to numeric score."""
+        risk_mapping = {
+            "low": 1.0,
+            "medium": 2.5,
+            "high": 4.0,
+            "critical": 5.0
+        }
+        return risk_mapping.get(risk_level, 0.0)
+
     def analyze_architecture(self) -> FolderArchitecture:
         """Perform complete architectural analysis."""
         components = []
@@ -249,4 +259,151 @@ class ClaudeFolderAnalyzer:
         for comp_name, comp_data in self.components_database.items():
             analysis = ComponentAnalysis(
                 name=comp_name,
-                component_type=comp_data
+                component_type=comp_data["type"],
+                purpose=comp_data["purpose"],
+                typical_contents=comp_data["typical_contents"],
+                risk_level=comp_data["risk_level"],
+                trade_offs=comp_data["trade_offs"],
+                recommendations=comp_data["recommendations"],
+                persistence=comp_data["persistence"]
+            )
+            components.append(analysis)
+            risk_scores.append(self._calculate_risk_score(comp_data["risk_level"]))
+
+        total_risk_score = sum(risk_scores) / len(risk_scores) if risk_scores else 0.0
+
+        storage_efficiency = {
+            "persistent_components": len([c for c in components if c.persistence]),
+            "temporary_components": len([c for c in components if not c.persistence]),
+            "critical_risk_count": len([c for c in components if c.risk_level == "critical"]),
+            "medium_high_risk_count": len([c for c in components if c.risk_level in ["medium", "high"]])
+        }
+
+        security_considerations = [
+            "Implement file-level encryption for sensitive components (credentials, state)",
+            "Use OS-native keychain/credential manager integration",
+            "Sanitize and validate all input from configuration files",
+            "Implement proper file permissions (600 for sensitive files)",
+            "Regular security audits of stored data",
+            "Implement secure deletion for temporary files",
+            "Monitor and log access to credential stores"
+        ]
+
+        optimization_opportunities = [
+            "Implement intelligent cache invalidation based on file modification times",
+            "Use lazy loading for state and config to reduce startup time",
+            "Implement compression for large cache and log files",
+            "Create symlink-based distribution of common config across instances",
+            "Implement streaming for large log files instead of loading entirely",
+            "Use memory-mapped files for frequently accessed state",
+            "Implement background cleanup processes for expired files"
+        ]
+
+        architecture = FolderArchitecture(
+            timestamp=datetime.now().isoformat(),
+            components=components,
+            total_risk_score=total_risk_score,
+            storage_efficiency=storage_efficiency,
+            security_considerations=security_considerations,
+            optimization_opportunities=optimization_opportunities
+        )
+
+        if self.verbose:
+            self._log_analysis(architecture)
+
+        return architecture
+
+    def _log_analysis(self, architecture: FolderArchitecture) -> None:
+        """Log analysis results."""
+        print(f"\n[Analysis Timestamp] {architecture.timestamp}")
+        print(f"[Total Risk Score] {architecture.total_risk_score:.2f}/5.0")
+        print(f"[Components Analyzed] {len(architecture.components)}")
+        print(f"[Persistent Components] {architecture.storage_efficiency['persistent_components']}")
+        print(f"[Critical Risk Items] {architecture.storage_efficiency['critical_risk_count']}")
+
+    def export_analysis(self, architecture: FolderArchitecture, output_path: str) -> None:
+        """Export analysis to JSON file."""
+        export_data = {
+            "timestamp": architecture.timestamp,
+            "total_risk_score": architecture.total_risk_score,
+            "storage_efficiency": architecture.storage_efficiency,
+            "security_considerations": architecture.security_considerations,
+            "optimization_opportunities": architecture.optimization_opportunities,
+            "components": [asdict(c) for c in architecture.components]
+        }
+
+        with open(output_path, 'w') as f:
+            json.dump(export_data, f, indent=2)
+
+        if self.verbose:
+            print(f"Analysis exported to {output_path}")
+
+    def generate_report(self, architecture: FolderArchitecture) -> str:
+        """Generate a human-readable report."""
+        report = []
+        report.append("=" * 80)
+        report.append(".CLAUDE/ FOLDER ARCHITECTURE ANALYSIS REPORT")
+        report.append("=" * 80)
+        report.append(f"\nAnalysis Date: {architecture.timestamp}")
+        report.append(f"Total Risk Score: {architecture.total_risk_score:.2f}/5.0")
+        report.append(f"\n{'COMPONENT SUMMARY':-^80}")
+
+        for component in architecture.components:
+            report.append(f"\n[{component.name.upper()}]")
+            report.append(f"  Type: {component.component_type}")
+            report.append(f"  Risk Level: {component.risk_level}")
+            report.append(f"  Purpose: {component.purpose}")
+            report.append(f"  Persistent: {component.persistence}")
+
+        report.append(f"\n\n{'SECURITY CONSIDERATIONS':-^80}")
+        for i, consideration in enumerate(architecture.security_considerations, 1):
+            report.append(f"{i}. {consideration}")
+
+        report.append(f"\n\n{'OPTIMIZATION OPPORTUNITIES':-^80}")
+        for i, opportunity in enumerate(architecture.optimization_opportunities, 1):
+            report.append(f"{i}. {opportunity}")
+
+        report.append("\n" + "=" * 80)
+
+        return "\n".join(report)
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Design and analyze the .claude/ folder architecture"
+    )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable verbose output"
+    )
+    parser.add_argument(
+        "-e", "--export",
+        type=str,
+        metavar="PATH",
+        help="Export analysis to JSON file"
+    )
+    parser.add_argument(
+        "-r", "--report",
+        action="store_true",
+        help="Generate and print text report"
+    )
+
+    args = parser.parse_args()
+
+    analyzer = ClaudeFolderAnalyzer(verbose=args.verbose)
+    architecture = analyzer.analyze_architecture()
+
+    if args.export:
+        analyzer.export_analysis(architecture, args.export)
+
+    if args.report:
+        report = analyzer.generate_report(architecture)
+        print(report)
+    elif not args.export:
+        print(analyzer.generate_report(architecture))
+
+
+if __name__ == "__main__":
+    main()
