@@ -1,378 +1,367 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────
-# Task:    Build /monitor page UI
-# Mission: Agent Activity Monitor — Real-time Dashboard for Swarm Health
+# Task:    Build monitor page UI
+# Mission: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
 # Agent:   @bolt
-# Date:    2026-03-29T13:09:33.434Z
+# Date:    2026-03-29T13:15:13.667Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Build /monitor page UI
-MISSION: Agent Activity Monitor — Real-time Dashboard for Swarm Health
+TASK: Build monitor page UI
+MISSION: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
 AGENT: @bolt
 DATE: 2024
 
-This module generates a TypeScript React component for the /monitor page
-that displays SwarmPulse agent activity metrics, task status breakdowns,
-and blocked tasks list using the zinc design system.
+Real-time monitoring dashboard tracking agent health, task throughput, error rates,
+and performance metrics across the entire swarm.
 """
 
-import json
 import argparse
-from datetime import datetime, timedelta
-from dataclasses import dataclass, asdict
-from typing import list, dict, Any
+import json
+import time
 import random
+import threading
+from datetime import datetime, timedelta
+from collections import defaultdict, deque
+from dataclasses import dataclass, asdict
+from typing import Dict, List, Optional
+from enum import Enum
+
+
+class AgentStatus(Enum):
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    UNHEALTHY = "unhealthy"
+    OFFLINE = "offline"
 
 
 @dataclass
 class AgentMetric:
-    """Represents an agent's current metrics."""
     agent_id: str
-    status: str
-    tasks_completed: int
-    tasks_active: int
-    tasks_blocked: int
+    timestamp: float
     cpu_usage: float
     memory_usage: float
-    last_heartbeat: str
-
-
-@dataclass
-class TaskMetric:
-    """Represents a task's status."""
-    task_id: str
-    name: str
+    task_count: int
+    completed_tasks: int
+    failed_tasks: int
+    avg_response_time_ms: float
+    error_rate: float
     status: str
-    assigned_agent: str
-    priority: str
-    created_at: str
-    blocked_reason: str = ""
-    progress: int = 0
+    uptime_seconds: float
+    last_heartbeat: float
 
 
 @dataclass
-class SystemMetric:
-    """Represents overall system health."""
+class SwarmMetric:
+    timestamp: float
     total_agents: int
-    active_agents: int
-    idle_agents: int
+    healthy_agents: int
+    degraded_agents: int
+    unhealthy_agents: int
+    offline_agents: int
     total_tasks: int
     completed_tasks: int
-    blocked_tasks: int
-    avg_task_duration_seconds: float
-    throughput_tasks_per_hour: float
-    system_health_percent: float
+    failed_tasks: int
+    avg_throughput_tasks_per_sec: float
+    overall_error_rate: float
+    avg_cpu_usage: float
+    avg_memory_usage: float
 
 
-def generate_sample_agents(count: int = 8) -> list[AgentMetric]:
-    """Generate sample agent metrics."""
-    statuses = ["active", "idle", "busy"]
-    agents = []
-    
-    for i in range(count):
-        status = random.choices(statuses, weights=[0.5, 0.3, 0.2])[0]
-        agents.append(AgentMetric(
-            agent_id=f"agent-{i+1:03d}",
-            status=status,
-            tasks_completed=random.randint(10, 500),
-            tasks_active=random.randint(0, 5) if status in ["active", "busy"] else 0,
-            tasks_blocked=random.randint(0, 3),
-            cpu_usage=round(random.uniform(5, 95) if status != "idle" else random.uniform(0, 20), 1),
-            memory_usage=round(random.uniform(10, 80), 1),
-            last_heartbeat=(datetime.now() - timedelta(seconds=random.randint(0, 60))).isoformat()
-        ))
-    
-    return agents
-
-
-def generate_sample_tasks(count: int = 15) -> list[TaskMetric]:
-    """Generate sample task metrics."""
-    statuses = ["completed", "active", "blocked", "queued"]
-    priorities = ["low", "medium", "high", "critical"]
-    blocked_reasons = [
-        "",
-        "Waiting for dependency task-012",
-        "Resource unavailable",
-        "Agent capacity full",
-        "External API timeout"
-    ]
-    
-    tasks = []
-    base_time = datetime.now() - timedelta(hours=24)
-    
-    for i in range(count):
-        status = random.choices(statuses, weights=[0.5, 0.25, 0.15, 0.1])[0]
-        blocked_reason = blocked_reasons[random.randint(0, len(blocked_reasons)-1)] if status == "blocked" else ""
-        progress = 100 if status == "completed" else random.randint(0, 99) if status == "active" else 0
+class AgentActivityMonitor:
+    def __init__(self, window_size: int = 300, threshold_cpu: float = 80.0,
+                 threshold_memory: float = 85.0, threshold_error_rate: float = 10.0,
+                 heartbeat_timeout: float = 30.0):
+        self.window_size = window_size
+        self.threshold_cpu = threshold_cpu
+        self.threshold_memory = threshold_memory
+        self.threshold_error_rate = threshold_error_rate
+        self.heartbeat_timeout = heartbeat_timeout
         
-        tasks.append(TaskMetric(
-            task_id=f"task-{i+1:03d}",
-            name=f"Process batch {i+1}",
-            status=status,
-            assigned_agent=f"agent-{random.randint(1, 8):03d}" if status != "queued" else "",
-            priority=random.choice(priorities),
-            created_at=(base_time + timedelta(hours=random.randint(0, 24))).isoformat(),
-            blocked_reason=blocked_reason,
-            progress=progress
-        ))
+        self.agents: Dict[str, Dict] = {}
+        self.metrics_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=window_size))
+        self.swarm_history: deque = deque(maxlen=window_size)
+        self.lock = threading.RLock()
+        self.running = False
+        self.monitor_thread = None
+        
+    def update_agent_metric(self, metric: AgentMetric) -> None:
+        with self.lock:
+            agent_id = metric.agent_id
+            
+            if agent_id not in self.agents:
+                self.agents[agent_id] = {
+                    'created_at': time.time(),
+                    'total_tasks_processed': 0,
+                    'total_tasks_failed': 0
+                }
+            
+            status = self._determine_agent_status(metric)
+            metric.status = status.value
+            
+            self.agents[agent_id]['last_metric'] = metric
+            self.agents[agent_id]['total_tasks_processed'] += metric.completed_tasks
+            self.agents[agent_id]['total_tasks_failed'] += metric.failed_tasks
+            
+            self.metrics_history[agent_id].append(asdict(metric))
     
-    return tasks
-
-
-def calculate_system_metrics(agents: list[AgentMetric], tasks: list[TaskMetric]) -> SystemMetric:
-    """Calculate overall system metrics."""
-    active_count = sum(1 for a in agents if a.status in ["active", "busy"])
-    idle_count = sum(1 for a in agents if a.status == "idle")
-    completed = sum(1 for t in tasks if t.status == "completed")
-    blocked = sum(1 for t in tasks if t.status == "blocked")
+    def _determine_agent_status(self, metric: AgentMetric) -> AgentStatus:
+        current_time = time.time()
+        heartbeat_age = current_time - metric.last_heartbeat
+        
+        if heartbeat_age > self.heartbeat_timeout:
+            return AgentStatus.OFFLINE
+        
+        issues = 0
+        if metric.cpu_usage > self.threshold_cpu:
+            issues += 1
+        if metric.memory_usage > self.threshold_memory:
+            issues += 1
+        if metric.error_rate > self.threshold_error_rate:
+            issues += 1
+        
+        if issues >= 2:
+            return AgentStatus.UNHEALTHY
+        elif issues == 1:
+            return AgentStatus.DEGRADED
+        
+        return AgentStatus.HEALTHY
     
-    total_completed = sum(a.tasks_completed for a in agents)
-    avg_duration = (total_completed / max(len(agents), 1)) * 45 if total_completed > 0 else 0
-    throughput = (total_completed / 24.0) if total_completed > 0 else 0
+    def compute_swarm_metrics(self) -> SwarmMetric:
+        with self.lock:
+            if not self.agents:
+                return SwarmMetric(
+                    timestamp=time.time(),
+                    total_agents=0,
+                    healthy_agents=0,
+                    degraded_agents=0,
+                    unhealthy_agents=0,
+                    offline_agents=0,
+                    total_tasks=0,
+                    completed_tasks=0,
+                    failed_tasks=0,
+                    avg_throughput_tasks_per_sec=0.0,
+                    overall_error_rate=0.0,
+                    avg_cpu_usage=0.0,
+                    avg_memory_usage=0.0
+                )
+            
+            status_counts = defaultdict(int)
+            total_cpu = 0.0
+            total_memory = 0.0
+            total_completed = 0
+            total_failed = 0
+            total_active_tasks = 0
+            response_times = []
+            
+            current_time = time.time()
+            
+            for agent_id, agent_data in self.agents.items():
+                if 'last_metric' not in agent_data:
+                    continue
+                
+                metric = agent_data['last_metric']
+                status = AgentStatus(metric.status)
+                status_counts[status] += 1
+                
+                total_cpu += metric.cpu_usage
+                total_memory += metric.memory_usage
+                total_completed += metric.completed_tasks
+                total_failed += metric.failed_tasks
+                total_active_tasks += metric.task_count
+                response_times.append(metric.avg_response_time_ms)
+            
+            agent_count = len([a for a in self.agents.values() if 'last_metric' in a])
+            
+            if agent_count == 0:
+                avg_cpu = 0.0
+                avg_memory = 0.0
+                overall_error_rate = 0.0
+                avg_throughput = 0.0
+            else:
+                avg_cpu = total_cpu / agent_count
+                avg_memory = total_memory / agent_count
+                total_tasks = total_completed + total_failed
+                overall_error_rate = (total_failed / total_tasks * 100) if total_tasks > 0 else 0.0
+                
+                time_window = self.window_size if len(self.swarm_history) == self.window_size else 1
+                avg_throughput = (total_completed / time_window) if time_window > 0 else 0.0
+            
+            swarm_metric = SwarmMetric(
+                timestamp=current_time,
+                total_agents=len(self.agents),
+                healthy_agents=status_counts.get(AgentStatus.HEALTHY, 0),
+                degraded_agents=status_counts.get(AgentStatus.DEGRADED, 0),
+                unhealthy_agents=status_counts.get(AgentStatus.UNHEALTHY, 0),
+                offline_agents=status_counts.get(AgentStatus.OFFLINE, 0),
+                total_tasks=total_active_tasks,
+                completed_tasks=total_completed,
+                failed_tasks=total_failed,
+                avg_throughput_tasks_per_sec=avg_throughput,
+                overall_error_rate=overall_error_rate,
+                avg_cpu_usage=avg_cpu,
+                avg_memory_usage=avg_memory
+            )
+            
+            self.swarm_history.append(asdict(swarm_metric))
+            return swarm_metric
     
-    health = min(100, (active_count / max(len(agents), 1)) * 80 + 
-                 ((len(tasks) - blocked) / max(len(tasks), 1)) * 20)
+    def get_dashboard_data(self) -> Dict:
+        with self.lock:
+            swarm_metric = self.compute_swarm_metrics()
+            
+            agents_data = []
+            for agent_id, agent_data in self.agents.items():
+                if 'last_metric' in agent_data:
+                    metric = agent_data['last_metric']
+                    agents_data.append({
+                        'agent_id': agent_id,
+                        'status': metric.status,
+                        'cpu_usage': round(metric.cpu_usage, 2),
+                        'memory_usage': round(metric.memory_usage, 2),
+                        'active_tasks': metric.task_count,
+                        'completed_tasks': metric.completed_tasks,
+                        'failed_tasks': metric.failed_tasks,
+                        'avg_response_time_ms': round(metric.avg_response_time_ms, 2),
+                        'error_rate': round(metric.error_rate, 2),
+                        'uptime_seconds': round(metric.uptime_seconds, 0),
+                        'timestamp': datetime.fromtimestamp(metric.timestamp).isoformat()
+                    })
+            
+            agents_data.sort(key=lambda x: (
+                {'healthy': 0, 'degraded': 1, 'unhealthy': 2, 'offline': 3}.get(x['status'], 4),
+                x['agent_id']
+            ))
+            
+            return {
+                'timestamp': datetime.fromtimestamp(swarm_metric.timestamp).isoformat(),
+                'swarm_health': {
+                    'total_agents': swarm_metric.total_agents,
+                    'healthy_agents': swarm_metric.healthy_agents,
+                    'degraded_agents': swarm_metric.degraded_agents,
+                    'unhealthy_agents': swarm_metric.unhealthy_agents,
+                    'offline_agents': swarm_metric.offline_agents,
+                    'health_percentage': round(
+                        (swarm_metric.healthy_agents / swarm_metric.total_agents * 100)
+                        if swarm_metric.total_agents > 0 else 0, 2
+                    )
+                },
+                'task_metrics': {
+                    'total_tasks': swarm_metric.total_tasks,
+                    'completed_tasks': swarm_metric.completed_tasks,
+                    'failed_tasks': swarm_metric.failed_tasks,
+                    'success_rate': round(
+                        (swarm_metric.completed_tasks / (swarm_metric.completed_tasks + swarm_metric.failed_tasks) * 100)
+                        if (swarm_metric.completed_tasks + swarm_metric.failed_tasks) > 0 else 0, 2
+                    ),
+                    'avg_throughput_tasks_per_sec': round(swarm_metric.avg_throughput_tasks_per_sec, 2),
+                    'overall_error_rate': round(swarm_metric.overall_error_rate, 2)
+                },
+                'resource_metrics': {
+                    'avg_cpu_usage': round(swarm_metric.avg_cpu_usage, 2),
+                    'avg_memory_usage': round(swarm_metric.avg_memory_usage, 2)
+                },
+                'agents': agents_data
+            }
     
-    return SystemMetric(
-        total_agents=len(agents),
-        active_agents=active_count,
-        idle_agents=idle_count,
-        total_tasks=len(tasks),
-        completed_tasks=completed,
-        blocked_tasks=blocked,
-        avg_task_duration_seconds=round(avg_duration, 2),
-        throughput_tasks_per_hour=round(throughput, 2),
-        system_health_percent=round(health, 1)
-    )
-
-
-def generate_tsx_component(system_metrics: SystemMetric, 
-                          agents: list[AgentMetric],
-                          tasks: list[TaskMetric]) -> str:
-    """Generate the complete TypeScript React component."""
+    def render_text_dashboard(self) -> str:
+        data = self.get_dashboard_data()
+        
+        lines = []
+        lines.append("\n" + "=" * 100)
+        lines.append(f"SwarmPulse Agent Activity Monitor | {data['timestamp']}")
+        lines.append("=" * 100)
+        
+        # Swarm Health
+        swarm = data['swarm_health']
+        lines.append(f"\n📊 SWARM HEALTH")
+        lines.append(f"  Total Agents: {swarm['total_agents']} | "
+                    f"Healthy: {swarm['healthy_agents']} | "
+                    f"Degraded: {swarm['degraded_agents']} | "
+                    f"Unhealthy: {swarm['unhealthy_agents']} | "
+                    f"Offline: {swarm['offline_agents']}")
+        health_bar = self._create_health_bar(swarm['health_percentage'])
+        lines.append(f"  Health: {health_bar} {swarm['health_percentage']:.1f}%")
+        
+        # Task Metrics
+        tasks = data['task_metrics']
+        lines.append(f"\n📈 TASK METRICS")
+        lines.append(f"  Completed: {tasks['completed_tasks']} | "
+                    f"Failed: {tasks['failed_tasks']} | "
+                    f"Active: {tasks['total_tasks']}")
+        lines.append(f"  Success Rate: {tasks['success_rate']:.2f}% | "
+                    f"Error Rate: {tasks['overall_error_rate']:.2f}%")
+        lines.append(f"  Throughput: {tasks['avg_throughput_tasks_per_sec']:.2f} tasks/sec")
+        
+        # Resource Metrics
+        resources = data['resource_metrics']
+        lines.append(f"\n💾 RESOURCE METRICS")
+        lines.append(f"  Avg CPU: {resources['avg_cpu_usage']:.2f}% | "
+                    f"Avg Memory: {resources['avg_memory_usage']:.2f}%")
+        
+        # Top Agents Table
+        if data['agents']:
+            lines.append(f"\n📋 TOP AGENTS (by status)")
+            lines.append("-" * 100)
+            lines.append(f"{'Agent ID':<20} {'Status':<12} {'CPU':<8} {'Memory':<8} "
+                        f"{'Tasks':<8} {'Error%':<8} {'Response(ms)':<12}")
+            lines.append("-" * 100)
+            
+            for agent in data['agents'][:15]:
+                status_icon = {
+                    'healthy': '✓',
+                    'degraded': '⚠',
+                    'unhealthy': '✗',
+                    'offline': '○'
+                }.get(agent['status'], '?')
+                
+                lines.append(
+                    f"{agent['agent_id']:<20} "
+                    f"{status_icon} {agent['status']:<10} "
+                    f"{agent['cpu_usage']:>6.1f}% "
+                    f"{agent['memory_usage']:>6.1f}% "
+                    f"{agent['active_tasks']:>6} "
+                    f"{agent['error_rate']:>6.1f}% "
+                    f"{agent['avg_response_time_ms']:>10.2f}ms"
+                )
+        
+        lines.append("=" * 100 + "\n")
+        return "\n".join(lines)
     
-    blocked_tasks = [t for t in tasks if t.status == "blocked"]
-    task_statuses = {
-        "completed": sum(1 for t in tasks if t.status == "completed"),
-        "active": sum(1 for t in tasks if t.status == "active"),
-        "blocked": sum(1 for t in tasks if t.status == "blocked"),
-        "queued": sum(1 for t in tasks if t.status == "queued")
-    }
+    def _create_health_bar(self, percentage: float, width: int = 20) -> str:
+        filled = int(width * percentage / 100)
+        empty = width - filled
+        
+        color_start = "\033[92m" if percentage >= 80 else "\033[93m" if percentage >= 50 else "\033[91m"
+        color_end = "\033[0m"
+        
+        return f"{color_start}[{'█' * filled}{'░' * empty}]{color_end}"
     
-    tasks_json = json.dumps([asdict(t) for t in blocked_tasks], indent=2)
-    agents_json = json.dumps([asdict(a) for a in agents[:3]], indent=2)
-    metrics_json = json.dumps(asdict(system_metrics), indent=2)
-    
-    tsx_code = f'''import React, {{ useEffect, useState }} from 'react';
-import {{ BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell }} from 'recharts';
-import {{ AlertCircle, CheckCircle, Clock, Zap, AlertTriangle, TrendingUp }} from 'lucide-react';
-
-interface AgentMetric {{
-  agent_id: string;
-  status: string;
-  tasks_completed: number;
-  tasks_active: number;
-  tasks_blocked: number;
-  cpu_usage: number;
-  memory_usage: number;
-  last_heartbeat: string;
-}}
-
-interface TaskMetric {{
-  task_id: string;
-  name: string;
-  status: string;
-  assigned_agent: string;
-  priority: string;
-  created_at: string;
-  blocked_reason: string;
-  progress: number;
-}}
-
-interface SystemMetric {{
-  total_agents: number;
-  active_agents: number;
-  idle_agents: number;
-  total_tasks: number;
-  completed_tasks: number;
-  blocked_tasks: number;
-  avg_task_duration_seconds: number;
-  throughput_tasks_per_hour: number;
-  system_health_percent: number;
-}}
-
-const TaskStatusChart = ({{ taskBreakdown }}: {{ taskBreakdown: Record<string, number> }}) => {{
-  const data = Object.entries(taskBreakdown).map(([status, count]) => ({{
-    name: status.charAt(0).toUpperCase() + status.slice(1),
-    value: count,
-  }}));
-  
-  const COLORS = {{
-    'Completed': '#22c55e',
-    'Active': '#3b82f6',
-    'Blocked': '#ef4444',
-    'Queued': '#f59e0b',
-  }};
-
-  return (
-    <div className="w-full h-64 bg-zinc-900 p-4 rounded-lg border border-zinc-700">
-      <h3 className="text-zinc-100 text-sm font-semibold mb-4">Task Status Breakdown</h3>
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={{data}}
-            cx="50%"
-            cy="50%"
-            innerRadius={{40}}
-            outerRadius={{80}}
-            paddingAngle={{5}}
-            dataKey="value"
-          >
-            {{data.map((entry, index) => (
-              <Cell key={`cell-${{index}}`} fill={{COLORS[entry.name as keyof typeof COLORS] || '#666'}} />
-            ))}}
-          </Pie>
-          <Tooltip 
-            contentStyle={{
-              backgroundColor: '#18181b',
-              border: '1px solid #3f3f46',
-              borderRadius: '4px',
-            }}
-            labelStyle={{ color: '#e4e4e7' }}
-          />
-        </PieChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}};
-
-const BlockedTasksList = ({{ blockedTasks }}: {{ blockedTasks: TaskMetric[] }}) => {{
-  return (
-    <div className="w-full bg-zinc-900 p-4 rounded-lg border border-zinc-700">
-      <div className="flex items-center gap-2 mb-4">
-        <AlertTriangle className="w-5 h-5 text-red-500" />
-        <h3 className="text-zinc-100 text-sm font-semibold">
-          Blocked Tasks ({blockedTasks.length}})
-        </h3>
-      </div>
-      <div className="space-y-3 max-h-96 overflow-y-auto">
-        {{blockedTasks.length === 0 ? (
-          <p className="text-zinc-500 text-sm">No blocked tasks</p>
-        ) : (
-          blockedTasks.map((task) => (
-            <div
-              key={{task.task_id}}
-              className="bg-zinc-800 p-3 rounded-md border border-zinc-700 hover:border-red-500/50 transition-colors"
-            >
-              <div className="flex justify-between items-start mb-2">
-                <span className="text-zinc-100 font-medium text-sm">{{task.task_id}}</span>
-                <span className="text-red-400 text-xs bg-red-900/20 px-2 py-1 rounded">
-                  {{task.priority.toUpperCase()}}
-                </span>
-              </div>
-              <p className="text-zinc-300 text-sm mb-2">{{task.name}}</p>
-              {{task.blocked_reason && (
-                <p className="text-red-400 text-xs">Reason: {{task.blocked_reason}}</p>
-              )}}
-              {{task.assigned_agent && (
-                <p className="text-zinc-400 text-xs mt-1">Agent: {{task.assigned_agent}}</p>
-              )}}
-            </div>
-          ))
-        )}}
-      </div>
-    </div>
-  );
-}};
-
-const StatCard = ({{
-  label,
-  value,
-  icon: Icon,
-  trend,
-  color = 'zinc',
-}}: {{
-  label: string;
-  value: string | number;
-  icon: React.ComponentType<{{ className: string }}>;
-  trend?: string;
-  color?: 'zinc' | 'green' | 'red' | 'blue' | 'amber';
-}}) => {{
-  const bgColors = {{
-    zinc: 'bg-zinc-800',
-    green: 'bg-green-900/20',
-    red: 'bg-red-900/20',
-    blue: 'bg-blue-900/20',
-    amber: 'bg-amber-900/20',
-  }};
-
-  const textColors = {{
-    zinc: 'text-zinc-100',
-    green: 'text-green-400',
-    red: 'text-red-400',
-    blue: 'text-blue-400',
-    amber: 'text-amber-400',
-  }};
-
-  return (
-    <div className="{{bgColors[color]}} p-4 rounded-lg border border-zinc-700 hover:border-zinc-600 transition-colors">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-zinc-400 text-sm font-medium">{{label}}</p>
-          <p className="text-2xl font-bold {{textColors[color]}} mt-2">{{value}}</p>
-          {{trend && (
-            <p className="text-xs text-zinc-400 mt-1">{{trend}}</p>
-          )}}
-        </div>
-        <Icon className="w-6 h-6 {{textColors[color]}} opacity-60" />
-      </div>
-    </div>
-  );
-}};
-
-const AgentStatusCard = ({{ agent }}: {{ agent: AgentMetric }}) => {{
-  const statusColors = {{
-    active: 'bg-green-900/20 text-green-400',
-    idle: 'bg-zinc-800 text-zinc-400',
-    busy: 'bg-blue-900/20 text-blue-400',
-  }};
-
-  return (
-    <div className="bg-zinc-800 p-3 rounded-md border border-zinc-700 text-sm">
-      <div className="flex justify-between items-center mb-2">
-        <span className="font-medium text-zinc-100">{{agent.agent_id}}</span>
-        <span className="{{statusColors[agent.status as keyof typeof statusColors] || 'text-zinc-400'}} px-2 py-1 rounded text-xs font-medium">
-          {{agent.status.toUpperCase()}}
-        </span>
-      </div>
-      <div className="grid grid-cols-2 gap-2 text-xs text-zinc-400">
-        <div>Tasks: <span className="text-zinc-100">{{agent.tasks_completed}}</span></div>
-        <div>CPU: <span className="text-zinc-100">{{agent.cpu_usage}}%</span></div>
-        <div>Active: <span className="text-zinc-100">{{agent.tasks_active}}</span></div>
-        <div>Mem: <span className="text-zinc-100">{{agent.memory_usage}}%</span></div>
-      </div>
-    </div>
-  );
-}};
-
-export default function MonitorPage() {{
-  const [systemMetrics, setSystemMetrics] = useState<SystemMetric | null>(null);
-  const [agents, setAgents] = useState<AgentMetric[]>([]);
-  const [blockedTasks, setBlockedTasks] = useState<TaskMetric[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshTime, setRefreshTime] = useState<string>(new Date().toLocaleTimeString());
-
-  useEffect(() => {{
-    const fetchMetrics = async () => {{
-      try {{
-        const response = await fetch('/api/metrics');
-        const data = await response.json();
-        setSystemMetrics(data.system_metrics);
-        setAgents(data.agents.slice(0, 3));
-        setBlockedTasks(data.blocked_tasks);
-        setRefreshTime(new Date().toLocaleTimeString());
-        setLoading(false);
-      }} catch (error) {{
-        console.error('
+    def get_alerts(self) -> List[Dict]:
+        with self.lock:
+            alerts = []
+            
+            for agent_id, agent_data in self.agents.items():
+                if 'last_metric' not in agent_data:
+                    continue
+                
+                metric = agent_data['last_metric']
+                current_time = time.time()
+                
+                if current_time - metric.last_heartbeat > self.heartbeat_timeout:
+                    alerts.append({
+                        'severity': 'critical',
+                        'agent_id': agent_id,
+                        'message': f'Agent offline for {current_time - metric.last_heartbeat:.0f}s',
+                        'timestamp': datetime.fromtimestamp(current_time).isoformat()
+                    })
+                elif metric.cpu_usage > self.threshold_cpu:
+                    alerts.append({
+                        'severity': 'warning',
+                        'agent_id': agent_id,
+                        'message': f'CPU usage high: {metric.cpu_usage:.1f}%',
+                        'timestamp': datetime.fromtimestamp(metric.timestamp).isoformat()
+                    })
+                
+                if metric.memory_usage >
