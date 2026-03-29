@@ -200,4 +200,106 @@ class ModelBenchmark:
         metrics_list = [asdict(m) for m in self.metrics]
         with open(filepath, 'w') as f:
             json.dump(metrics_list, f, indent=2)
-        print(f"Exported {len
+        print(f"Exported {len(self.metrics)} metrics to {filepath}")
+    
+    def export_summary(self, filepath: str, summary: Dict[str, Any]) -> None:
+        """Export summary statistics to JSON file"""
+        with open(filepath, 'w') as f:
+            json.dump(summary, f, indent=2)
+        print(f"Exported summary to {filepath}")
+    
+    def print_summary(self, summary: Dict[str, Any]) -> None:
+        """Pretty print the summary statistics"""
+        print("\n" + "=" * 80)
+        print(f"BENCHMARK SUMMARY: {summary['model_name']}")
+        print("=" * 80)
+        print(f"Total Trials: {summary['total_trials']}")
+        print(f"Success Rate: {summary['success_rate']:.2%}")
+        
+        print("\nAccuracy:")
+        acc = summary['accuracy']
+        print(f"  Mean:   {acc['mean']:.4f}")
+        print(f"  Median: {acc['median']:.4f}")
+        print(f"  StDev:  {acc['stdev']:.4f}")
+        print(f"  Min:    {acc['min']:.4f}")
+        print(f"  Max:    {acc['max']:.4f}")
+        
+        print("\nLatency (ms):")
+        lat = summary['latency_ms']
+        print(f"  Mean:   {lat['mean']:.2f}")
+        print(f"  Median: {lat['median']:.2f}")
+        print(f"  StDev:  {lat['stdev']:.2f}")
+        print(f"  Min:    {lat['min']:.2f}")
+        print(f"  Max:    {lat['max']:.2f}")
+        print(f"  P95:    {lat['p95']:.2f}")
+        print(f"  P99:    {lat['p99']:.2f}")
+        
+        print("\nCost (USD):")
+        cost = summary['cost_usd']
+        print(f"  Mean:   ${cost['mean']:.6f}")
+        print(f"  Median: ${cost['median']:.6f}")
+        print(f"  Total:  ${cost['total']:.6f}")
+        print(f"  Min:    ${cost['min']:.6f}")
+        print(f"  Max:    ${cost['max']:.6f}")
+        
+        print("\nTokens:")
+        tok = summary['tokens']
+        print(f"  Mean:   {tok['mean']:.0f}")
+        print(f"  Median: {tok['median']:.0f}")
+        print(f"  Total:  {tok['total']}")
+        print(f"  Min:    {tok['min']}")
+        print(f"  Max:    {tok['max']}")
+        
+        print("\nErrors:")
+        err = summary['errors']
+        print(f"  Count: {err['count']}")
+        print(f"  Rate:  {err['rate']:.2%}")
+        if err['messages']:
+            print(f"  Messages: {', '.join(err['messages'])}")
+        
+        print("=" * 80 + "\n")
+
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description="Benchmark and evaluate AI/ML model performance"
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="test-model",
+        help="Model name to benchmark"
+    )
+    parser.add_argument(
+        "--trials",
+        type=int,
+        default=100,
+        help="Number of benchmark trials"
+    )
+    parser.add_argument(
+        "--export-metrics",
+        type=str,
+        help="Path to export raw metrics JSON"
+    )
+    parser.add_argument(
+        "--export-summary",
+        type=str,
+        help="Path to export summary JSON"
+    )
+    
+    args = parser.parse_args()
+    
+    benchmark = ModelBenchmark(args.model, args.trials)
+    summary = benchmark.run_benchmark()
+    benchmark.print_summary(summary)
+    
+    if args.export_metrics:
+        benchmark.export_metrics(args.export_metrics)
+    
+    if args.export_summary:
+        benchmark.export_summary(args.export_summary, summary)
+
+
+if __name__ == "__main__":
+    main()
