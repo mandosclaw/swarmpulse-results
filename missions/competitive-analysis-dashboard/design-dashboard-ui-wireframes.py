@@ -257,4 +257,223 @@ class CompetitorMetricWidget:
                 "show_trend": True,
                 "trend_period": "month",
                 "format": "number",
-                "precision":
+                "precision": 2,
+                "comparison_baseline": "previous_period",
+                "highlight_threshold": 10
+            }
+        )
+
+    @staticmethod
+    def create_competitor_table_widget(position: tuple) -> Widget:
+        """Create a competitor data table widget."""
+        data_source = DataSource(
+            source_id="ds_competitor_table",
+            competitor="All",
+            metric_type="competitor_metrics",
+            update_frequency="daily",
+            api_endpoint="/api/competitors/all"
+        )
+        
+        return Widget(
+            widget_id="w_competitor_table",
+            title="Competitor Overview",
+            widget_type=WidgetType.DATA_TABLE,
+            layout_size=LayoutSize.FULL,
+            position=position,
+            data_source=data_source,
+            refresh_interval=86400,
+            is_interactive=True,
+            config={
+                "sortable": True,
+                "filterable": True,
+                "searchable": True,
+                "paginated": True,
+                "rows_per_page": 20,
+                "columns": ["company", "revenue", "employees", "market_share", "growth_rate"],
+                "row_actions": ["view_details", "export"]
+            }
+        )
+
+
+class DashboardGenerator:
+    """Generates complete dashboard wireframes."""
+
+    @staticmethod
+    def generate_competitive_analysis_dashboard() -> Wireframe:
+        """Generate a complete competitive analysis dashboard wireframe."""
+        builder = WireframeBuilder(
+            wireframe_id="wf_comp_analysis_v1",
+            name="Competitive Analysis Dashboard",
+            description="Comprehensive dashboard for monitoring competitor activity and market trends"
+        )
+
+        # Add Overview Section
+        builder.add_section(
+            section_id="sec_overview",
+            title="Executive Overview",
+            description="High-level KPIs and key metrics",
+            order=1
+        )
+
+        # Add KPI cards
+        builder.add_widget_to_section(
+            "sec_overview",
+            CompetitorMetricWidget.create_kpi_cards_widget((0, 0), "market_leaders")
+        )
+        builder.add_widget_to_section(
+            "sec_overview",
+            CompetitorMetricWidget.create_kpi_cards_widget((1, 0), "avg_price_point")
+        )
+        builder.add_widget_to_section(
+            "sec_overview",
+            CompetitorMetricWidget.create_kpi_cards_widget((2, 0), "feature_count")
+        )
+
+        # Add Market Trends Section
+        builder.add_section(
+            section_id="sec_trends",
+            title="Market Trends",
+            description="Revenue and growth trends over time",
+            order=2
+        )
+
+        builder.add_widget_to_section(
+            "sec_trends",
+            CompetitorMetricWidget.create_revenue_trend_widget((0, 1))
+        )
+        builder.add_widget_to_section(
+            "sec_trends",
+            CompetitorMetricWidget.create_market_share_widget((4, 1))
+        )
+
+        # Add Product Comparison Section
+        builder.add_section(
+            section_id="sec_products",
+            title="Product Comparison",
+            description="Feature and capability comparison",
+            order=3
+        )
+
+        builder.add_widget_to_section(
+            "sec_products",
+            CompetitorMetricWidget.create_product_features_widget((0, 2))
+        )
+
+        # Add Competitor List Section
+        builder.add_section(
+            section_id="sec_competitors",
+            title="Competitor Details",
+            description="Detailed competitor information",
+            order=4
+        )
+
+        builder.add_widget_to_section(
+            "sec_competitors",
+            CompetitorMetricWidget.create_competitor_table_widget((0, 3))
+        )
+
+        return builder.build()
+
+
+class WireframeExporter:
+    """Exports wireframes to various formats."""
+
+    @staticmethod
+    def to_dict(wireframe: Wireframe) -> Dict[str, Any]:
+        """Convert wireframe to dictionary."""
+        return {
+            "wireframe_id": wireframe.wireframe_id,
+            "name": wireframe.name,
+            "description": wireframe.description,
+            "created_at": wireframe.created_at,
+            "target_users": wireframe.target_users,
+            "responsive": wireframe.responsive,
+            "color_scheme": wireframe.color_scheme,
+            "sections": [
+                {
+                    "section_id": section.section_id,
+                    "title": section.title,
+                    "description": section.description,
+                    "order": section.order,
+                    "widgets": [
+                        {
+                            "widget_id": widget.widget_id,
+                            "title": widget.title,
+                            "type": widget.widget_type.value,
+                            "size": widget.layout_size.value,
+                            "position": widget.position,
+                            "interactive": widget.is_interactive,
+                            "refresh_interval": widget.refresh_interval,
+                            "data_source": {
+                                "source_id": widget.data_source.source_id,
+                                "competitor": widget.data_source.competitor,
+                                "metric_type": widget.data_source.metric_type,
+                                "update_frequency": widget.data_source.update_frequency,
+                                "api_endpoint": widget.data_source.api_endpoint
+                            },
+                            "config": widget.config
+                        }
+                        for widget in section.widgets
+                    ]
+                }
+                for section in sorted(wireframe.sections, key=lambda s: s.order)
+            ]
+        }
+
+    @staticmethod
+    def to_json(wireframe: Wireframe, pretty: bool = True) -> str:
+        """Convert wireframe to JSON string."""
+        data = WireframeExporter.to_dict(wireframe)
+        indent = 2 if pretty else None
+        return json.dumps(data, indent=indent)
+
+    @staticmethod
+    def to_ascii_art(wireframe: Wireframe) -> str:
+        """Generate ASCII art representation of wireframe."""
+        output = []
+        output.append("╔" + "═" * 78 + "╗")
+        output.append(f"║ {wireframe.name:^76} ║")
+        output.append("╠" + "═" * 78 + "╣")
+        output.append(f"║ {wireframe.description:^76} ║")
+        output.append("╠" + "═" * 78 + "╣")
+
+        for section in sorted(wireframe.sections, key=lambda s: s.order):
+            output.append(f"║ [{section.title}]" + " " * (64 - len(section.title)) + "║")
+            output.append("║ " + "-" * 76 + " ║")
+
+            for widget in section.widgets:
+                widget_info = f"{widget.title} ({widget.widget_type.value})"
+                output.append(f"║   ├─ {widget_info:<70} ║")
+
+            output.append("║" + " " * 78 + "║")
+
+        output.append("╚" + "═" * 78 + "╝")
+        return "\n".join(output)
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Design dashboard UI wireframes for competitive analysis"
+    )
+    parser.add_argument(
+        "--format",
+        choices=["json", "ascii", "summary"],
+        default="json",
+        help="Output format (default: json)"
+    )
+    parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output"
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        help="Output file path (if not specified, prints to stdout)"
+    )
+
+    args = parser.parse_args()
+
+    # Generate dashboard wireframe
+    dashboard =
