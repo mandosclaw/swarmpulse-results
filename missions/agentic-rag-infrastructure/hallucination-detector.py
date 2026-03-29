@@ -2,169 +2,430 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    Hallucination detector
 # Mission: Agentic RAG Infrastructure
-# Agent:   @quinn
-# Date:    2026-03-23T17:53:10.656Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Agent:   @sue
+# Date:    2026-03-29T13:10:27.188Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
-"""Hallucination detector: checks LLM output against source docs via token overlap + entailment scoring."""
+"""
+Hallucination Detector for Agentic RAG Infrastructure
+Mission: Agentic RAG Infrastructure
+Agent: @sue
+Date: 2024
+Task: Cross-check LLM output against retrieved sources with confidence scoring per claim.
+"""
 
 import argparse
 import json
-import logging
 import re
 import sys
-from dataclasses import dataclass, field
-from typing import Any
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
+from dataclasses import dataclass, asdict
+from typing import Optional
+from difflib import SequenceMatcher
+from collections import Counter
 
 
 @dataclass
 class Claim:
+    """Represents an extracted claim from LLM output."""
     text: str
-    sentence_idx: int
-    supported: bool = False
-    overlap_score: float = 0.0
-    entailment_score: float = 0.0
-    supporting_doc: str = ""
-    flag_reason: str = ""
+    sentence_index: int
+    tokens: list
+
+
+@dataclass
+class HallucinationResult:
+    """Result of hallucination detection for a claim."""
+    claim_text: str
+    claim_index: int
+    confidence_score: float
+    is_hallucination: bool
+    supporting_source: Optional[str]
+    evidence_excerpts: list
+    reasoning: str
 
 
 @dataclass
 class HallucinationReport:
+    """Complete hallucination detection report."""
+    llm_output: str
+    sources: list
     total_claims: int
-    supported_claims: int
-    flagged_claims: int
-    overall_score: float
-    claims: list[Claim]
+    hallucinated_claims: int
+    verified_claims: int
+    average_confidence: float
+    claims_results: list
+    summary: str
 
 
-def split_sentences(text: str) -> list[str]:
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-    return [s.strip() for s in sentences if len(s.strip()) > 20]
+class ClaimExtractor:
+    """Extracts claims from LLM output."""
+    
+    def __init__(self):
+        self.sentence_pattern = re.compile(r'[^.!?]*[.!?]')
+        self.number_pattern = re.compile(r'\d+')
+        self.date_pattern = re.compile(r'\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{4}\b')
+        self.name_pattern = re.compile(r'\b[A-Z][a-z]+(?: [A-Z][a-z]+)*\b')
+    
+    def extract_sentences(self, text: str) -> list:
+        """Extract sentences from text."""
+        sentences = self.sentence_pattern.findall(text)
+        return [s.strip() for s in sentences if s.strip()]
+    
+    def extract_claims(self, text: str) -> list:
+        """Extract factual claims from text."""
+        sentences = self.extract_sentences(text)
+        claims = []
+        
+        for idx, sentence in enumerate(sentences):
+            if len(sentence) > 10:
+                tokens = sentence.lower().split()
+                claim = Claim(
+                    text=sentence,
+                    sentence_index=idx,
+                    tokens=tokens
+                )
+                claims.append(claim)
+        
+        return claims
 
 
-def get_ngrams(text: str, n: int = 2) -> set[str]:
-    tokens = [w.lower().strip(".,;:!?\"'()[]") for w in text.split()]
-    tokens = [t for t in tokens if len(t) > 1]
-    if n == 1:
-        return set(tokens)
-    return {" ".join(tokens[i:i+n]) for i in range(len(tokens) - n + 1)}
+class SourceMatcher:
+    """Matches claims against source documents."""
+    
+    def __init__(self, threshold: float = 0.6):
+        self.threshold = threshold
+    
+    def calculate_similarity(self, claim_tokens: list, source_tokens: list) -> float:
+        """Calculate similarity between claim and source using token overlap."""
+        if not claim_tokens or not source_tokens:
+            return 0.0
+        
+        claim_set = set(claim_tokens)
+        source_set = set(source_tokens)
+        
+        if not claim_set or not source_set:
+            return 0.0
+        
+        overlap = claim_set.intersection(source_set)
+        similarity = len(overlap) / max(len(claim_set), len(source_set))
+        
+        return similarity
+    
+    def find_supporting_evidence(self, claim: Claim, sources: list) -> tuple:
+        """Find supporting evidence for a claim in sources."""
+        best_score = 0.0
+        best_source_idx = -1
+        best_excerpt = ""
+        all_excerpts = []
+        
+        claim_tokens = claim.tokens
+        
+        for source_idx, source in enumerate(sources):
+            source_text = source.get('content', '')
+            source_tokens = source_text.lower().split()
+            
+            score = self.calculate_similarity(claim_tokens, source_tokens)
+            
+            if score > best_score:
+                best_score = score
+                best_source_idx = source_idx
+            
+            if score > 0.2:
+                excerpt = self._extract_excerpt(claim_tokens, source_text)
+                all_excerpts.append({
+                    'source': source.get('id', f'source_{source_idx}'),
+                    'excerpt': excerpt,
+                    'score': score
+                })
+        
+        return best_score, best_source_idx, all_excerpts
+    
+    def _extract_excerpt(self, claim_tokens: list, source_text: str, window: int = 20) -> str:
+        """Extract relevant excerpt from source."""
+        source_tokens = source_text.split()
+        
+        max_match_idx = -1
+        max_match_count = 0
+        
+        for i in range(len(source_tokens)):
+            window_tokens = source_tokens[i:i + window]
+            window_set = set([t.lower() for t in window_tokens])
+            claim_set = set(claim_tokens)
+            match_count = len(window_set.intersection(claim_set))
+            
+            if match_count > max_match_count:
+                max_match_count = match_count
+                max_match_idx = i
+        
+        if max_match_idx >= 0:
+            start = max(0, max_match_idx)
+            end = min(len(source_tokens), max_match_idx + window)
+            excerpt = ' '.join(source_tokens[start:end])
+            return excerpt
+        
+        return source_text[:100] if source_text else ""
 
 
-def token_overlap_score(claim: str, source: str) -> float:
-    claim_tokens = get_ngrams(claim, 1)
-    source_tokens = get_ngrams(source, 1)
-    claim_bigrams = get_ngrams(claim, 2)
-    source_bigrams = get_ngrams(source, 2)
-
-    if not claim_tokens:
-        return 0.0
-
-    unigram_overlap = len(claim_tokens & source_tokens) / len(claim_tokens)
-    bigram_overlap = len(claim_bigrams & source_bigrams) / max(len(claim_bigrams), 1)
-    return 0.4 * unigram_overlap + 0.6 * bigram_overlap
-
-
-def simple_entailment_score(claim: str, source: str) -> float:
-    """Heuristic entailment: checks if key noun phrases from the claim appear in source."""
-    claim_lower = claim.lower()
-    source_lower = source.lower()
-
-    number_pattern = re.compile(r'\b\d+(?:\.\d+)?%?\b')
-    claim_numbers = set(number_pattern.findall(claim_lower))
-    source_numbers = set(number_pattern.findall(source_lower))
-
-    noun_phrases = re.findall(r'\b[a-z][a-z]+(?:\s+[a-z][a-z]+)?\b', claim_lower)
-    content_words = {"agent", "task", "model", "system", "rate", "score", "performance", "error", "failure", "latency", "token", "cost", "metric", "data", "api"}
-    key_phrases = [p for p in noun_phrases if any(cw in p for cw in content_words)]
-
-    if not key_phrases and not claim_numbers:
-        return 0.5
-
-    phrase_support = sum(1 for p in key_phrases if p in source_lower) / max(len(key_phrases), 1)
-    number_support = len(claim_numbers & source_numbers) / max(len(claim_numbers), 1) if claim_numbers else 1.0
-
-    return 0.5 * phrase_support + 0.5 * number_support
-
-
-def check_claim(claim_text: str, sources: list[str], overlap_threshold: float = 0.25, entailment_threshold: float = 0.3) -> Claim:
-    claim = Claim(text=claim_text, sentence_idx=0)
-    best_overlap = 0.0
-    best_entailment = 0.0
-    best_doc = ""
-
-    for i, source in enumerate(sources):
-        overlap = token_overlap_score(claim_text, source)
-        entailment = simple_entailment_score(claim_text, source)
-        combined = 0.5 * overlap + 0.5 * entailment
-
-        if combined > (best_overlap + best_entailment) / 2:
-            best_overlap = overlap
-            best_entailment = entailment
-            best_doc = f"source_{i}"
-
-    claim.overlap_score = round(best_overlap, 3)
-    claim.entailment_score = round(best_entailment, 3)
-    claim.supporting_doc = best_doc
-    claim.supported = best_overlap >= overlap_threshold and best_entailment >= entailment_threshold
-
-    if not claim.supported:
-        if best_overlap < overlap_threshold:
-            claim.flag_reason = f"Low token overlap ({best_overlap:.2f} < {overlap_threshold})"
+class HallucinationDetector:
+    """Detects hallucinations in LLM output."""
+    
+    def __init__(self, confidence_threshold: float = 0.5):
+        self.extractor = ClaimExtractor()
+        self.matcher = SourceMatcher(threshold=0.3)
+        self.confidence_threshold = confidence_threshold
+    
+    def detect(self, llm_output: str, sources: list) -> HallucinationReport:
+        """Detect hallucinations in LLM output."""
+        claims = self.extractor.extract_claims(llm_output)
+        
+        results = []
+        hallucination_count = 0
+        
+        for claim_idx, claim in enumerate(claims):
+            evidence_score, source_idx, excerpts = self.matcher.find_supporting_evidence(
+                claim, sources
+            )
+            
+            confidence = self._calculate_confidence(
+                evidence_score,
+                claim,
+                sources,
+                source_idx
+            )
+            
+            is_hallucination = confidence < self.confidence_threshold
+            
+            if is_hallucination:
+                hallucination_count += 1
+            
+            result = HallucinationResult(
+                claim_text=claim.text,
+                claim_index=claim_idx,
+                confidence_score=confidence,
+                is_hallucination=is_hallucination,
+                supporting_source=sources[source_idx].get('id', f'source_{source_idx}') if source_idx >= 0 else None,
+                evidence_excerpts=[{
+                    'source': e['source'],
+                    'text': e['excerpt'],
+                    'similarity': round(e['score'], 3)
+                } for e in excerpts[:3]],
+                reasoning=self._generate_reasoning(confidence, evidence_score, is_hallucination)
+            )
+            
+            results.append(result)
+        
+        average_confidence = (
+            sum(r.confidence_score for r in results) / len(results)
+            if results else 0.0
+        )
+        
+        report = HallucinationReport(
+            llm_output=llm_output,
+            sources=[{'id': s.get('id', f'source_{i}')} for i, s in enumerate(sources)],
+            total_claims=len(claims),
+            hallucinated_claims=hallucination_count,
+            verified_claims=len(claims) - hallucination_count,
+            average_confidence=round(average_confidence, 3),
+            claims_results=[asdict(r) for r in results],
+            summary=self._generate_summary(len(claims), hallucination_count, average_confidence)
+        )
+        
+        return report
+    
+    def _calculate_confidence(self, evidence_score: float, claim: Claim, sources: list, source_idx: int) -> float:
+        """Calculate confidence score for a claim."""
+        base_score = evidence_score
+        
+        length_factor = min(len(claim.tokens) / 30.0, 1.0)
+        specificity_factor = 0.8 if any(
+            pattern in claim.text.lower()
+            for pattern in ['according to', 'research shows', 'studies', 'data', 'report']
+        ) else 0.9
+        
+        source_quality = 1.0 if source_idx >= 0 else 0.0
+        
+        confidence = (
+            base_score * 0.6 +
+            source_quality * 0.25 +
+            length_factor * specificity_factor * 0.15
+        )
+        
+        return round(min(max(confidence, 0.0), 1.0), 3)
+    
+    def _generate_reasoning(self, confidence: float, evidence_score: float, is_hallucination: bool) -> str:
+        """Generate reasoning for hallucination detection result."""
+        if is_hallucination:
+            return f"Low evidence match ({evidence_score:.2%}). Claim not sufficiently supported by sources."
+        
+        if confidence > 0.8:
+            return f"Strong evidence match ({evidence_score:.2%}). Claim well-supported by sources."
+        
+        return f"Moderate evidence match ({evidence_score:.2%}). Claim partially supported by sources."
+    
+    def _generate_summary(self, total: int, hallucinated: int, avg_confidence: float) -> str:
+        """Generate summary of hallucination detection results."""
+        verified_pct = ((total - hallucinated) / total * 100) if total > 0 else 0
+        
+        if avg_confidence > 0.8:
+            quality = "EXCELLENT"
+        elif avg_confidence > 0.6:
+            quality = "GOOD"
+        elif avg_confidence > 0.4:
+            quality = "FAIR"
         else:
-            claim.flag_reason = f"Low entailment ({best_entailment:.2f} < {entailment_threshold})"
-
-    return claim
-
-
-def analyze_output(llm_output: str, source_docs: list[str], overlap_threshold: float = 0.25, entailment_threshold: float = 0.3) -> HallucinationReport:
-    sentences = split_sentences(llm_output)
-    claims = []
-
-    for idx, sentence in enumerate(sentences):
-        claim = check_claim(sentence, source_docs, overlap_threshold, entailment_threshold)
-        claim.sentence_idx = idx
-        claims.append(claim)
-        status = "SUPPORTED" if claim.supported else "FLAGGED"
-        logger.info(f"  [{status}] Sentence {idx}: overlap={claim.overlap_score}, entailment={claim.entailment_score}")
-
-    supported = sum(1 for c in claims if c.supported)
-    flagged = len(claims) - supported
-    score = supported / max(len(claims), 1)
-
-    return HallucinationReport(total_claims=len(claims), supported_claims=supported, flagged_claims=flagged, overall_score=round(score, 3), claims=claims)
+            quality = "POOR"
+        
+        return (
+            f"Hallucination Detection Summary: {verified_pct:.1f}% of claims verified. "
+            f"Overall quality: {quality}. Average confidence: {avg_confidence:.1%}"
+        )
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Hallucination detector for LLM outputs")
-    parser.add_argument("--output-text", default=None, help="LLM output to check")
-    parser.add_argument("--sources-file", default=None, help="JSON file with source documents")
-    parser.add_argument("--overlap-threshold", type=float, default=0.25)
-    parser.add_argument("--entailment-threshold", type=float, default=0.3)
+def generate_sample_sources() -> list:
+    """Generate sample source documents."""
+    return [
+        {
+            'id': 'source_1',
+            'title': 'Machine Learning Fundamentals',
+            'content': 'Machine learning is a subset of artificial intelligence that focuses on enabling '
+                      'computers to learn from data without being explicitly programmed. Deep learning models '
+                      'have revolutionized computer vision and natural language processing in recent years. '
+                      'Neural networks are inspired by biological neural systems.'
+        },
+        {
+            'id': 'source_2',
+            'title': 'Climate Science Report',
+            'content': 'Global average temperatures have risen by approximately 1.1 degrees Celsius since '
+                      'pre-industrial times. The primary driver of climate change is greenhouse gas emissions, '
+                      'particularly carbon dioxide from fossil fuel combustion. Scientific consensus indicates '
+                      'that human activities are responsible for observed warming.'
+        },
+        {
+            'id': 'source_3',
+            'title': 'Space Exploration Facts',
+            'content': 'The Moon orbits Earth at an average distance of 384,400 kilometers. The Apollo 11 mission '
+                      'successfully landed humans on the Moon in 1969. Mars is the fourth planet from the Sun '
+                      'and has been the target of numerous robotic exploration missions.'
+        }
+    ]
+
+
+def generate_sample_llm_output() -> str:
+    """Generate sample LLM output."""
+    return (
+        'Machine learning is a fascinating field within artificial intelligence. '
+        'Deep learning networks have transformed how computers process images and text. '
+        'The Moon is located 384,400 kilometers from Earth, which is a well-established fact. '
+        'Interestingly, dragons have been observed migrating to Jupiter every summer. '
+        'Global temperatures have increased by approximately 1.1 degrees Celsius due to human activities. '
+        'The ancient Egyptians invented electricity and used it to power their cities. '
+        'Mars has been explored by multiple spacecraft and rovers for decades.'
+    )
+
+
+def output_json(report: HallucinationReport, output_file: Optional[str] = None) -> str:
+    """Convert report to JSON and optionally save to file."""
+    report_dict = asdict(report)
+    json_output = json.dumps(report_dict, indent=2)
+    
+    if output_file:
+        with open(output_file, 'w') as f:
+            f.write(json_output)
+    
+    return json_output
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description='Hallucination Detector for RAG systems'
+    )
+    parser.add_argument(
+        '--llm-output',
+        type=str,
+        default=None,
+        help='LLM output text to analyze for hallucinations'
+    )
+    parser.add_argument(
+        '--sources-file',
+        type=str,
+        default=None,
+        help='JSON file containing source documents'
+    )
+    parser.add_argument(
+        '--confidence-threshold',
+        type=float,
+        default=0.5,
+        help='Confidence threshold for hallucination detection (0-1)'
+    )
+    parser.add_argument(
+        '--output-file',
+        type=str,
+        default=None,
+        help='Output file for JSON report'
+    )
+    parser.add_argument(
+        '--demo',
+        action='store_true',
+        default=False,
+        help='Run demonstration with sample data'
+    )
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        default=False,
+        help='Enable verbose output'
+    )
+    
     args = parser.parse_args()
-
-    if args.output_text:
-        llm_output = args.output_text
+    
+    if args.demo:
+        llm_output = generate_sample_llm_output()
+        sources = generate_sample_sources()
+        
+        if args.verbose:
+            print("=" * 80)
+            print("HALLUCINATION DETECTOR - DEMONSTRATION")
+            print("=" * 80)
+            print("\nLLM Output:")
+            print(llm_output)
+            print("\n" + "=" * 80)
+            print("Sources:")
+            for source in sources:
+                print(f"\n[{source['id']}] {source['title']}")
+                print(source['content'][:100] + "...")
+            print("\n" + "=" * 80)
     else:
-        llm_output = "The SwarmPulse system processes approximately 1500 tasks per day with a 92% completion rate. Each agent handles an average of 15 tasks per hour. The system uses quantum encryption for all API calls. Response latency is consistently below 50 milliseconds for all endpoints. Task scheduling uses priority queues to optimize agent throughput."
-
-    if args.sources_file:
-        with open(args.sources_file) as f:
-            source_docs = json.load(f)
-    else:
-        source_docs = ["The SwarmPulse system processes 1500 tasks daily. Completion rates average around 92% based on last month's data.", "Agents are assigned tasks from a priority queue. Average agent throughput is 15 tasks per hour during peak operation.", "API response times vary between 100-500 milliseconds depending on endpoint and load. Latency is monitored continuously.", "Task scheduling uses priority-based queues to distribute work across available agents efficiently."]
-
-    logger.info(f"Analyzing LLM output: {len(llm_output)} chars against {len(source_docs)} source docs")
-    report = analyze_output(llm_output, source_docs, args.overlap_threshold, args.entailment_threshold)
-
-    output = {"overall_score": report.overall_score, "total_claims": report.total_claims, "supported": report.supported_claims, "flagged": report.flagged_claims, "hallucination_risk": "HIGH" if report.overall_score < 0.5 else "MEDIUM" if report.overall_score < 0.8 else "LOW", "flagged_claims": [{"sentence": c.text[:100], "overlap": c.overlap_score, "entailment": c.entailment_score, "reason": c.flag_reason} for c in report.claims if not c.supported]}
-
-    print(json.dumps(output, indent=2))
-    logger.info(f"Overall hallucination score: {report.overall_score:.1%} supported ({report.flagged_claims} flagged)")
-
-
-if __name__ == "__main__":
-    main()
+        if not args.llm_output:
+            print("Error: --llm-output is required or use --demo for demonstration", file=sys.stderr)
+            sys.exit(1)
+        
+        llm_output = args.llm_output
+        
+        if args.sources_file:
+            try:
+                with open(args.sources_file, 'r') as f:
+                    sources = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError) as e:
+                print(f"Error loading sources file: {e}", file=sys.stderr)
+                sys.exit(1)
+        else:
+            sources = generate_sample_sources()
+    
+    detector = HallucinationDetector(confidence_threshold=args.confidence_threshold)
+    report = detector.detect(llm_output, sources)
+    
+    json_output = output_json(report, args.output_file)
+    
+    print(json_output)
+    
+    if args.verbose:
+        print("\n" + "=" * 80)
+        print("DETAILED ANALYSIS")
+        print("=" * 80)
+        
+        for result in report.claims_results:
+            status = "❌ HALLUCINATION" if result['is_hallucination'] else "✓ VERIFIED"
+            print(f"\n[{result['claim_index']}] {status}")
+            print(f"Confidence: {result['confidence_score']:.1%}")
