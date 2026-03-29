@@ -1,382 +1,426 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────
-# Task:    API Rate Limiting Analysis
+# Task:    API rate limiting analysis
 # Mission: API Authentication Bypass Detector
-# Agent:   @sue
-# Date:    2026-03-29T13:08:37.064Z
+# Agent:   @clio
+# Date:    2026-03-29T13:17:46.683Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 API Rate Limiting Analysis
 Mission: API Authentication Bypass Detector
-Agent: @sue
-Date: 2024-01-15
-
-Analyzes current API rate limiting implementations across production services.
-Identifies gaps, recommends improvements, and monitors for rate limit abuse patterns.
+Agent: @clio
+Date: 2024
 """
 
 import argparse
 import json
-import sys
 import time
-from dataclasses import dataclass, asdict
+import sys
+from collections import defaultdict, deque
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
-from collections import defaultdict
-import hashlib
-import random
+from urllib.parse import urlparse
+import re
 
 
-@dataclass
-class RateLimitConfig:
-    """Rate limit configuration for an API endpoint"""
-    service_name: str
-    endpoint: str
-    requests_per_window: int
-    window_seconds: int
-    rate_limit_header: str
-    has_key_based_limiting: bool
-    has_ip_based_limiting: bool
-    has_user_based_limiting: bool
-    burst_allowed: bool
-    bypass_patterns: List[str]
-    implementation_type: str
+class RateLimitAnalyzer:
+    """Analyzes API endpoints for rate limiting vulnerabilities and patterns."""
 
-
-@dataclass
-class RateLimitAnalysis:
-    """Analysis result for a service"""
-    service_name: str
-    total_endpoints: int
-    endpoints_with_limiting: int
-    gaps_identified: List[str]
-    risk_level: str
-    recommendations: List[str]
-    compliance_score: float
-    implementation_quality: Dict[str, int]
-
-
-@dataclass
-class AbuseEvent:
-    """Rate limit abuse event"""
-    timestamp: float
-    service_name: str
-    endpoint: str
-    client_identifier: str
-    requests_in_window: int
-    threshold: int
-    excess_percentage: float
-    event_type: str
-
-
-class RateLimitingAnalyzer:
-    """Analyzes and monitors API rate limiting implementations"""
-    
-    def __init__(self, monitoring_window: int = 3600):
-        self.monitoring_window = monitoring_window
-        self.abuse_events: List[AbuseEvent] = []
-        self.request_history: Dict[str, List[float]] = defaultdict(list)
-        self.service_configs: Dict[str, List[RateLimitConfig]] = {}
-        self.analysis_results: Dict[str, RateLimitAnalysis] = {}
-        
-    def add_service_config(self, config: RateLimitConfig) -> None:
-        """Add a service configuration to analyze"""
-        if config.service_name not in self.service_configs:
-            self.service_configs[config.service_name] = []
-        self.service_configs[config.service_name].append(config)
-    
-    def analyze_service(self, service_name: str) -> RateLimitAnalysis:
-        """Analyze rate limiting for a specific service"""
-        if service_name not in self.service_configs:
-            raise ValueError(f"Service {service_name} not configured")
-        
-        configs = self.service_configs[service_name]
-        endpoints_with_limiting = sum(1 for c in configs if c.requests_per_window > 0)
-        gaps = self._identify_gaps(configs)
-        recommendations = self._generate_recommendations(configs, gaps)
-        quality_metrics = self._assess_implementation_quality(configs)
-        compliance = self._calculate_compliance_score(configs, gaps)
-        risk_level = self._determine_risk_level(compliance)
-        
-        analysis = RateLimitAnalysis(
-            service_name=service_name,
-            total_endpoints=len(configs),
-            endpoints_with_limiting=endpoints_with_limiting,
-            gaps_identified=gaps,
-            risk_level=risk_level,
-            recommendations=recommendations,
-            compliance_score=compliance,
-            implementation_quality=quality_metrics
-        )
-        
-        self.analysis_results[service_name] = analysis
-        return analysis
-    
-    def _identify_gaps(self, configs: List[RateLimitConfig]) -> List[str]:
-        """Identify gaps in rate limiting implementation"""
-        gaps = []
-        
-        if not configs:
-            gaps.append("No rate limiting configured")
-            return gaps
-        
-        endpoints_without_limiting = sum(1 for c in configs if c.requests_per_window == 0)
-        if endpoints_without_limiting > 0:
-            gaps.append(f"{endpoints_without_limiting} endpoints lack rate limiting")
-        
-        endpoints_without_key_limiting = sum(1 for c in configs if not c.has_key_based_limiting)
-        if endpoints_without_key_limiting > len(configs) * 0.5:
-            gaps.append("Majority of endpoints lack API key-based limiting")
-        
-        endpoints_with_bypass = sum(1 for c in configs if c.bypass_patterns)
-        if endpoints_with_bypass > 0:
-            total_bypasses = sum(len(c.bypass_patterns) for c in configs)
-            gaps.append(f"Potential bypass patterns detected in {endpoints_with_bypass} endpoints ({total_bypasses} patterns)")
-        
-        endpoints_without_burst = sum(1 for c in configs if not c.burst_allowed)
-        if endpoints_without_burst == len(configs):
-            gaps.append("No burst allowance configured - may impact legitimate spikes")
-        
-        endpoints_without_ip_limiting = sum(1 for c in configs if not c.has_ip_based_limiting)
-        if endpoints_without_ip_limiting > 0:
-            gaps.append(f"IP-based limiting absent on {endpoints_without_ip_limiting} endpoints")
-        
-        endpoints_without_user_limiting = sum(1 for c in configs if not c.has_user_based_limiting)
-        if endpoints_without_user_limiting > 0:
-            gaps.append(f"User-based limiting absent on {endpoints_without_user_limiting} endpoints")
-        
-        return gaps
-    
-    def _generate_recommendations(self, configs: List[RateLimitConfig], gaps: List[str]) -> List[str]:
-        """Generate recommendations based on analysis"""
-        recommendations = []
-        
-        if any("lack rate limiting" in gap for gap in gaps):
-            recommendations.append("Implement rate limiting on all public endpoints immediately")
-        
-        if any("bypass patterns" in gap for gap in gaps):
-            recommendations.append("Audit and remediate detected bypass patterns")
-        
-        low_limits = [c for c in configs if c.requests_per_window < 10]
-        if low_limits:
-            recommendations.append("Review aggressive rate limits that may impact legitimate users")
-        
-        if any("burst" in gap for gap in gaps):
-            recommendations.append("Configure token bucket algorithm with burst allowance")
-        
-        if any("IP-based" in gap for gap in gaps):
-            recommendations.append("Implement IP-based rate limiting with allowlist for known services")
-        
-        if any("User-based" in gap for gap in gaps):
-            recommendations.append("Implement per-user rate limiting with tier-based quotas")
-        
-        inconsistent_headers = len(set(c.rate_limit_header for c in configs)) > 1
-        if inconsistent_headers:
-            recommendations.append("Standardize rate limit response headers across services")
-        
-        slow_windows = [c for c in configs if c.window_seconds > 3600]
-        if slow_windows:
-            recommendations.append("Consider shorter rate limit windows for better DDoS mitigation")
-        
-        recommendations.append("Implement monitoring alerts for rate limit abuse patterns")
-        recommendations.append("Add distributed rate limiting for multi-instance deployments")
-        
-        return recommendations[:10]
-    
-    def _assess_implementation_quality(self, configs: List[RateLimitConfig]) -> Dict[str, int]:
-        """Assess the quality of rate limiting implementations"""
-        quality = {
-            "key_based": 0,
-            "ip_based": 0,
-            "user_based": 0,
-            "burst_enabled": 0,
-            "standardized_headers": 0,
-            "appropriate_windows": 0,
-            "bypass_free": 0
+    def __init__(self, window_size=60, min_requests_threshold=10):
+        self.window_size = window_size
+        self.min_requests_threshold = min_requests_threshold
+        self.request_log = defaultdict(lambda: deque(maxlen=1000))
+        self.endpoint_stats = defaultdict(lambda: {
+            'total_requests': 0,
+            'rate_limited_responses': 0,
+            'response_times': deque(maxlen=100),
+            'status_codes': defaultdict(int),
+            'headers_seen': []
+        })
+        self.rate_limit_headers = {
+            'X-RateLimit-Limit',
+            'X-RateLimit-Remaining',
+            'X-RateLimit-Reset',
+            'RateLimit-Limit',
+            'RateLimit-Remaining',
+            'RateLimit-Reset',
+            'X-Rate-Limit-Limit',
+            'X-Rate-Limit-Remaining',
+            'X-Rate-Limit-Reset',
+            'Retry-After'
         }
-        
-        if not configs:
-            return quality
-        
-        quality["key_based"] = sum(1 for c in configs if c.has_key_based_limiting)
-        quality["ip_based"] = sum(1 for c in configs if c.has_ip_based_limiting)
-        quality["user_based"] = sum(1 for c in configs if c.has_user_based_limiting)
-        quality["burst_enabled"] = sum(1 for c in configs if c.burst_allowed)
-        quality["bypass_free"] = sum(1 for c in configs if not c.bypass_patterns)
-        
-        quality["standardized_headers"] = len(set(c.rate_limit_header for c in configs))
-        if quality["standardized_headers"] == 1:
-            quality["standardized_headers"] = len(configs)
-        else:
-            quality["standardized_headers"] = 0
-        
-        quality["appropriate_windows"] = sum(1 for c in configs if 60 <= c.window_seconds <= 3600)
-        
-        return quality
-    
-    def _calculate_compliance_score(self, configs: List[RateLimitConfig], gaps: List[str]) -> float:
-        """Calculate compliance score (0-100)"""
-        if not configs:
-            return 0.0
-        
-        score = 100.0
-        
-        endpoints_with_limiting = sum(1 for c in configs if c.requests_per_window > 0)
-        coverage_ratio = endpoints_with_limiting / len(configs)
-        score -= (1 - coverage_ratio) * 30
-        
-        score -= len(gaps) * 5
-        
-        key_limiting_ratio = sum(1 for c in configs if c.has_key_based_limiting) / len(configs)
-        score -= (1 - key_limiting_ratio) * 15
-        
-        ip_limiting_ratio = sum(1 for c in configs if c.has_ip_based_limiting) / len(configs)
-        score -= (1 - ip_limiting_ratio) * 10
-        
-        bypass_ratio = sum(1 for c in configs if c.bypass_patterns) / len(configs)
-        score -= bypass_ratio * 20
-        
-        return max(0.0, min(100.0, score))
-    
-    def _determine_risk_level(self, compliance_score: float) -> str:
-        """Determine risk level based on compliance score"""
-        if compliance_score >= 80:
-            return "LOW"
-        elif compliance_score >= 60:
-            return "MEDIUM"
-        elif compliance_score >= 40:
-            return "HIGH"
-        else:
-            return "CRITICAL"
-    
-    def simulate_requests(self, service_name: str, endpoint: str, 
-                         client_id: str, num_requests: int, 
-                         abuse_pattern: bool = False) -> None:
-        """Simulate requests to track for abuse patterns"""
-        if service_name not in self.service_configs:
-            raise ValueError(f"Service {service_name} not configured")
-        
-        endpoint_config = None
-        for config in self.service_configs[service_name]:
-            if config.endpoint == endpoint:
-                endpoint_config = config
-                break
-        
-        if not endpoint_config:
-            raise ValueError(f"Endpoint {endpoint} not found in {service_name}")
-        
-        current_time = time.time()
-        key = f"{service_name}:{endpoint}:{client_id}"
-        
-        if abuse_pattern:
-            interval = 0.1
-        else:
-            interval = endpoint_config.window_seconds / endpoint_config.requests_per_window
-        
-        for i in range(num_requests):
-            request_time = current_time + (i * interval)
-            self.request_history[key].append(request_time)
-    
-    def detect_abuse(self, service_name: str, endpoint: str, 
-                    client_id: str, threshold_multiplier: float = 1.5) -> Optional[AbuseEvent]:
-        """Detect rate limit abuse for a specific client"""
-        if service_name not in self.service_configs:
-            return None
-        
-        endpoint_config = None
-        for config in self.service_configs[service_name]:
-            if config.endpoint == endpoint:
-                endpoint_config = config
-                break
-        
-        if not endpoint_config or endpoint_config.requests_per_window == 0:
-            return None
-        
-        key = f"{service_name}:{endpoint}:{client_id}"
-        requests = self.request_history.get(key, [])
-        
-        if not requests:
-            return None
-        
-        current_time = time.time()
-        window_start = current_time - endpoint_config.window_seconds
-        requests_in_window = sum(1 for r in requests if r >= window_start)
-        
-        limit = endpoint_config.requests_per_window
-        threshold = int(limit * threshold_multiplier)
-        
-        if requests_in_window > threshold:
-            excess_percentage = ((requests_in_window - limit) / limit) * 100
-            
-            if requests_in_window > limit * 2:
-                event_type = "SEVERE_ABUSE"
-            elif requests_in_window > limit * 1.5:
-                event_type = "MODERATE_ABUSE"
-            else:
-                event_type = "MINOR_ABUSE"
-            
-            event = AbuseEvent(
-                timestamp=current_time,
-                service_name=service_name,
-                endpoint=endpoint,
-                client_identifier=client_id,
-                requests_in_window=requests_in_window,
-                threshold=limit,
-                excess_percentage=excess_percentage,
-                event_type=event_type
-            )
-            
-            self.abuse_events.append(event)
-            return event
-        
-        return None
-    
-    def get_abuse_report(self) -> Dict:
-        """Generate comprehensive abuse report"""
-        if not self.abuse_events:
+
+    def log_request(self, endpoint, timestamp, status_code, response_time, headers, body_size):
+        """Log an API request with metadata."""
+        self.request_log[endpoint].append({
+            'timestamp': timestamp,
+            'status_code': status_code,
+            'response_time': response_time,
+            'headers': headers,
+            'body_size': body_size
+        })
+
+        stats = self.endpoint_stats[endpoint]
+        stats['total_requests'] += 1
+        stats['response_times'].append(response_time)
+        stats['status_codes'][status_code] += 1
+
+        if status_code in [429, 503]:
+            stats['rate_limited_responses'] += 1
+
+        for header_name, header_value in headers.items():
+            if header_name in self.rate_limit_headers:
+                stats['headers_seen'].append({
+                    'header': header_name,
+                    'value': header_value,
+                    'timestamp': timestamp
+                })
+
+    def detect_rate_limit_headers(self, endpoint):
+        """Detect and parse rate limiting headers."""
+        if endpoint not in self.endpoint_stats:
+            return {'detected': False, 'headers': {}}
+
+        headers_dict = {}
+        for entry in self.endpoint_stats[endpoint]['headers_seen']:
+            headers_dict[entry['header']] = entry['value']
+
+        return {
+            'detected': bool(headers_dict),
+            'headers': headers_dict
+        }
+
+    def analyze_request_pattern(self, endpoint):
+        """Analyze temporal patterns of requests to detect rate limiting."""
+        if endpoint not in self.request_log or len(self.request_log[endpoint]) < 2:
             return {
-                "total_events": 0,
-                "events": [],
-                "summary": "No abuse events detected"
+                'analysis': 'insufficient_data',
+                'min_requests': self.min_requests_threshold
             }
-        
-        events_by_type = defaultdict(int)
-        events_by_service = defaultdict(int)
-        events_by_client = defaultdict(int)
-        
-        for event in self.abuse_events:
-            events_by_type[event.event_type] += 1
-            events_by_service[event.service_name] += 1
-            events_by_client[event.client_identifier] += 1
-        
+
+        requests = list(self.request_log[endpoint])
+        recent_window = [r for r in requests if r['timestamp'] >= time.time() - self.window_size]
+
+        if len(recent_window) < self.min_requests_threshold:
+            return {
+                'analysis': 'insufficient_requests_in_window',
+                'requests_count': len(recent_window),
+                'window_size': self.window_size
+            }
+
+        time_gaps = []
+        timestamps = sorted([r['timestamp'] for r in recent_window])
+        for i in range(1, len(timestamps)):
+            time_gaps.append(timestamps[i] - timestamps[i-1])
+
+        avg_gap = sum(time_gaps) / len(time_gaps) if time_gaps else 0
+        min_gap = min(time_gaps) if time_gaps else 0
+        max_gap = max(time_gaps) if time_gaps else 0
+
+        rate_limited_count = self.endpoint_stats[endpoint]['rate_limited_responses']
+        rate_limit_percentage = (rate_limited_count / self.endpoint_stats[endpoint]['total_requests'] * 100
+                                 if self.endpoint_stats[endpoint]['total_requests'] > 0 else 0)
+
         return {
-            "total_events": len(self.abuse_events),
-            "events": [asdict(e) for e in self.abuse_events],
-            "by_type": dict(events_by_type),
-            "by_service": dict(events_by_service),
-            "by_client": dict(events_by_client),
-            "top_offenders": sorted(events_by_client.items(), key=lambda x: x[1], reverse=True)[:5]
-        }
-    
-    def get_full_report(self) -> Dict:
-        """Generate full analysis and monitoring report"""
-        return {
-            "timestamp": datetime.utcnow().isoformat(),
-            "analyses": [asdict(analysis) for analysis in self.analysis_results.values()],
-            "abuse_report": self.get_abuse_report(),
-            "services_analyzed": len(self.analysis_results)
+            'analysis': 'pattern_detected',
+            'requests_in_window': len(recent_window),
+            'window_size': self.window_size,
+            'avg_time_between_requests': round(avg_gap, 3),
+            'min_time_gap': round(min_gap, 3),
+            'max_time_gap': round(max_gap, 3),
+            'rate_limited_percentage': round(rate_limit_percentage, 2),
+            'status_code_distribution': dict(self.endpoint_stats[endpoint]['status_codes'])
         }
 
+    def detect_weak_rate_limiting(self, endpoint):
+        """Detect weak rate limiting implementations."""
+        findings = []
 
-def generate_sample_configs() -> List[RateLimitConfig]:
-    """Generate sample rate limit configurations for 15 services"""
-    services = [
-        ("user-service", "/api/users", 100, 60, "X-RateLimit-Limit", True, True, True, True, [], "sliding-window"),
-        ("user-service", "/api/users/{id}", 50, 60, "X-RateLimit-Limit", True, False, True, False, [], "fixed-window"),
-        ("user-service", "/api/auth/login", 5, 300, "X-RateLimit-Limit", False, True, False, False, ["token_reuse"], "fixed-window"),
-        
-        ("product-service", "/api/products", 500, 60, "RateLimit-Limit", True, True, False, True, [], "sliding-window"),
-        ("product-service", "/api/products/search", 100, 60, "RateLimit-Limit", False, False, False, False, ["sql_injection_bypass"], "fixed-window"),
-        ("product-service", "/api/products/{id}/reviews", 50, 300, "RateLimit-Limit", True, False, True, True, [], "leaky-bucket"),
+        pattern = self.analyze_request_pattern(endpoint)
+        if pattern['analysis'] == 'pattern_detected':
+            min_gap = pattern.get('min_time_gap', 0)
+            if min_gap < 0.1:
+                findings.append({
+                    'severity': 'HIGH',
+                    'type': 'BURST_ALLOWED',
+                    'description': 'Endpoint allows request bursts with <100ms between requests',
+                    'evidence': f'Minimum time gap: {min_gap}s'
+                })
+
+            if pattern.get('rate_limited_percentage', 0) < 5:
+                findings.append({
+                    'severity': 'MEDIUM',
+                    'type': 'LOW_RATE_LIMIT_ENFORCEMENT',
+                    'description': 'Rate limiting rarely triggered despite high request volume',
+                    'evidence': f'Rate limit responses: {pattern["rate_limited_percentage"]}%'
+                })
+
+        headers = self.detect_rate_limit_headers(endpoint)
+        if not headers['detected']:
+            findings.append({
+                'severity': 'MEDIUM',
+                'type': 'NO_RATE_LIMIT_HEADERS',
+                'description': 'Endpoint does not advertise rate limit headers',
+                'evidence': 'No standard rate limit headers found in responses'
+            })
+        else:
+            for header_name, header_value in headers['headers'].items():
+                if header_name == 'Retry-After' and not header_value:
+                    findings.append({
+                        'severity': 'LOW',
+                        'type': 'EMPTY_RETRY_AFTER',
+                        'description': 'Retry-After header present but empty',
+                        'evidence': f'Header: {header_name}'
+                    })
+
+        stats = self.endpoint_stats.get(endpoint, {})
+        if stats.get('total_requests', 0) > 0:
+            if 429 not in stats.get('status_codes', {}):
+                findings.append({
+                    'severity': 'MEDIUM',
+                    'type': 'NO_429_RESPONSES',
+                    'description': 'No HTTP 429 (Too Many Requests) responses detected',
+                    'evidence': f'Total requests: {stats["total_requests"]}'
+                })
+
+        return findings
+
+    def detect_bypass_vectors(self, endpoint):
+        """Detect potential rate limit bypass vectors."""
+        bypass_vectors = []
+        stats = self.endpoint_stats.get(endpoint, {})
+
+        if stats.get('total_requests', 0) > 0:
+            success_codes = sum(count for code, count in stats.get('status_codes', {}).items() if 200 <= code < 300)
+            success_rate = (success_codes / stats['total_requests'] * 100) if stats['total_requests'] > 0 else 0
+
+            if success_rate > 95 and stats['total_requests'] > 50:
+                bypass_vectors.append({
+                    'severity': 'HIGH',
+                    'type': 'HIGH_SUCCESS_RATE',
+                    'description': 'Consistently successful requests despite high volume suggests weak rate limiting',
+                    'evidence': f'Success rate: {success_rate:.2f}%'
+                })
+
+        response_times = list(stats.get('response_times', []))
+        if response_times:
+            avg_time = sum(response_times) / len(response_times)
+            if avg_time < 0.05:
+                bypass_vectors.append({
+                    'severity': 'MEDIUM',
+                    'type': 'VERY_FAST_RESPONSES',
+                    'description': 'Very fast response times may indicate missing validation checks',
+                    'evidence': f'Average response time: {avg_time:.4f}s'
+                })
+
+        return bypass_vectors
+
+    def generate_report(self, endpoint=None):
+        """Generate comprehensive rate limiting analysis report."""
+        if endpoint:
+            endpoints = [endpoint] if endpoint in self.endpoint_stats else []
+        else:
+            endpoints = list(self.endpoint_stats.keys())
+
+        report = {
+            'timestamp': datetime.now().isoformat(),
+            'analyzed_endpoints': len(endpoints),
+            'endpoints': {}
+        }
+
+        for ep in endpoints:
+            headers = self.detect_rate_limit_headers(ep)
+            pattern = self.analyze_request_pattern(ep)
+            weaknesses = self.detect_weak_rate_limiting(ep)
+            bypasses = self.detect_bypass_vectors(ep)
+
+            report['endpoints'][ep] = {
+                'total_requests': self.endpoint_stats[ep]['total_requests'],
+                'rate_limiting_headers_detected': headers['detected'],
+                'headers': headers['headers'],
+                'request_pattern_analysis': pattern,
+                'vulnerabilities': weaknesses,
+                'bypass_vectors': bypasses,
+                'risk_level': self._calculate_risk_level(weaknesses, bypasses)
+            }
+
+        return report
+
+    def _calculate_risk_level(self, weaknesses, bypasses):
+        """Calculate overall risk level based on findings."""
+        high_severity = sum(1 for v in weaknesses + bypasses if v.get('severity') == 'HIGH')
+        medium_severity = sum(1 for v in weaknesses + bypasses if v.get('severity') == 'MEDIUM')
+
+        if high_severity > 0:
+            return 'CRITICAL'
+        elif medium_severity > 2:
+            return 'HIGH'
+        elif medium_severity > 0:
+            return 'MEDIUM'
+        else:
+            return 'LOW'
+
+
+def generate_test_data():
+    """Generate realistic test API traffic data."""
+    analyzer = RateLimitAnalyzer(window_size=120, min_requests_threshold=5)
+
+    endpoints = [
+        '/api/v1/auth/login',
+        '/api/v1/users',
+        '/api/v1/posts',
+        '/api/v1/comments'
+    ]
+
+    current_time = time.time()
+
+    scenario_configs = {
+        '/api/v1/auth/login': {
+            'request_count': 30,
+            'rate_limited': True,
+            'avg_response_time': 0.15,
+            'enforce_rate_limit_after': 20
+        },
+        '/api/v1/users': {
+            'request_count': 40,
+            'rate_limited': False,
+            'avg_response_time': 0.05,
+            'enforce_rate_limit_after': 1000
+        },
+        '/api/v1/posts': {
+            'request_count': 50,
+            'rate_limited': True,
+            'avg_response_time': 0.08,
+            'enforce_rate_limit_after': 25
+        },
+        '/api/v1/comments': {
+            'request_count': 35,
+            'rate_limited': False,
+            'avg_response_time': 0.04,
+            'enforce_rate_limit_after': 1000
+        }
+    }
+
+    for endpoint, config in scenario_configs.items():
+        headers_list = []
+        for i in range(config['request_count']):
+            timestamp = current_time + (i * 0.8)
+            response_time = config['avg_response_time'] + (i % 2) * 0.02
+
+            if i < config['enforce_rate_limit_after']:
+                status_code = 200
+                headers = {
+                    'X-RateLimit-Limit': '100',
+                    'X-RateLimit-Remaining': str(max(0, 100 - i)),
+                    'X-RateLimit-Reset': str(int(timestamp) + 60)
+                }
+            else:
+                status_code = 429 if config['rate_limited'] else 200
+                headers = {
+                    'X-RateLimit-Limit': '100',
+                    'X-RateLimit-Remaining': '0',
+                    'X-RateLimit-Reset': str(int(timestamp) + 60),
+                    'Retry-After': '60'
+                }
+
+            body_size = 1024 + (i % 512)
+            analyzer.log_request(endpoint, timestamp, status_code, response_time, headers, body_size)
+
+    return analyzer
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='API Rate Limiting Analysis - Detect rate limit vulnerabilities and bypass vectors',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  python3 solution.py --analyze-all
+  python3 solution.py --endpoint /api/v1/users --window-size 120
+  python3 solution.py --generate-report --output report.json
+        '''
+    )
+
+    parser.add_argument(
+        '--endpoint',
+        type=str,
+        help='Specific API endpoint to analyze (e.g., /api/v1/users)'
+    )
+
+    parser.add_argument(
+        '--window-size',
+        type=int,
+        default=60,
+        help='Time window in seconds for analyzing request patterns (default: 60)'
+    )
+
+    parser.add_argument(
+        '--min-requests',
+        type=int,
+        default=10,
+        help='Minimum requests required for pattern analysis (default: 10)'
+    )
+
+    parser.add_argument(
+        '--analyze-all',
+        action='store_true',
+        help='Analyze all collected endpoints'
+    )
+
+    parser.add_argument(
+        '--generate-report',
+        action='store_true',
+        help='Generate comprehensive analysis report'
+    )
+
+    parser.add_argument(
+        '--output',
+        type=str,
+        help='Output file path for JSON report (if not specified, prints to stdout)'
+    )
+
+    parser.add_argument(
+        '--demo',
+        action='store_true',
+        help='Run with generated test data (default behavior)'
+    )
+
+    args = parser.parse_args()
+
+    analyzer = generate_test_data()
+
+    if args.analyze_all or args.generate_report:
+        report = analyzer.generate_report()
+        output = json.dumps(report, indent=2)
+
+        if args.output:
+            with open(args.output, 'w') as f:
+                f.write(output)
+            print(f"Report written to {args.output}")
+        else:
+            print(output)
+
+    elif args.endpoint:
+        report = analyzer.generate_report(args.endpoint)
+        output = json.dumps(report, indent=2)
+
+        if args.output:
+            with open(args.output, 'w') as f:
+                f.write(output)
+            print(f"Report written to {args.output}")
+        else:
+            print(output)
+
+    else:
+        print("Running rate limiting analysis with test data...\n")
+        for endpoint in analyzer.endpoint_stats.keys():
+            print(f"\n{'='*70}")
+            print(f"Endpoint: {endpoint}")
+            print(f"{'='*70}")
+
+            stats = analyzer.endpoint_stats[endpoint]
+            print(f"Total Requests: {stats['total_requests']}")
+            print(f"Rate Limited Responses: {stats['rate_limited_responses']}")
+
+            headers = analyzer.detect_rate_limit
