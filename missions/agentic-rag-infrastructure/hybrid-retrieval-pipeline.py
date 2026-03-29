@@ -196,3 +196,194 @@ class ReciprocalRankFusion:
 
         for ranked_list in rankings:
             for rank, (doc_id, _) in enumerate(ranked_list, 1):
+                rrf_scores[doc_id] += 1.0 / (k + rank)
+
+        fused = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+        return fused
+
+
+class HybridRetriever:
+    """Hybrid retriever combining BM25 and vector search with RRF."""
+
+    def __init__(self, embedding_dim: int = 384, top_k: int = 10):
+        self.bm25 = BM25Retriever()
+        self.vector = VectorRetriever(embedding_dim)
+        self.top_k = top_k
+        self.documents: Dict[str, Document] = {}
+        self.search_latencies: List[float] = []
+
+    def add_document(self, doc: Document) -> None:
+        """Add document to both retrievers."""
+        self.documents[doc.doc_id] = doc
+        self.bm25.add_document(doc)
+        self.vector.add_document(doc)
+
+    def search(self, query: str, top_k: Optional[int] = None) -> List[SearchResult]:
+        """Perform hybrid search with RRF."""
+        if top_k is None:
+            top_k = self.top_k
+
+        start_time = time.time()
+
+        # Parallel retrieval simulation
+        bm25_results = self.bm25.search(query, top_k)
+        vector_results = self.vector.search(query, top_k)
+
+        # Fuse rankings
+        fused = ReciprocalRankFusion.fuse([bm25_results, vector_results])
+
+        # Build result objects
+        results = []
+        for rank, (doc_id, rrf_score) in enumerate(fused[:top_k], 1):
+            doc = self.documents.get(doc_id)
+            if not doc:
+                continue
+
+            # Find original ranks and scores
+            bm25_rank = next((i + 1 for i, (did, _) in enumerate(bm25_results) if did == doc_id), None)
+            vector_rank = next((i + 1 for i, (did, _) in enumerate(vector_results) if did == doc_id), None)
+            bm25_score = next((score for did, score in bm25_results if did == doc_id), 0.0)
+            vector_score = next((score for did, score in vector_results if did == doc_id), 0.0)
+
+            result = SearchResult(
+                doc_id=doc_id,
+                content=doc.content,
+                source=doc.source,
+                bm25_score=bm25_score,
+                vector_score=vector_score,
+                rrf_score=rrf_score,
+                bm25_rank=bm25_rank,
+                vector_rank=vector_rank,
+                metadata=doc.metadata
+            )
+            results.append(result)
+
+        latency = (time.time() - start_time) * 1000  # ms
+        self.search_latencies.append(latency)
+
+        return results
+
+    def get_average_latency(self) -> float:
+        """Get average search latency in milliseconds."""
+        if not self.search_latencies:
+            return 0.0
+        return sum(self.search_latencies) / len(self.search_latencies)
+
+
+def demo_hybrid_retrieval():
+    """Demonstrate the hybrid retrieval pipeline."""
+    print("=" * 80)
+    print("HYBRID RETRIEVAL PIPELINE DEMO")
+    print("=" * 80)
+
+    # Initialize retriever
+    retriever = HybridRetriever(top_k=5)
+
+    # Sample documents
+    documents = [
+        Document(
+            doc_id="doc1",
+            content="Machine learning is a subset of artificial intelligence focused on learning from data.",
+            source="wiki",
+            chunk_index=0,
+            metadata={"author": "AI Team", "date": "2025-01-15"}
+        ),
+        Document(
+            doc_id="doc2",
+            content="Deep learning uses neural networks with multiple layers to process complex patterns.",
+            source="arxiv",
+            chunk_index=0,
+            metadata={"author": "Research Lab", "date": "2025-01-18"}
+        ),
+        Document(
+            doc_id="doc3",
+            content="Natural language processing enables computers to understand and generate human language.",
+            source="wiki",
+            chunk_index=0,
+            metadata={"author": "NLP Team", "date": "2025-01-10"}
+        ),
+        Document(
+            doc_id="doc4",
+            content="Transformer models revolutionized NLP with attention mechanisms for sequence processing.",
+            source="arxiv",
+            chunk_index=0,
+            metadata={"author": "ML Research", "date": "2025-01-20"}
+        ),
+        Document(
+            doc_id="doc5",
+            content="Retrieval augmented generation combines language models with document retrieval.",
+            source="documentation",
+            chunk_index=0,
+            metadata={"author": "DevOps", "date": "2025-01-19"}
+        ),
+    ]
+
+    # Add documents to retriever
+    print("\nIndexing documents...")
+    for doc in documents:
+        retriever.add_document(doc)
+    print(f"✓ Indexed {len(documents)} documents")
+
+    # Test queries
+    queries = [
+        "machine learning and neural networks",
+        "natural language processing transformers",
+        "retrieval augmented generation",
+    ]
+
+    print("\n" + "=" * 80)
+    print("HYBRID SEARCH RESULTS")
+    print("=" * 80)
+
+    for query in queries:
+        print(f"\nQuery: '{query}'")
+        print("-" * 80)
+
+        results = retriever.search(query, top_k=3)
+
+        for rank, result in enumerate(results, 1):
+            print(f"\n{rank}. [{result.doc_id}] (RRF: {result.rrf_score:.4f})")
+            print(f"   Source: {result.source}")
+            print(f"   BM25 Score: {result.bm25_score:.4f} (Rank: {result.bm25_rank})")
+            print(f"   Vector Score: {result.vector_score:.4f} (Rank: {result.vector_rank})")
+            print(f"   Content: {result.content[:100]}...")
+
+    # Performance metrics
+    print("\n" + "=" * 80)
+    print("PERFORMANCE METRICS")
+    print("=" * 80)
+    avg_latency = retriever.get_average_latency()
+    print(f"Average Latency: {avg_latency:.2f} ms")
+    print(f"Total Searches: {len(retriever.search_latencies)}")
+    print(f"Target: <100ms ✓" if avg_latency < 100 else f"Target: <100ms ✗")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Hybrid Retrieval Pipeline")
+    parser.add_argument("--demo", action="store_true", help="Run demonstration")
+    parser.add_argument("--query", type=str, help="Run a specific query")
+
+    args = parser.parse_args()
+
+    if args.query:
+        retriever = HybridRetriever(top_k=5)
+        documents = [
+            Document(
+                doc_id="doc1",
+                content="Machine learning is a subset of artificial intelligence focused on learning from data.",
+                source="wiki",
+                metadata={"author": "AI Team"}
+            ),
+            Document(
+                doc_id="doc2",
+                content="Deep learning uses neural networks with multiple layers to process complex patterns.",
+                source="arxiv",
+                metadata={"author": "Research Lab"}
+            ),
+            Document(
+                doc_id="doc3",
+                content="Natural language processing enables computers to understand and generate human language.",
+                source="wiki",
+                metadata={"author": "NLP Team"}
+            ),
+            Document(
