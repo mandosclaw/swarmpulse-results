@@ -227,3 +227,193 @@ class JWTConfusionDetector:
             result['attack_type'] = 'Weak Secret/Brute Force'
         else:
             result['details'].append("Could not validate signature with common secrets")
+        
+        return result
+
+    def test_empty_signature(self, token: str) -> Dict:
+        """Test for empty signature vulnerability."""
+        result = {
+            'test': 'empty_signature',
+            'vulnerable': False,
+            'details': []
+        }
+        
+        parts = token.split('.')
+        if len(parts) != 3:
+            result['details'].append('Invalid JWT format')
+            return result
+        
+        if parts[2] == '':
+            result['vulnerable'] = True
+            result['details'].append('Token has empty signature')
+            result['attack_type'] = 'Empty Signature Bypass'
+        else:
+            result['details'].append('Token has non-empty signature')
+        
+        return result
+
+    def test_jti_claim(self, token: str) -> Dict:
+        """Test for JWT ID (jti) claim vulnerabilities."""
+        result = {
+            'test': 'jti_claim',
+            'vulnerable': False,
+            'details': []
+        }
+        
+        header, payload, signature = self._parse_jwt(token)
+        if not payload:
+            result['details'].append('Invalid JWT format')
+            return result
+        
+        if 'jti' not in payload:
+            result['vulnerable'] = True
+            result['details'].append('No JTI claim present - token replay attacks possible')
+            result['attack_type'] = 'Missing JTI Claim'
+        else:
+            result['details'].append(f"JTI claim present: {payload.get('jti')}")
+        
+        return result
+
+    def test_exp_claim(self, token: str) -> Dict:
+        """Test for expiration (exp) claim vulnerabilities."""
+        result = {
+            'test': 'exp_claim',
+            'vulnerable': False,
+            'details': []
+        }
+        
+        header, payload, signature = self._parse_jwt(token)
+        if not payload:
+            result['details'].append('Invalid JWT format')
+            return result
+        
+        if 'exp' not in payload:
+            result['vulnerable'] = True
+            result['details'].append('No expiration claim - token valid forever')
+            result['attack_type'] = 'Missing Expiration Claim'
+        else:
+            exp_time = payload.get('exp')
+            current_time = datetime.utcnow().timestamp()
+            if exp_time > current_time:
+                result['details'].append(f"Token expires at: {datetime.utcfromtimestamp(exp_time)}")
+            else:
+                result['details'].append(f"Token already expired at: {datetime.utcfromtimestamp(exp_time)}")
+        
+        return result
+
+    def test_iat_claim(self, token: str) -> Dict:
+        """Test for issued at (iat) claim vulnerabilities."""
+        result = {
+            'test': 'iat_claim',
+            'vulnerable': False,
+            'details': []
+        }
+        
+        header, payload, signature = self._parse_jwt(token)
+        if not payload:
+            result['details'].append('Invalid JWT format')
+            return result
+        
+        if 'iat' not in payload:
+            result['vulnerable'] = True
+            result['details'].append('No issued-at claim - difficult to verify token freshness')
+            result['attack_type'] = 'Missing Issued-At Claim'
+        else:
+            iat_time = payload.get('iat')
+            result['details'].append(f"Token issued at: {datetime.utcfromtimestamp(iat_time)}")
+        
+        return result
+
+    def scan_token(self, token: str, public_key: Optional[str] = None, secret: Optional[str] = None) -> List[Dict]:
+        """Run all tests on a JWT token."""
+        self.test_results = []
+        
+        self._log(f"Starting JWT scan on token: {token[:50]}...")
+        
+        self.test_results.append(self.test_none_algorithm(token))
+        self.test_results.append(self.test_weak_signature(token))
+        self.test_results.append(self.test_empty_signature(token))
+        self.test_results.append(self.test_jti_claim(token))
+        self.test_results.append(self.test_exp_claim(token))
+        self.test_results.append(self.test_iat_claim(token))
+        
+        if public_key:
+            self.test_results.append(self.test_algorithm_confusion(token, public_key))
+        
+        if secret:
+            self.test_results.append(self.test_signature_validation(token, secret))
+        
+        return self.test_results
+
+    def generate_report(self) -> Dict:
+        """Generate a vulnerability report from test results."""
+        report = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'total_tests': len(self.test_results),
+            'vulnerable_tests': 0,
+            'vulnerabilities': [],
+            'summary': ''
+        }
+        
+        for result in self.test_results:
+            if result['vulnerable']:
+                report['vulnerable_tests'] += 1
+                report['vulnerabilities'].append({
+                    'test': result['test'],
+                    'attack_type': result.get('attack_type', 'Unknown'),
+                    'details': result['details']
+                })
+        
+        if report['vulnerable_tests'] == 0:
+            report['summary'] = 'No vulnerabilities detected'
+        else:
+            report['summary'] = f"Found {report['vulnerable_tests']} potential vulnerabilities"
+        
+        return report
+
+
+def main():
+    """Main entry point for JWT confusion detector."""
+    parser = argparse.ArgumentParser(
+        description='JWT Confusion Test Suite - API Authentication Bypass Detector'
+    )
+    parser.add_argument('token', help='JWT token to analyze')
+    parser.add_argument('--public-key', help='RSA public key for algorithm confusion test')
+    parser.add_argument('--secret', help='Secret key for signature validation test')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
+    parser.add_argument('--json', action='store_true', help='Output results as JSON')
+    
+    args = parser.parse_args()
+    
+    detector = JWTConfusionDetector(verbose=args.verbose)
+    results = detector.scan_token(args.token, args.public_key, args.secret)
+    report = detector.generate_report()
+    
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print("\n" + "="*70)
+        print("JWT CONFUSION TEST SUITE - VULNERABILITY REPORT")
+        print("="*70)
+        print(f"Timestamp: {report['timestamp']}")
+        print(f"Tests Run: {report['total_tests']}")
+        print(f"Vulnerabilities Found: {report['vulnerable_tests']}")
+        print(f"Summary: {report['summary']}")
+        print("="*70)
+        
+        if report['vulnerabilities']:
+            print("\nDETECTED VULNERABILITIES:\n")
+            for i, vuln in enumerate(report['vulnerabilities'], 1):
+                print(f"{i}. {vuln['attack_type']}")
+                print(f"   Test: {vuln['test']}")
+                for detail in vuln['details']:
+                    print(f"   - {detail}")
+                print()
+        else:
+            print("\nNo vulnerabilities detected during scan.\n")
+        
+        print("="*70)
+
+
+if __name__ == "__main__":
+    main()
