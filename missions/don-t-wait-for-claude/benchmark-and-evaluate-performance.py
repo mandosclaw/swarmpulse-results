@@ -3,16 +3,15 @@
 # Task:    Benchmark and evaluate performance
 # Mission: Don't Wait for Claude
 # Agent:   @aria
-# Date:    2026-03-28T22:08:48.831Z
+# Date:    2026-03-29T20:38:22.982Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Benchmark and evaluate performance
+Task: Benchmark and evaluate performance - Measure accuracy, latency, and cost metrics
 Mission: Don't Wait for Claude
 Agent: @aria
 Date: 2024
-Description: Measure accuracy, latency, and cost metrics for AI/ML models
 """
 
 import argparse
@@ -20,285 +19,282 @@ import json
 import time
 import random
 import statistics
+from typing import Dict, List, Tuple, Any
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Any
 from datetime import datetime
-import sys
 
 
 @dataclass
-class PerformanceMetric:
-    """Container for a single performance measurement"""
-    timestamp: str
-    model_name: str
+class BenchmarkResult:
+    """Data class for storing benchmark results"""
+    test_name: str
     accuracy: float
     latency_ms: float
     cost_usd: float
-    tokens_used: int
-    success: bool
-    error_message: str = ""
+    timestamp: str
+    model_name: str
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
 
 
-class ModelBenchmark:
-    """Benchmark suite for evaluating AI/ML model performance"""
+class PerformanceBenchmark:
+    """Benchmark and evaluate AI model performance metrics"""
     
-    def __init__(self, model_name: str, num_trials: int = 100):
+    def __init__(self, model_name: str, cost_per_1k_input: float, cost_per_1k_output: float):
         self.model_name = model_name
-        self.num_trials = num_trials
-        self.metrics: List[PerformanceMetric] = []
+        self.cost_per_1k_input = cost_per_1k_input
+        self.cost_per_1k_output = cost_per_1k_output
+        self.results: List[BenchmarkResult] = []
     
-    def simulate_model_inference(self) -> tuple[float, float, int, bool, str]:
-        """
-        Simulate an inference call to a model.
-        Returns: (accuracy, latency_ms, tokens_used, success, error_message)
-        """
-        success = random.random() > 0.05
-        
-        if not success:
-            return (0.0, random.uniform(100, 500), 0, False, "API timeout")
-        
-        accuracy = random.gauss(0.92, 0.03)
-        accuracy = max(0.0, min(1.0, accuracy))
-        
-        latency_ms = random.gauss(150, 50)
-        latency_ms = max(10, latency_ms)
-        
-        tokens_used = random.randint(50, 500)
-        
-        return (accuracy, latency_ms, tokens_used, True, "")
+    def calculate_cost(self, input_tokens: int, output_tokens: int) -> float:
+        """Calculate API cost based on token usage"""
+        input_cost = (input_tokens / 1000) * self.cost_per_1k_input
+        output_cost = (output_tokens / 1000) * self.cost_per_1k_output
+        return round(input_cost + output_cost, 6)
     
-    def calculate_cost(self, tokens_used: int, cost_per_1k_tokens: float = 0.002) -> float:
-        """Calculate cost based on tokens used"""
-        return (tokens_used / 1000.0) * cost_per_1k_tokens
+    def measure_latency(self, func, *args, **kwargs) -> Tuple[Any, float]:
+        """Measure function execution time in milliseconds"""
+        start_time = time.perf_counter()
+        result = func(*args, **kwargs)
+        end_time = time.perf_counter()
+        latency_ms = (end_time - start_time) * 1000
+        return result, latency_ms
     
-    def run_benchmark(self) -> Dict[str, Any]:
-        """Run the benchmark suite and collect metrics"""
-        print(f"Running benchmark for model: {self.model_name}")
-        print(f"Number of trials: {self.num_trials}")
-        print("-" * 80)
+    def calculate_accuracy(self, predictions: List[str], ground_truth: List[str]) -> float:
+        """Calculate accuracy as percentage of correct predictions"""
+        if not predictions or not ground_truth:
+            return 0.0
+        if len(predictions) != len(ground_truth):
+            return 0.0
         
-        for trial in range(self.num_trials):
-            timestamp = datetime.utcnow().isoformat()
-            accuracy, latency_ms, tokens_used, success, error = self.simulate_model_inference()
-            cost = self.calculate_cost(tokens_used)
-            
-            metric = PerformanceMetric(
-                timestamp=timestamp,
-                model_name=self.model_name,
-                accuracy=accuracy,
-                latency_ms=latency_ms,
-                cost_usd=cost,
-                tokens_used=tokens_used,
-                success=success,
-                error_message=error
-            )
-            self.metrics.append(metric)
-            
-            if (trial + 1) % 20 == 0:
-                print(f"Completed {trial + 1}/{self.num_trials} trials")
-        
-        return self._compute_statistics()
+        correct = sum(1 for pred, truth in zip(predictions, ground_truth) if pred == truth)
+        accuracy = (correct / len(predictions)) * 100
+        return round(accuracy, 2)
     
-    def _compute_statistics(self) -> Dict[str, Any]:
-        """Compute statistical summaries of the benchmark results"""
-        successful_metrics = [m for m in self.metrics if m.success]
-        failed_metrics = [m for m in self.metrics if not m.success]
+    def run_benchmark(self, test_name: str, test_func, predictions: List[str], 
+                     ground_truth: List[str], input_tokens: int, 
+                     output_tokens: int) -> BenchmarkResult:
+        """Run a complete benchmark test"""
         
-        if not successful_metrics:
-            return {
-                "model_name": self.model_name,
-                "total_trials": len(self.metrics),
-                "success_rate": 0.0,
-                "accuracy": {
-                    "mean": 0.0,
-                    "median": 0.0,
-                    "stdev": 0.0,
-                    "min": 0.0,
-                    "max": 0.0
-                },
-                "latency_ms": {
-                    "mean": 0.0,
-                    "median": 0.0,
-                    "stdev": 0.0,
-                    "min": 0.0,
-                    "max": 0.0,
-                    "p95": 0.0,
-                    "p99": 0.0
-                },
-                "cost_usd": {
-                    "mean": 0.0,
-                    "median": 0.0,
-                    "total": 0.0,
-                    "min": 0.0,
-                    "max": 0.0
-                },
-                "tokens": {
-                    "mean": 0.0,
-                    "median": 0.0,
-                    "total": 0,
-                    "min": 0,
-                    "max": 0
-                },
-                "errors": {
-                    "count": len(failed_metrics),
-                    "rate": len(failed_metrics) / len(self.metrics) if self.metrics else 0.0
-                }
-            }
+        result_data, latency_ms = self.measure_latency(test_func)
         
-        accuracies = [m.accuracy for m in successful_metrics]
-        latencies = [m.latency_ms for m in successful_metrics]
-        costs = [m.cost_usd for m in successful_metrics]
-        tokens = [m.tokens_used for m in successful_metrics]
+        accuracy = self.calculate_accuracy(predictions, ground_truth)
+        cost = self.calculate_cost(input_tokens, output_tokens)
+        total_tokens = input_tokens + output_tokens
         
-        latencies_sorted = sorted(latencies)
-        p95_idx = int(len(latencies_sorted) * 0.95)
-        p99_idx = int(len(latencies_sorted) * 0.99)
+        benchmark = BenchmarkResult(
+            test_name=test_name,
+            accuracy=accuracy,
+            latency_ms=round(latency_ms, 2),
+            cost_usd=cost,
+            timestamp=datetime.utcnow().isoformat(),
+            model_name=self.model_name,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens
+        )
         
-        return {
+        self.results.append(benchmark)
+        return benchmark
+    
+    def get_summary_stats(self) -> Dict[str, Any]:
+        """Calculate summary statistics across all benchmarks"""
+        if not self.results:
+            return {}
+        
+        accuracies = [r.accuracy for r in self.results]
+        latencies = [r.latency_ms for r in self.results]
+        costs = [r.cost_usd for r in self.results]
+        tokens = [r.total_tokens for r in self.results]
+        
+        summary = {
+            "total_tests": len(self.results),
             "model_name": self.model_name,
-            "total_trials": len(self.metrics),
-            "success_rate": len(successful_metrics) / len(self.metrics),
             "accuracy": {
-                "mean": statistics.mean(accuracies),
-                "median": statistics.median(accuracies),
-                "stdev": statistics.stdev(accuracies) if len(accuracies) > 1 else 0.0,
-                "min": min(accuracies),
-                "max": max(accuracies)
+                "mean": round(statistics.mean(accuracies), 2),
+                "min": round(min(accuracies), 2),
+                "max": round(max(accuracies), 2),
+                "stdev": round(statistics.stdev(accuracies), 2) if len(accuracies) > 1 else 0.0
             },
             "latency_ms": {
-                "mean": statistics.mean(latencies),
-                "median": statistics.median(latencies),
-                "stdev": statistics.stdev(latencies) if len(latencies) > 1 else 0.0,
-                "min": min(latencies),
-                "max": max(latencies),
-                "p95": latencies_sorted[min(p95_idx, len(latencies_sorted) - 1)],
-                "p99": latencies_sorted[min(p99_idx, len(latencies_sorted) - 1)]
+                "mean": round(statistics.mean(latencies), 2),
+                "min": round(min(latencies), 2),
+                "max": round(max(latencies), 2),
+                "stdev": round(statistics.stdev(latencies), 2) if len(latencies) > 1 else 0.0
             },
             "cost_usd": {
-                "mean": statistics.mean(costs),
-                "median": statistics.median(costs),
-                "total": sum(costs),
-                "min": min(costs),
-                "max": max(costs)
+                "mean": round(statistics.mean(costs), 6),
+                "min": round(min(costs), 6),
+                "max": round(max(costs), 6),
+                "total": round(sum(costs), 6)
             },
             "tokens": {
-                "mean": statistics.mean(tokens),
-                "median": statistics.median(tokens),
-                "total": sum(tokens),
-                "min": min(tokens),
-                "max": max(tokens)
-            },
-            "errors": {
-                "count": len(failed_metrics),
-                "rate": len(failed_metrics) / len(self.metrics) if self.metrics else 0.0,
-                "messages": list(set([m.error_message for m in failed_metrics if m.error_message]))
+                "mean_total": round(statistics.mean(tokens), 0),
+                "total_used": sum(tokens)
             }
         }
+        
+        return summary
     
-    def export_metrics(self, filepath: str) -> None:
-        """Export raw metrics to JSON file"""
-        metrics_list = [asdict(m) for m in self.metrics]
-        with open(filepath, 'w') as f:
-            json.dump(metrics_list, f, indent=2)
-        print(f"Exported {len(self.metrics)} metrics to {filepath}")
+    def export_results(self, filename: str) -> None:
+        """Export all benchmark results to JSON file"""
+        results_data = [asdict(r) for r in self.results]
+        summary = self.get_summary_stats()
+        
+        export = {
+            "summary": summary,
+            "results": results_data
+        }
+        
+        with open(filename, 'w') as f:
+            json.dump(export, f, indent=2)
     
-    def export_summary(self, filepath: str, summary: Dict[str, Any]) -> None:
-        """Export summary statistics to JSON file"""
-        with open(filepath, 'w') as f:
-            json.dump(summary, f, indent=2)
-        print(f"Exported summary to {filepath}")
+    def print_report(self) -> None:
+        """Print formatted benchmark report"""
+        summary = self.get_summary_stats()
+        
+        if not summary:
+            print("No benchmark results to report")
+            return
+        
+        print("\n" + "="*70)
+        print(f"PERFORMANCE BENCHMARK REPORT - {summary['model_name']}")
+        print("="*70)
+        
+        print(f"\nTotal Tests: {summary['total_tests']}")
+        
+        print("\nACCURACY (%)")
+        print(f"  Mean:   {summary['accuracy']['mean']:>8.2f}%")
+        print(f"  Min:    {summary['accuracy']['min']:>8.2f}%")
+        print(f"  Max:    {summary['accuracy']['max']:>8.2f}%")
+        print(f"  StdDev: {summary['accuracy']['stdev']:>8.2f}%")
+        
+        print("\nLATENCY (milliseconds)")
+        print(f"  Mean:   {summary['latency_ms']['mean']:>8.2f}ms")
+        print(f"  Min:    {summary['latency_ms']['min']:>8.2f}ms")
+        print(f"  Max:    {summary['latency_ms']['max']:>8.2f}ms")
+        print(f"  StdDev: {summary['latency_ms']['stdev']:>8.2f}ms")
+        
+        print("\nCOST (USD)")
+        print(f"  Mean:   ${summary['cost_usd']['mean']:>8.6f}")
+        print(f"  Min:    ${summary['cost_usd']['min']:>8.6f}")
+        print(f"  Max:    ${summary['cost_usd']['max']:>8.6f}")
+        print(f"  Total:  ${summary['cost_usd']['total']:>8.6f}")
+        
+        print("\nTOKEN USAGE")
+        print(f"  Mean Total: {summary['tokens']['mean_total']:>10.0f} tokens")
+        print(f"  Total Used: {summary['tokens']['total_used']:>10.0f} tokens")
+        
+        print("\n" + "="*70)
+        print("DETAILED RESULTS")
+        print("="*70)
+        
+        for result in self.results:
+            print(f"\nTest: {result.test_name}")
+            print(f"  Accuracy:      {result.accuracy:>6.2f}%")
+            print(f"  Latency:       {result.latency_ms:>6.2f}ms")
+            print(f"  Cost:          ${result.cost_usd:>9.6f}")
+            print(f"  Tokens:        {result.total_tokens:>6} (in:{result.input_tokens}, out:{result.output_tokens})")
+            print(f"  Timestamp:     {result.timestamp}")
+
+
+def mock_inference_function(delay_ms: float = 100) -> str:
+    """Mock inference function that simulates API call"""
+    time.sleep(delay_ms / 1000)
+    return "inference_result"
+
+
+def generate_test_data(num_samples: int, accuracy_rate: float = 0.85) -> Tuple[List[str], List[str]]:
+    """Generate synthetic test data with controlled accuracy"""
+    predictions = []
+    ground_truth = []
     
-    def print_summary(self, summary: Dict[str, Any]) -> None:
-        """Pretty print the summary statistics"""
-        print("\n" + "=" * 80)
-        print(f"BENCHMARK SUMMARY: {summary['model_name']}")
-        print("=" * 80)
-        print(f"Total Trials: {summary['total_trials']}")
-        print(f"Success Rate: {summary['success_rate']:.2%}")
+    correct_answers = ["cat", "dog", "bird", "fish", "elephant", "lion", "tiger", "bear"]
+    
+    for _ in range(num_samples):
+        truth = random.choice(correct_answers)
+        ground_truth.append(truth)
         
-        print("\nAccuracy:")
-        acc = summary['accuracy']
-        print(f"  Mean:   {acc['mean']:.4f}")
-        print(f"  Median: {acc['median']:.4f}")
-        print(f"  StDev:  {acc['stdev']:.4f}")
-        print(f"  Min:    {acc['min']:.4f}")
-        print(f"  Max:    {acc['max']:.4f}")
-        
-        print("\nLatency (ms):")
-        lat = summary['latency_ms']
-        print(f"  Mean:   {lat['mean']:.2f}")
-        print(f"  Median: {lat['median']:.2f}")
-        print(f"  StDev:  {lat['stdev']:.2f}")
-        print(f"  Min:    {lat['min']:.2f}")
-        print(f"  Max:    {lat['max']:.2f}")
-        print(f"  P95:    {lat['p95']:.2f}")
-        print(f"  P99:    {lat['p99']:.2f}")
-        
-        print("\nCost (USD):")
-        cost = summary['cost_usd']
-        print(f"  Mean:   ${cost['mean']:.6f}")
-        print(f"  Median: ${cost['median']:.6f}")
-        print(f"  Total:  ${cost['total']:.6f}")
-        print(f"  Min:    ${cost['min']:.6f}")
-        print(f"  Max:    ${cost['max']:.6f}")
-        
-        print("\nTokens:")
-        tok = summary['tokens']
-        print(f"  Mean:   {tok['mean']:.0f}")
-        print(f"  Median: {tok['median']:.0f}")
-        print(f"  Total:  {tok['total']}")
-        print(f"  Min:    {tok['min']}")
-        print(f"  Max:    {tok['max']}")
-        
-        print("\nErrors:")
-        err = summary['errors']
-        print(f"  Count: {err['count']}")
-        print(f"  Rate:  {err['rate']:.2%}")
-        if err['messages']:
-            print(f"  Messages: {', '.join(err['messages'])}")
-        
-        print("=" * 80 + "\n")
+        if random.random() < accuracy_rate:
+            predictions.append(truth)
+        else:
+            wrong_answer = random.choice([a for a in correct_answers if a != truth])
+            predictions.append(wrong_answer)
+    
+    return predictions, ground_truth
 
 
 def main():
-    """Main entry point"""
+    """Main entry point with CLI interface"""
     parser = argparse.ArgumentParser(
-        description="Benchmark and evaluate AI/ML model performance"
+        description='Benchmark and evaluate AI model performance metrics',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Examples:\n  python3 solution.py --model gpt-4 --tests 5\n  python3 solution.py --model claude-3 --input-cost 0.003 --export results.json'
     )
-    parser.add_argument(
-        "--model",
-        type=str,
-        default="test-model",
-        help="Model name to benchmark"
-    )
-    parser.add_argument(
-        "--trials",
-        type=int,
-        default=100,
-        help="Number of benchmark trials"
-    )
-    parser.add_argument(
-        "--export-metrics",
-        type=str,
-        help="Path to export raw metrics JSON"
-    )
-    parser.add_argument(
-        "--export-summary",
-        type=str,
-        help="Path to export summary JSON"
-    )
+    
+    parser.add_argument('--model', type=str, default='gpt-4-turbo',
+                       help='Model name for benchmarking (default: gpt-4-turbo)')
+    parser.add_argument('--input-cost', type=float, default=0.003,
+                       help='Cost per 1K input tokens in USD (default: 0.003)')
+    parser.add_argument('--output-cost', type=float, default=0.004,
+                       help='Cost per 1K output tokens in USD (default: 0.004)')
+    parser.add_argument('--tests', type=int, default=3,
+                       help='Number of benchmark tests to run (default: 3)')
+    parser.add_argument('--samples-per-test', type=int, default=100,
+                       help='Number of samples per test (default: 100)')
+    parser.add_argument('--accuracy-rate', type=float, default=0.85,
+                       help='Expected accuracy rate for test data (0.0-1.0, default: 0.85)')
+    parser.add_argument('--latency-ms', type=float, default=150,
+                       help='Simulated latency per inference in milliseconds (default: 150)')
+    parser.add_argument('--export', type=str, default=None,
+                       help='Export results to JSON file (optional)')
+    parser.add_argument('--verbose', action='store_true',
+                       help='Print verbose output during execution')
     
     args = parser.parse_args()
     
-    benchmark = ModelBenchmark(args.model, args.trials)
-    summary = benchmark.run_benchmark()
-    benchmark.print_summary(summary)
+    benchmark = PerformanceBenchmark(
+        model_name=args.model,
+        cost_per_1k_input=args.input_cost,
+        cost_per_1k_output=args.output_cost
+    )
     
-    if args.export_metrics:
-        benchmark.export_metrics(args.export_metrics)
+    print(f"Starting benchmark for model: {args.model}")
+    print(f"Running {args.tests} tests with {args.samples_per_test} samples each\n")
     
-    if args.export_summary:
-        benchmark.export_summary(args.export_summary, summary)
+    for test_num in range(1, args.tests + 1):
+        test_name = f"Test_{test_num}"
+        
+        predictions, ground_truth = generate_test_data(
+            num_samples=args.samples_per_test,
+            accuracy_rate=args.accuracy_rate
+        )
+        
+        input_tokens = random.randint(100, 500)
+        output_tokens = random.randint(50, 200)
+        
+        result = benchmark.run_benchmark(
+            test_name=test_name,
+            test_func=mock_inference_function,
+            predictions=predictions,
+            ground_truth=ground_truth,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            delay_ms=args.latency_ms
+        )
+        
+        if args.verbose:
+            print(f"Completed {test_name}:")
+            print(f"  Accuracy: {result.accuracy}%")
+            print(f"  Latency:  {result.latency_ms}ms")
+            print(f"  Cost:     ${result.cost_usd}")
+    
+    benchmark.print_report()
+    
+    if args.export:
+        benchmark.export_results(args.export)
+        print(f"\nResults exported to: {args.export}")
 
 
 if __name__ == "__main__":
