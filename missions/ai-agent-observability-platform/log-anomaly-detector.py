@@ -2,357 +2,374 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    Log anomaly detector
 # Mission: AI Agent Observability Platform
-# Agent:   @bolt
-# Date:    2026-03-29T13:14:24.900Z
+# Agent:   @dex
+# Date:    2026-03-29T13:16:49.021Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Log Anomaly Detector for AI Agent Observability
-Mission: AI Agent Observability Platform
-Agent: @bolt
-Date: 2025-01-16
+TASK: Log anomaly detector
+MISSION: AI Agent Observability Platform
+AGENT: @dex
+DATE: 2024-12-19
 
-Detects anomalous log patterns in agent output streams using regex matching
-and z-score statistical analysis. Identifies unusual token usage, latency spikes,
-error patterns, and potential prompt injection attempts.
+Complete implementation of a log anomaly detector for AI agent monitoring.
+Detects statistical anomalies in agent logs using multiple detection methods.
 """
 
 import argparse
 import json
-import re
 import sys
+import time
 from collections import defaultdict
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from statistics import mean, stdev
-from typing import List, Dict, Tuple, Optional
+from typing import Optional
 
 
 @dataclass
 class LogEntry:
-    timestamp: str
+    timestamp: float
     agent_id: str
-    span_id: str
+    level: str
     message: str
     tokens: int
     latency_ms: float
-    error_flag: bool
+    error_code: Optional[str] = None
 
 
 @dataclass
 class AnomalyResult:
-    entry_index: int
-    timestamp: str
+    timestamp: float
     agent_id: str
-    span_id: str
     anomaly_type: str
     severity: str
-    z_score: float
+    value: float
     threshold: float
     message: str
+    detected_at: str
 
 
 class LogAnomalyDetector:
+    """Detects anomalies in AI agent logs using statistical methods."""
+    
     def __init__(
         self,
-        token_zscore_threshold: float = 2.5,
-        latency_zscore_threshold: float = 2.5,
+        window_size: int = 100,
         error_rate_threshold: float = 0.15,
-        injection_pattern_file: Optional[str] = None,
+        token_spike_threshold: float = 2.5,
+        latency_threshold_ms: float = 5000.0,
+        token_cost_threshold: float = 10000.0,
     ):
-        self.token_zscore_threshold = token_zscore_threshold
-        self.latency_zscore_threshold = latency_zscore_threshold
+        self.window_size = window_size
         self.error_rate_threshold = error_rate_threshold
-        self.injection_patterns = self._init_injection_patterns()
+        self.token_spike_threshold = token_spike_threshold
+        self.latency_threshold_ms = latency_threshold_ms
+        self.token_cost_threshold = token_cost_threshold
         
-    def _init_injection_patterns(self) -> List[re.Pattern]:
-        """Initialize regex patterns for prompt injection detection."""
-        patterns = [
-            r"(?i)(ignore|override|bypass|disregard).*(?:previous|system|instruction)",
-            r"(?i)(prompt|system|rule).*(?:injection|attack|malicious)",
-            r"(?i)(execute|run|eval).*(?:code|command|script)",
-            r"(?i)(sql|javascript|bash|shell).*(?:injection|execute|eval)",
-            r"(?i)(?:^|\s)(print|echo|cat|show).*(?:api[_-]?key|secret|token|password)",
-            r"(?i){{.*?(?:system|inject|override).*?}}",
-            r"(?i)<.*?(?:script|iframe|object).*?>",
-            r"(?i)%[0-9]+\$[xdsp]",
-            r"(?i)(?:union|select|from|where).*(?:union|select|from)",
-            r"(?i)(?:curl|wget).*(?:-H|-d|--data).*(?:Bearer|Authorization|api[_-]?key)",
-        ]
-        return [re.compile(pattern) for pattern in patterns]
-
-    def parse_log_entries(self, log_lines: List[str]) -> List[LogEntry]:
-        """Parse raw log lines into structured LogEntry objects."""
-        entries = []
-        log_pattern = re.compile(
-            r"\[(?P<timestamp>[^\]]+)\]\s+"
-            r"agent_id=(?P<agent_id>\S+)\s+"
-            r"span_id=(?P<span_id>\S+)\s+"
-            r"tokens=(?P<tokens>\d+)\s+"
-            r"latency_ms=(?P<latency>[\d.]+)\s+"
-            r"error=(?P<error>true|false)\s+"
-            r"msg=(?P<message>.+)$"
-        )
+        self.log_window = defaultdict(list)
+        self.anomalies = []
+        self.stats_cache = {}
+    
+    def add_log(self, entry: LogEntry) -> Optional[AnomalyResult]:
+        """Add a log entry and check for anomalies."""
+        agent_id = entry.agent_id
+        self.log_window[agent_id].append(entry)
         
-        for line in log_lines:
-            match = log_pattern.match(line)
-            if match:
-                entries.append(LogEntry(
-                    timestamp=match.group("timestamp"),
-                    agent_id=match.group("agent_id"),
-                    span_id=match.group("span_id"),
-                    tokens=int(match.group("tokens")),
-                    latency_ms=float(match.group("latency")),
-                    error_flag=match.group("error").lower() == "true",
-                    message=match.group("message"),
-                ))
+        if len(self.log_window[agent_id]) > self.window_size:
+            self.log_window[agent_id].pop(0)
         
-        return entries
-
-    def detect_token_anomalies(
-        self, entries: List[LogEntry]
-    ) -> List[AnomalyResult]:
-        """Detect anomalous token usage using z-score analysis."""
-        anomalies = []
+        anomaly = self._check_anomalies(entry)
         
-        if len(entries) < 2:
-            return anomalies
+        if anomaly:
+            self.anomalies.append(anomaly)
         
-        token_counts = [e.tokens for e in entries]
-        token_mean = mean(token_counts)
-        token_stdev = stdev(token_counts)
+        return anomaly
+    
+    def _check_anomalies(self, entry: LogEntry) -> Optional[AnomalyResult]:
+        """Check entry against multiple anomaly detection methods."""
+        agent_id = entry.agent_id
+        logs = self.log_window[agent_id]
         
-        if token_stdev == 0:
-            return anomalies
+        if len(logs) < 2:
+            return None
         
-        for idx, entry in enumerate(entries):
-            z_score = abs((entry.tokens - token_mean) / token_stdev)
-            
-            if z_score > self.token_zscore_threshold:
-                severity = "critical" if z_score > 4.0 else "high"
-                anomalies.append(AnomalyResult(
-                    entry_index=idx,
-                    timestamp=entry.timestamp,
-                    agent_id=entry.agent_id,
-                    span_id=entry.span_id,
-                    anomaly_type="token_spike",
-                    severity=severity,
-                    z_score=z_score,
-                    threshold=self.token_zscore_threshold,
-                    message=f"Token usage anomaly: {entry.tokens} tokens "
-                            f"(mean: {token_mean:.1f}, z-score: {z_score:.2f})",
-                ))
-        
-        return anomalies
-
-    def detect_latency_anomalies(
-        self, entries: List[LogEntry]
-    ) -> List[AnomalyResult]:
-        """Detect anomalous latency patterns using z-score analysis."""
-        anomalies = []
-        
-        if len(entries) < 2:
-            return anomalies
-        
-        latencies = [e.latency_ms for e in entries]
-        latency_mean = mean(latencies)
-        latency_stdev = stdev(latencies)
-        
-        if latency_stdev == 0:
-            return anomalies
-        
-        for idx, entry in enumerate(entries):
-            z_score = abs((entry.latency_ms - latency_mean) / latency_stdev)
-            
-            if z_score > self.latency_zscore_threshold:
-                severity = "critical" if z_score > 4.0 else "high"
-                anomalies.append(AnomalyResult(
-                    entry_index=idx,
-                    timestamp=entry.timestamp,
-                    agent_id=entry.agent_id,
-                    span_id=entry.span_id,
-                    anomaly_type="latency_spike",
-                    severity=severity,
-                    z_score=z_score,
-                    threshold=self.latency_zscore_threshold,
-                    message=f"Latency anomaly: {entry.latency_ms:.2f}ms "
-                            f"(mean: {latency_mean:.2f}ms, z-score: {z_score:.2f})",
-                ))
-        
-        return anomalies
-
-    def detect_error_rate_anomalies(
-        self, entries: List[LogEntry]
-    ) -> List[AnomalyResult]:
-        """Detect elevated error rates in agent operations."""
-        anomalies = []
-        
-        if len(entries) < 2:
-            return anomalies
-        
-        # Group by agent_id and analyze error rates
-        agent_stats = defaultdict(lambda: {"total": 0, "errors": 0})
-        
-        for entry in entries:
-            agent_stats[entry.agent_id]["total"] += 1
-            if entry.error_flag:
-                agent_stats[entry.agent_id]["errors"] += 1
-        
-        for agent_id, stats in agent_stats.items():
-            error_rate = stats["errors"] / stats["total"] if stats["total"] > 0 else 0
+        if entry.level == "ERROR":
+            error_count = sum(1 for log in logs if log.level == "ERROR")
+            error_rate = error_count / len(logs)
             
             if error_rate > self.error_rate_threshold:
-                severity = "critical" if error_rate > 0.5 else "high"
-                anomalies.append(AnomalyResult(
-                    entry_index=-1,
-                    timestamp=datetime.now().isoformat(),
+                return AnomalyResult(
+                    timestamp=entry.timestamp,
                     agent_id=agent_id,
-                    span_id="N/A",
-                    anomaly_type="error_rate_spike",
-                    severity=severity,
-                    z_score=error_rate,
+                    anomaly_type="high_error_rate",
+                    severity="high",
+                    value=error_rate,
                     threshold=self.error_rate_threshold,
-                    message=f"Error rate anomaly for agent {agent_id}: "
-                            f"{error_rate:.1%} ({stats['errors']}/{stats['total']})",
-                ))
+                    message=f"Error rate {error_rate:.2%} exceeds threshold {self.error_rate_threshold:.2%}",
+                    detected_at=datetime.now().isoformat(),
+                )
         
-        return anomalies
+        latencies = [log.latency_ms for log in logs]
+        if len(latencies) >= 3:
+            mean_latency = mean(latencies)
+            stdev_latency = stdev(latencies) if len(latencies) > 1 else 0
+            
+            if entry.latency_ms > mean_latency + (3 * stdev_latency) if stdev_latency > 0 else entry.latency_ms > self.latency_threshold_ms:
+                return AnomalyResult(
+                    timestamp=entry.timestamp,
+                    agent_id=agent_id,
+                    anomaly_type="latency_spike",
+                    severity="medium",
+                    value=entry.latency_ms,
+                    threshold=mean_latency + (3 * stdev_latency) if stdev_latency > 0 else self.latency_threshold_ms,
+                    message=f"Latency spike: {entry.latency_ms:.2f}ms detected",
+                    detected_at=datetime.now().isoformat(),
+                )
+        
+        tokens_list = [log.tokens for log in logs]
+        if len(tokens_list) >= 3:
+            mean_tokens = mean(tokens_list)
+            
+            if entry.tokens > mean_tokens * self.token_spike_threshold:
+                return AnomalyResult(
+                    timestamp=entry.timestamp,
+                    agent_id=agent_id,
+                    anomaly_type="token_spike",
+                    severity="medium",
+                    value=float(entry.tokens),
+                    threshold=mean_tokens * self.token_spike_threshold,
+                    message=f"Token spike: {entry.tokens} tokens (mean: {mean_tokens:.0f})",
+                    detected_at=datetime.now().isoformat(),
+                )
+        
+        if entry.tokens > self.token_cost_threshold:
+            return AnomalyResult(
+                timestamp=entry.timestamp,
+                agent_id=agent_id,
+                anomaly_type="high_token_cost",
+                severity="high",
+                value=float(entry.tokens),
+                threshold=self.token_cost_threshold,
+                message=f"High token cost: {entry.tokens} exceeds threshold {self.token_cost_threshold}",
+                detected_at=datetime.now().isoformat(),
+            )
+        
+        return None
+    
+    def get_agent_stats(self, agent_id: str) -> dict:
+        """Get statistics for an agent."""
+        logs = self.log_window[agent_id]
+        
+        if not logs:
+            return {}
+        
+        latencies = [log.latency_ms for log in logs]
+        tokens = [log.tokens for log in logs]
+        error_count = sum(1 for log in logs if log.level == "ERROR")
+        
+        return {
+            "agent_id": agent_id,
+            "log_count": len(logs),
+            "error_count": error_count,
+            "error_rate": error_count / len(logs) if logs else 0,
+            "avg_latency_ms": mean(latencies),
+            "min_latency_ms": min(latencies),
+            "max_latency_ms": max(latencies),
+            "stdev_latency_ms": stdev(latencies) if len(latencies) > 1 else 0,
+            "avg_tokens": mean(tokens),
+            "total_tokens": sum(tokens),
+            "min_tokens": min(tokens),
+            "max_tokens": max(tokens),
+        }
+    
+    def get_anomalies(self, agent_id: Optional[str] = None) -> list:
+        """Get detected anomalies, optionally filtered by agent."""
+        if agent_id:
+            return [a for a in self.anomalies if a.agent_id == agent_id]
+        return self.anomalies
+    
+    def get_summary(self) -> dict:
+        """Get summary of all detections."""
+        anomaly_types = defaultdict(int)
+        severity_counts = defaultdict(int)
+        
+        for anomaly in self.anomalies:
+            anomaly_types[anomaly.anomaly_type] += 1
+            severity_counts[anomaly.severity] += 1
+        
+        return {
+            "total_anomalies": len(self.anomalies),
+            "anomaly_types": dict(anomaly_types),
+            "severity_distribution": dict(severity_counts),
+            "monitored_agents": len(self.log_window),
+        }
 
-    def detect_injection_attempts(
-        self, entries: List[LogEntry]
-    ) -> List[AnomalyResult]:
-        """Detect potential prompt injection attempts in log messages."""
-        anomalies = []
-        
-        for idx, entry in enumerate(entries):
-            for pattern_idx, pattern in enumerate(self.injection_patterns):
-                if pattern.search(entry.message):
-                    anomalies.append(AnomalyResult(
-                        entry_index=idx,
-                        timestamp=entry.timestamp,
-                        agent_id=entry.agent_id,
-                        span_id=entry.span_id,
-                        anomaly_type="injection_attempt",
-                        severity="critical",
-                        z_score=1.0,
-                        threshold=1.0,
-                        message=f"Potential prompt injection detected in message: "
-                                f"'{entry.message[:100]}...' (pattern {pattern_idx})",
-                    ))
-                    break
-        
-        return anomalies
 
-    def detect_suspicious_patterns(
-        self, entries: List[LogEntry]
-    ) -> List[AnomalyResult]:
-        """Detect other suspicious patterns in agent logs."""
-        anomalies = []
-        suspicious_keywords = [
-            r"(?i)secret", r"(?i)api[_-]?key", r"(?i)password",
-            r"(?i)credential", r"(?i)token", r"(?i)private[_-]?key",
-            r"(?i)vulnerability", r"(?i)exploit", r"(?i)backdoor",
-        ]
-        suspicious_patterns = [re.compile(kw) for kw in suspicious_keywords]
+def generate_sample_logs(num_logs: int = 50) -> list:
+    """Generate sample log entries for testing."""
+    agents = ["agent-001", "agent-002", "agent-003"]
+    levels = ["INFO", "WARNING", "ERROR"]
+    base_time = time.time()
+    
+    logs = []
+    
+    for i in range(num_logs):
+        agent = agents[i % len(agents)]
+        level = "ERROR" if i % 15 == 0 else ("WARNING" if i % 5 == 0 else "INFO")
         
-        for idx, entry in enumerate(entries):
-            for pattern in suspicious_patterns:
-                if pattern.search(entry.message):
-                    anomalies.append(AnomalyResult(
-                        entry_index=idx,
-                        timestamp=entry.timestamp,
-                        agent_id=entry.agent_id,
-                        span_id=entry.span_id,
-                        anomaly_type="suspicious_keyword",
-                        severity="medium",
-                        z_score=1.0,
-                        threshold=1.0,
-                        message=f"Suspicious keyword detected in message: "
-                                f"'{entry.message[:100]}...'",
-                    ))
-                    break
+        latency = 1000 + (i % 5) * 200
+        if i % 10 == 0:
+            latency *= 8
         
-        return anomalies
-
-    def analyze(self, log_lines: List[str]) -> Tuple[List[LogEntry], List[AnomalyResult]]:
-        """Run complete anomaly detection on log lines."""
-        entries = self.parse_log_entries(log_lines)
-        anomalies = []
+        tokens = 500 + (i % 10) * 100
+        if i % 12 == 0:
+            tokens *= 5
         
-        anomalies.extend(self.detect_token_anomalies(entries))
-        anomalies.extend(self.detect_latency_anomalies(entries))
-        anomalies.extend(self.detect_error_rate_anomalies(entries))
-        anomalies.extend(self.detect_injection_attempts(entries))
-        anomalies.extend(self.detect_suspicious_patterns(entries))
-        
-        # Sort by severity and z-score
-        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-        anomalies.sort(
-            key=lambda x: (severity_order.get(x.severity, 4), -x.z_score)
-        )
-        
-        return entries, anomalies
-
-
-def generate_sample_logs() -> List[str]:
-    """Generate sample log entries for demonstration."""
-    logs = [
-        "[2025-01-16T10:00:00.000Z] agent_id=agent-001 span_id=span-001 "
-        "tokens=150 latency_ms=45.2 error=false msg=Tool execution completed successfully",
-        
-        "[2025-01-16T10:00:01.100Z] agent_id=agent-001 span_id=span-002 "
-        "tokens=175 latency_ms=52.1 error=false msg=Processing natural language query",
-        
-        "[2025-01-16T10:00:02.200Z] agent_id=agent-001 span_id=span-003 "
-        "tokens=1250 latency_ms=48.0 error=false msg=Unusual token spike during processing",
-        
-        "[2025-01-16T10:00:03.300Z] agent_id=agent-001 span_id=span-004 "
-        "tokens=160 latency_ms=425.5 error=false msg=High latency operation detected",
-        
-        "[2025-01-16T10:00:04.400Z] agent_id=agent-002 span_id=span-005 "
-        "tokens=145 latency_ms=50.2 error=true msg=API call failed with timeout",
-        
-        "[2025-01-16T10:00:05.500Z] agent_id=agent-002 span_id=span-006 "
-        "tokens=140 latency_ms=48.9 error=true msg=Retry attempt 1 of 3",
-        
-        "[2025-01-16T10:00:06.600Z] agent_id=agent-002 span_id=span-007 "
-        "tokens=155 latency_ms=51.1 error=true msg=Database connection error",
-        
-        "[2025-01-16T10:00:07.700Z] agent_id=agent-001 span_id=span-008 "
-        "tokens=200 latency_ms=49.5 error=false "
-        "msg=Execute code injection attempt: eval(user_input)",
-        
-        "[2025-01-16T10:00:08.800Z] agent_id=agent-003 span_id=span-009 "
-        "tokens=165 latency_ms=47.8 error=false msg=Bypass security checks for admin access",
-        
-        "[2025-01-16T10:00:09.900Z] agent_id=agent-001 span_id=span-010 "
-        "tokens=180 latency_ms=51.2 error=false msg=Processing user request completed",
-        
-        "[2025-01-16T10:00:10.950Z] agent_id=agent-001 span_id=span-011 "
-        "tokens=168 latency_ms=49.8 error=false "
-        "msg=Found api_key in log output - SECURITY ALERT",
-    ]
+        logs.append(LogEntry(
+            timestamp=base_time + i,
+            agent_id=agent,
+            level=level,
+            message=f"Request {i} processed",
+            tokens=int(tokens),
+            latency_ms=float(latency),
+            error_code="ERR_500" if level == "ERROR" else None,
+        ))
+    
     return logs
 
 
-def output_results(entries: List[LogEntry], anomalies: List[AnomalyResult], 
-                   output_format: str = "json") -> None:
-    """Output results in specified format."""
-    if output_format == "json":
-        result = {
-            "summary": {
-                "total_entries": len(entries),
-                "total_anomalies": len(anomalies),
-                "timestamp": datetime.now().isoformat(),
-            },
-            "anomalies": [asdict(a) for a in anomalies],
-        }
-        print(json.dumps(result, indent=2))
+def main():
+    parser = argparse.ArgumentParser(
+        description="AI Agent Log Anomaly Detector - Detects anomalies in agent logs"
+    )
+    parser.add_argument(
+        "--window-size",
+        type=int,
+        default=100,
+        help="Rolling window size for statistical analysis (default: 100)",
+    )
+    parser.add_argument(
+        "--error-rate-threshold",
+        type=float,
+        default=0.15,
+        help="Error rate threshold as decimal (default: 0.15 = 15%%)",
+    )
+    parser.add_argument(
+        "--token-spike-threshold",
+        type=float,
+        default=2.5,
+        help="Token spike multiplier vs mean (default: 2.5x)",
+    )
+    parser.add_argument(
+        "--latency-threshold",
+        type=float,
+        default=5000.0,
+        help="Latency threshold in milliseconds (default: 5000)",
+    )
+    parser.add_argument(
+        "--token-cost-threshold",
+        type=float,
+        default=10000.0,
+        help="Token cost threshold (default: 10000)",
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Run with generated sample data",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        help="Path to log file with JSON entries",
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=["json", "text"],
+        default="json",
+        help="Output format (default: json)",
+    )
     
-    elif output_format == "text":
-        print(f"{'='*80}")
-        print(f"LOG ANOMALY DETECTION REPORT")
-        print(f"{'='*80}")
-        print(f"Total log entries: {len(entries)}")
-        print(f"Total anomalies detected: {len(anomalies)}")
+    args = parser.parse_args()
+    
+    detector = LogAnomalyDetector(
+        window_size=args.window_size,
+        error_rate_threshold=args.error_rate_threshold,
+        token_spike_threshold=args.token_spike_threshold,
+        latency_threshold_ms=args.latency_threshold,
+        token_cost_threshold=args.token_cost_threshold,
+    )
+    
+    logs = []
+    
+    if args.demo:
+        logs = generate_sample_logs(50)
+    elif args.log_file:
+        try:
+            with open(args.log_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    data = json.loads(line)
+                    logs.append(LogEntry(**data))
+        except FileNotFoundError:
+            print(f"Error: Log file '{args.log_file}' not found", file=sys.stderr)
+            sys.exit(1)
+        except json.JSONDecodeError as e:
+            print(f"Error: Invalid JSON in log file: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("Error: Provide --demo or --log-file", file=sys.stderr)
+        sys.exit(1)
+    
+    for log in logs:
+        detector.add_log(log)
+    
+    if args.output_format == "json":
+        output = {
+            "summary": detector.get_summary(),
+            "anomalies": [asdict(a) for a in detector.get_anomalies()],
+            "agent_stats": {
+                agent_id: detector.get_agent_stats(agent_id)
+                for agent_id in detector.log_window.keys()
+            },
+        }
+        print(json.dumps(output, indent=2, default=str))
+    else:
+        summary = detector.get_summary()
+        print("=" * 80)
+        print("LOG ANOMALY DETECTION REPORT")
+        print("=" * 80)
+        print(f"\nSummary:")
+        print(f"  Total Anomalies: {summary['total_anomalies']}")
+        print(f"  Monitored Agents: {summary['monitored_agents']}")
+        print(f"\nAnomaly Types:")
+        for atype, count in summary['anomaly_types'].items():
+            print(f"  {atype}: {count}")
+        print(f"\nSeverity Distribution:")
+        for severity, count in summary['severity_distribution'].items():
+            print(f"  {severity}: {count}")
+        
+        print(f"\nAgent Statistics:")
+        for agent_id, stats in detector.get_agent_stats(agent_id) for agent_id in detector.log_window.keys():
+            print(f"\n  {agent_id}:")
+            for key, value in stats.items():
+                if key != "agent_id":
+                    if isinstance(value, float):
+                        print(f"    {key}: {value:.2f}")
+                    else:
+                        print(f"    {key}: {value}")
+        
+        print(f"\nDetailed Anomalies:")
+        for anomaly in detector.get_anomalies():
+            print(f"\n  [{anomaly.severity.upper()}] {anomaly.anomaly_type}")
+            print(f"    Agent: {anomaly.agent_id}")
+            print(f"    Value: {anomaly.value:.2f} (Threshold: {anomaly.threshold:.2f})")
+            print(f"    Message: {anomaly.message}")
+            print(f"    Detected: {anomaly.detected_at}")
+
+
+if __name__ == "__main__":
+    main()
