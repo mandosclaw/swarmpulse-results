@@ -188,4 +188,150 @@ class MetricsCollector:
                 timestamp=datetime.utcnow().isoformat() + "Z",
                 total_agents=len(agent_metrics_list),
                 healthy_agents=healthy_count,
-                degraded_agents=degraded_count
+                degraded_agents=degraded_count,
+                critical_agents=critical_count,
+                offline_agents=offline_count,
+                total_tasks_completed=total_completed,
+                total_tasks_failed=total_failed,
+                total_tasks_pending=total_pending,
+                avg_error_rate_percent=round(avg_error_rate, 2),
+                avg_response_time_ms=round(avg_response_time, 2),
+                avg_cpu_usage_percent=round(avg_cpu, 1),
+                avg_memory_usage_percent=round(avg_memory, 1),
+                overall_throughput_tasks_per_min=round(overall_throughput, 2),
+                agents=agent_metrics_list,
+            )
+
+            return swarm_metrics
+
+
+class MonitorPageUI:
+    def __init__(self, collector: MetricsCollector):
+        self.collector = collector
+        self.running = False
+
+    def _format_uptime(self, seconds: int) -> str:
+        """Format seconds into human-readable uptime string."""
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        return f"{hours}h {minutes}m {secs}s"
+
+    def _get_status_color(self, status: str) -> str:
+        """Return color code for status."""
+        colors = {
+            AgentStatus.HEALTHY.value: "🟢",
+            AgentStatus.DEGRADED.value: "🟡",
+            AgentStatus.CRITICAL.value: "🔴",
+            AgentStatus.OFFLINE.value: "⚫",
+        }
+        return colors.get(status, "❓")
+
+    def _render_header(self) -> str:
+        """Render the dashboard header."""
+        return "\n" + "=" * 120 + "\n" + "AGENT ACTIVITY MONITOR - REAL-TIME SWARM HEALTH DASHBOARD".center(120) + "\n" + "=" * 120 + "\n"
+
+    def _render_swarm_summary(self, metrics: SwarmMetrics) -> str:
+        """Render swarm-level summary statistics."""
+        lines = []
+        lines.append("┌" + "─" * 118 + "┐")
+        lines.append("│" + f"SWARM SUMMARY (Updated: {metrics.timestamp})".ljust(118) + "│")
+        lines.append("├" + "─" * 118 + "┤")
+
+        summary_line = f"│ Total Agents: {metrics.total_agents} | Healthy: {metrics.healthy_agents} 🟢 | Degraded: {metrics.degraded_agents} 🟡 | Critical: {metrics.critical_agents} 🔴 | Offline: {metrics.offline_agents} ⚫"
+        lines.append(summary_line.ljust(119) + "│")
+
+        summary_line2 = f"│ Total Tasks: {metrics.total_tasks_completed} ✓ | Failed: {metrics.total_tasks_failed} ✗ | Pending: {metrics.total_tasks_pending} ⧗ | Avg Error Rate: {metrics.avg_error_rate_percent}%"
+        lines.append(summary_line2.ljust(119) + "│")
+
+        summary_line3 = f"│ Avg Response Time: {metrics.avg_response_time_ms}ms | Avg CPU: {metrics.avg_cpu_usage_percent}% | Avg Memory: {metrics.avg_memory_usage_percent}% | Throughput: {metrics.overall_throughput_tasks_per_min} tasks/min"
+        lines.append(summary_line3.ljust(119) + "│")
+
+        lines.append("└" + "─" * 118 + "┘")
+        return "\n".join(lines)
+
+    def _render_agent_table(self, metrics: SwarmMetrics) -> str:
+        """Render detailed agent metrics table."""
+        lines = []
+        lines.append("┌" + "─" * 118 + "┐")
+        lines.append("│" + "DETAILED AGENT METRICS".ljust(118) + "│")
+        lines.append("├" + "─" * 118 + "┤")
+
+        # Header row
+        header = "│ Status │ Agent ID    │ Uptime      │ Tasks OK │ Tasks Fail │ Tasks Pend │ Response │ Error % │ CPU  % │ Mem  % │ Throughput │"
+        lines.append(header)
+        lines.append("├" + "─" * 118 + "┤")
+
+        # Agent rows
+        for agent in metrics.agents:
+            status_icon = self._get_status_color(agent.status)
+            uptime_str = self._format_uptime(agent.uptime_seconds)
+            row = f"│ {status_icon}      │ {agent.agent_id} │ {uptime_str:11} │ {agent.tasks_completed:8} │ {agent.tasks_failed:10} │ {agent.tasks_pending:10} │ {agent.avg_response_time_ms:7.1f}ms │ {agent.error_rate_percent:6.2f}% │ {agent.cpu_usage_percent:5.1f}% │ {agent.memory_usage_percent:5.1f}% │ {agent.throughput_tasks_per_min:9.2f}    │"
+            lines.append(row)
+
+        lines.append("└" + "─" * 118 + "┘")
+        return "\n".join(lines)
+
+    def render_dashboard(self, metrics: SwarmMetrics) -> str:
+        """Render the complete dashboard."""
+        output = []
+        output.append(self._render_header())
+        output.append(self._render_swarm_summary(metrics))
+        output.append("")
+        output.append(self._render_agent_table(metrics))
+        return "\n".join(output)
+
+    def print_dashboard(self, metrics: SwarmMetrics) -> None:
+        """Print the dashboard to stdout."""
+        print("\033[2J\033[H")  # Clear screen
+        print(self.render_dashboard(metrics))
+
+    def start_live_monitoring(self, refresh_interval: float = 2.0) -> None:
+        """Start live monitoring with periodic updates."""
+        self.running = True
+        try:
+            while self.running:
+                metrics = self.collector.collect_metrics()
+                self.print_dashboard(metrics)
+                time.sleep(refresh_interval)
+        except KeyboardInterrupt:
+            self.stop_live_monitoring()
+
+    def stop_live_monitoring(self) -> None:
+        """Stop live monitoring."""
+        self.running = False
+        print("\n\nMonitoring stopped.")
+
+    def export_metrics_json(self, metrics: SwarmMetrics, filepath: str) -> None:
+        """Export metrics to JSON file."""
+        data = asdict(metrics)
+        with open(filepath, "w") as f:
+            json.dump(data, f, indent=2)
+        print(f"Metrics exported to {filepath}")
+
+    def get_metrics_snapshot(self) -> SwarmMetrics:
+        """Get a single snapshot of current metrics."""
+        return self.collector.collect_metrics()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Agent Activity Monitor - Real-Time Dashboard for Swarm Health"
+    )
+    parser.add_argument(
+        "--agents",
+        type=int,
+        default=5,
+        help="Number of agents to monitor (default: 5)"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["live", "snapshot", "export"],
+        default="snapshot",
+        help="Dashboard mode: live (continuous), snapshot (single), or export (JSON file)"
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=2.0,
+        help="Refresh interval in seconds for live mode (default
