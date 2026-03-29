@@ -192,3 +192,177 @@ class MassAssignmentScanner:
         if response_data:
             all_fields = self.extract_fields_from_json(response_data)
             result['disclosed_fields'] = list(all_fields)
+            
+            sensitive_disclosed = [f for f in all_fields if self._is_sensitive_field(f)]
+            result['sensitive_fields_found'] = len(sensitive_disclosed)
+            
+            if result['sensitive_fields_found'] > 0:
+                result['detection_confidence'] = min(1.0, result['sensitive_fields_found'] / 5.0 + 0.3)
+                self.log(f"FIELD ENUMERATION: {len(sensitive_disclosed)} sensitive fields disclosed on {endpoint}",
+                        level="WARNING")
+        
+        return result
+    
+    def _is_sensitive_field(self, field: str) -> bool:
+        """Check if a field is considered sensitive."""
+        field_lower = field.lower()
+        for sensitive in self.COMMON_SENSITIVE_FIELDS:
+            if sensitive in field_lower or field_lower in sensitive:
+                return True
+        return False
+    
+    def test_authorization_bypass(self, endpoint: str, method: str = "POST") -> Dict[str, Any]:
+        """Test for authorization bypass via mass assignment."""
+        result = {
+            'endpoint': endpoint,
+            'method': method,
+            'authorization_bypass_possible': False,
+            'bypass_fields': [],
+            'detection_confidence': 0.0,
+            'details': []
+        }
+        
+        # Test as regular user with admin privileges
+        admin_fields = ['is_admin', 'role', 'access_level', 'is_staff']
+        
+        for field in admin_fields:
+            payload = self.COMMON_INJECTION_PAYLOADS.get(field, [True])[0]
+            
+            test_body = {field: payload}
+            status_code, response_text = self.simulate_api_request(
+                endpoint, method, test_body, "regular_user"
+            )
+            
+            response_data = self.extract_json_from_response(response_text)
+            
+            if response_data and field in response_data:
+                if response_data[field] == payload or str(response_data[field]) == str(payload):
+                    result['authorization_bypass_possible'] = True
+                    result['bypass_fields'].append(field)
+                    result['details'].append({
+                        'field': field,
+                        'attempted_value': payload,
+                        'actual_response_value': response_data[field]
+                    })
+        
+        if result['bypass_fields']:
+            result['detection_confidence'] = 0.85
+            self.log(f"AUTHORIZATION BYPASS: {len(result['bypass_fields'])} fields on {endpoint}",
+                    level="CRITICAL")
+            self.vulnerabilities.append(result)
+        
+        return result
+    
+    def scan_endpoint(self, endpoint: str, method: str = "POST") -> Dict[str, Any]:
+        """Perform comprehensive scan of single endpoint."""
+        self.log(f"Scanning {method} {endpoint}")
+        self.tested_endpoints += 1
+        
+        scan_results = {
+            'endpoint': endpoint,
+            'method': method,
+            'timestamp': time.time(),
+            'tests': {
+                'mass_assignment': self.test_mass_assignment(endpoint, method),
+                'field_enumeration': self.test_field_enumeration(endpoint, method),
+                'authorization_bypass': self.test_authorization_bypass(endpoint, method)
+            },
+            'overall_risk': 'LOW'
+        }
+        
+        # Calculate overall risk
+        mass_assign = scan_results['tests']['mass_assignment']
+        field_enum = scan_results['tests']['field_enumeration']
+        auth_bypass = scan_results['tests']['authorization_bypass']
+        
+        risk_score = (
+            mass_assign.get('detection_confidence', 0) * 0.4 +
+            field_enum.get('detection_confidence', 0) * 0.3 +
+            (0.9 if auth_bypass.get('authorization_bypass_possible', False) else 0) * 0.3
+        )
+        
+        if risk_score >= 0.7:
+            scan_results['overall_risk'] = 'CRITICAL'
+        elif risk_score >= 0.5:
+            scan_results['overall_risk'] = 'HIGH'
+        elif risk_score >= 0.3:
+            scan_results['overall_risk'] = 'MEDIUM'
+        
+        return scan_results
+    
+    def scan_endpoints(self, endpoints: List[Tuple[str, str]]) -> List[Dict[str, Any]]:
+        """Scan multiple endpoints."""
+        results = []
+        for endpoint, method in endpoints:
+            result = self.scan_endpoint(endpoint, method)
+            results.append(result)
+        
+        return results
+    
+    def generate_report(self, results: List[Dict[str, Any]]) -> str:
+        """Generate scan report."""
+        report = []
+        report.append("=" * 80)
+        report.append("MASS ASSIGNMENT SCANNER - VULNERABILITY REPORT")
+        report.append("=" * 80)
+        report.append("")
+        
+        report.append(f"Total Endpoints Scanned: {self.tested_endpoints}")
+        report.append(f"Total Vulnerabilities Found: {len(self.vulnerabilities)}")
+        report.append("")
+        
+        critical_count = sum(1 for r in results if r.get('overall_risk') == 'CRITICAL')
+        high_count = sum(1 for r in results if r.get('overall_risk') == 'HIGH')
+        medium_count = sum(1 for r in results if r.get('overall_risk') == 'MEDIUM')
+        
+        report.append("RISK SUMMARY:")
+        report.append(f"  CRITICAL: {critical_count}")
+        report.append(f"  HIGH:     {high_count}")
+        report.append(f"  MEDIUM:   {medium_count}")
+        report.append("")
+        
+        report.append("DETAILED FINDINGS:")
+        report.append("-" * 80)
+        
+        for result in results:
+            if result['overall_risk'] != 'LOW':
+                report.append(f"\n[{result['overall_risk']}] {result['method']} {result['endpoint']}")
+                
+                mass_assign = result['tests']['mass_assignment']
+                if mass_assign.get('vulnerable_fields'):
+                    report.append(f"  Mass Assignment: {', '.join(mass_assign['vulnerable_fields'])}")
+                
+                field_enum = result['tests']['field_enumeration']
+                if field_enum.get('sensitive_fields_found', 0) > 0:
+                    report.append(f"  Field Enumeration: {field_enum['sensitive_fields_found']} sensitive fields")
+                
+                auth_bypass = result['tests']['authorization_bypass']
+                if auth_bypass.get('authorization_bypass_possible'):
+                    report.append(f"  Authorization Bypass: {', '.join(auth_bypass['bypass_fields'])}")
+        
+        report.append("")
+        report.append("=" * 80)
+        
+        return "\n".join(report)
+
+
+def main():
+    """Main function."""
+    parser = argparse.ArgumentParser(
+        description='Mass Assignment Vulnerability Scanner for REST APIs'
+    )
+    parser.add_argument('-e', '--endpoints', nargs='+', default=['/api/user/profile', '/api/account/update'],
+                       help='API endpoints to scan')
+    parser.add_argument('-m', '--method', default='POST', choices=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+                       help='HTTP method to use')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                       help='Enable verbose output')
+    parser.add_argument('-o', '--output', help='Output file for report')
+    parser.add_argument('-t', '--timeout', type=int, default=10,
+                       help='Request timeout in seconds')
+    
+    args = parser.parse_args()
+    
+    scanner = MassAssignmentScanner(timeout=args.timeout, verbose=args.verbose)
+    
+    endpoints = [(ep, args
