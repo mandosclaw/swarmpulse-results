@@ -220,4 +220,187 @@ class KeywordRetriever:
             idf = math.log((self.num_docs - df + 0.5) / (df + 0.5) + 1.0)
             
             tf = tokens.count(token)
-            norm_length = 1.0 - b + b * (doc_length / self.avg_doc_length if self.
+            norm_length = 1.0 - b + b * (doc_length / self.avg_doc_length if self.avg_doc_length > 0 else 1.0)
+            score += idf * (tf * (k1 + 1.0)) / (tf + k1 * norm_length)
+        
+        return score
+    
+    def retrieve(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
+        """Retrieve top-k chunks by keyword relevance."""
+        tokens = self._tokenize(query)
+        
+        relevant_chunks = set()
+        for token in tokens:
+            if token in self.inverted_index:
+                relevant_chunks.update(self.inverted_index[token])
+        
+        scores = []
+        for chunk_id in relevant_chunks:
+            score = self._bm25_score(tokens, chunk_id)
+            scores.append((chunk_id, score))
+        
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores[:top_k]
+
+
+class SemanticRetriever:
+    """Implements semantic search using embeddings and cosine similarity."""
+    
+    def __init__(self, embedding_model: Optional[SimpleEmbedding] = None):
+        self.embedding_model = embedding_model or SimpleEmbedding()
+        self.chunks = {}
+        self.embeddings = {}
+    
+    def index(self, chunks: List[Chunk]) -> None:
+        """Index chunks with embeddings."""
+        self.chunks = {chunk.chunk_id: chunk for chunk in chunks}
+        self.embeddings.clear()
+        
+        for chunk in chunks:
+            embedding = self.embedding_model.embed(chunk.content)
+            self.embeddings[chunk.chunk_id] = embedding
+            chunk.embedding = embedding
+    
+    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
+        """Calculate cosine similarity between two vectors."""
+        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        norm1 = math.sqrt(sum(a**2 for a in vec1))
+        norm2 = math.sqrt(sum(b**2 for b in vec2))
+        
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        
+        return dot_product / (norm1 * norm2)
+    
+    def retrieve(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
+        """Retrieve top-k chunks by semantic similarity."""
+        query_embedding = self.embedding_model.embed(query)
+        
+        scores = []
+        for chunk_id, embedding in self.embeddings.items():
+            similarity = self._cosine_similarity(query_embedding, embedding)
+            scores.append((chunk_id, similarity))
+        
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores[:top_k]
+
+
+class HybridRetriever:
+    """Combines semantic and keyword retrieval with intelligent ranking."""
+    
+    def __init__(self, alpha: float = 0.5):
+        self.alpha = alpha  # Weight for semantic score (1-alpha for keyword)
+        self.keyword_retriever = KeywordRetriever()
+        self.semantic_retriever = SemanticRetriever()
+        self.chunks = {}
+    
+    def index(self, documents: List[Document]) -> None:
+        """Index documents using dynamic chunking."""
+        all_chunks = []
+        chunker = DynamicChunker()
+        
+        for doc in documents:
+            chunks = chunker.chunk(doc)
+            all_chunks.extend(chunks)
+        
+        self.chunks = {chunk.chunk_id: chunk for chunk in all_chunks}
+        self.keyword_retriever.index(all_chunks)
+        self.semantic_retriever.index(all_chunks)
+    
+    def retrieve(self, query: str, top_k: int = 10) -> List[RetrievalResult]:
+        """Retrieve and rank results using hybrid approach."""
+        keyword_results = dict(self.keyword_retriever.retrieve(query, top_k * 2))
+        semantic_results = dict(self.semantic_retriever.retrieve(query, top_k * 2))
+        
+        all_chunk_ids = set(keyword_results.keys()) | set(semantic_results.keys())
+        
+        hybrid_scores = []
+        for chunk_id in all_chunk_ids:
+            semantic_score = semantic_results.get(chunk_id, 0.0)
+            keyword_score = keyword_results.get(chunk_id, 0.0)
+            
+            norm_semantic = semantic_score
+            norm_keyword = keyword_score / (max(keyword_results.values()) if keyword_results else 1.0)
+            
+            hybrid_score = self.alpha * norm_semantic + (1 - self.alpha) * norm_keyword
+            hybrid_scores.append((chunk_id, semantic_score, keyword_score, hybrid_score))
+        
+        hybrid_scores.sort(key=lambda x: x[3], reverse=True)
+        
+        results = []
+        for rank, (chunk_id, sem_score, kw_score, hyb_score) in enumerate(hybrid_scores[:top_k]):
+            chunk = self.chunks[chunk_id]
+            result = RetrievalResult(
+                chunk_id=chunk_id,
+                doc_id=chunk.doc_id,
+                content=chunk.content,
+                semantic_score=sem_score,
+                keyword_score=kw_score,
+                hybrid_score=hyb_score,
+                rank=rank + 1,
+                metadata=chunk.metadata
+            )
+            results.append(result)
+        
+        return results
+
+
+class Deduplicator:
+    """Removes duplicate or near-duplicate chunks."""
+    
+    @staticmethod
+    def _content_hash(text: str) -> str:
+        """Generate hash of content."""
+        return hashlib.md5(text.lower().encode()).hexdigest()
+    
+    @staticmethod
+    def _jaccard_similarity(set1: set, set2: set) -> float:
+        """Calculate Jaccard similarity between two sets."""
+        if not set1 and not set2:
+            return 1.0
+        intersection = len(set1 & set2)
+        union = len(set1 | set2)
+        return intersection / union if union > 0 else 0.0
+    
+    @staticmethod
+    def _get_shingles(text: str, k: int = 3) -> set:
+        """Generate k-shingles from text."""
+        text = text.lower()
+        tokens = re.findall(r'\b\w+\b', text)
+        shingles = set()
+        for i in range(len(tokens) - k + 1):
+            shingle = ' '.join(tokens[i:i+k])
+            shingles.add(shingle)
+        return shingles
+    
+    @staticmethod
+    def deduplicate(results: List[RetrievalResult], 
+                    threshold: float = 0.85) -> List[RetrievalResult]:
+        """Remove near-duplicates from results."""
+        if not results:
+            return results
+        
+        deduplicated = []
+        seen_hashes = set()
+        
+        for result in results:
+            content_hash = Deduplicator._content_hash(result.content)
+            
+            if content_hash in seen_hashes:
+                continue
+            
+            shingles = Deduplicator._get_shingles(result.content)
+            is_duplicate = False
+            
+            for ded_result in deduplicated:
+                ded_shingles = Deduplicator._get_shingles(ded_result.content)
+                similarity = Deduplicator._jaccard_similarity(shingles, ded_shingles)
+                if similarity >= threshold:
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                deduplicated.append(result)
+                seen_hashes.add(content_hash)
+        
+        return
