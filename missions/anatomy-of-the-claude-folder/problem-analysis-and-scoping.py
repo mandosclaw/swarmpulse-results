@@ -3,376 +3,408 @@
 # Task:    Problem analysis and scoping
 # Mission: Anatomy of the .claude/ folder
 # Agent:   @aria
-# Date:    2026-03-28T22:06:52.417Z
+# Date:    2026-03-29T20:34:34.474Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Anatomy of the .claude/ folder - Problem Analysis and Scoping
-MISSION: Engineering - Deep dive into Claude's configuration folder structure
-AGENT: @aria, SwarmPulse network
-DATE: 2025-01-10
-
-This tool analyzes the .claude/ folder structure, documents its contents,
-identifies configuration patterns, and provides insights into folder anatomy.
+Task: Anatomy of the .claude/ folder - Problem analysis and scoping
+Mission: Engineering
+Agent: @aria (SwarmPulse)
+Date: 2024
+Source: https://blog.dailydoseofds.com/p/anatomy-of-the-claude-folder
 """
 
-import os
-import json
 import argparse
+import json
+import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
-from enum import Enum
-
-
-class FileType(Enum):
-    CONFIG = "config"
-    CACHE = "cache"
-    LOG = "log"
-    DATA = "data"
-    METADATA = "metadata"
-    UNKNOWN = "unknown"
+from typing import Dict, List, Optional, Set
+from datetime import datetime
+import hashlib
 
 
 @dataclass
-class FileInfo:
+class FileMetadata:
+    """Metadata about a file in .claude/ folder"""
     path: str
-    name: str
     size: int
-    file_type: str
     is_directory: bool
+    created: str
+    modified: str
     permissions: str
-    extension: str
+    file_type: str
+    hash: Optional[str] = None
 
 
 @dataclass
 class FolderAnalysis:
+    """Complete analysis of .claude/ folder structure"""
     root_path: str
+    analysis_timestamp: str
     total_files: int
     total_directories: int
-    total_size: int
+    total_size_bytes: int
     file_types: Dict[str, int]
-    largest_files: List[Dict[str, Any]]
-    folder_structure: Dict[str, Any]
-    config_files: List[str]
-    cache_files: List[str]
-    log_files: List[str]
-    potential_issues: List[str]
+    structure_depth: int
+    files: List[FileMetadata]
+    suspicious_patterns: List[str]
+    warnings: List[str]
 
 
 class ClaudeFolderAnalyzer:
-    """Analyzes the anatomy of the .claude/ folder."""
-
-    KNOWN_PATTERNS = {
-        FileType.CONFIG: ['.json', '.yaml', '.yml', '.toml', '.cfg', '.conf'],
-        FileType.CACHE: ['.cache', 'cache/', '__pycache__', '.cache/'],
-        FileType.LOG: ['.log', '.txt', 'logs/', 'log/'],
-        FileType.DATA: ['.db', '.sqlite', '.json', '.pkl', '.pickle'],
-        FileType.METADATA: ['.meta', '.metadata', '.info', '.index'],
+    """Analyzer for .claude/ folder structure and contents"""
+    
+    CLAUDE_FOLDER_NAME = ".claude"
+    
+    EXPECTED_SUBDIRS = {
+        "cache",
+        "config",
+        "logs",
+        "data",
+        "state",
+        "temp",
     }
-
-    def __init__(self, folder_path: str):
-        self.folder_path = Path(folder_path)
-        self.files_info: List[FileInfo] = []
-        self.folder_tree: Dict[str, Any] = {}
-
-    def classify_file(self, file_path: Path) -> FileType:
-        """Classify file based on extension and naming patterns."""
-        name = file_path.name.lower()
-        suffix = file_path.suffix.lower()
-
-        for file_type, patterns in self.KNOWN_PATTERNS.items():
-            for pattern in patterns:
-                if pattern.startswith('.'):
-                    if suffix == pattern:
-                        return file_type
-                else:
-                    if pattern in str(file_path).lower():
-                        return file_type
-
-        return FileType.UNKNOWN
-
-    def get_file_type_string(self, file_path: Path) -> str:
-        """Get string representation of file type."""
-        file_type = self.classify_file(file_path)
-        return file_type.value
-
-    def get_permissions(self, file_path: Path) -> str:
-        """Get file permissions in readable format."""
+    
+    SUSPICIOUS_PATTERNS = {
+        r".*\.exe$": "Executable file",
+        r".*\.dll$": "Dynamic library",
+        r".*\.so$": "Shared object",
+        r".*\.bat$": "Batch script",
+        r".*\.sh$": "Shell script (in certain contexts)",
+        r".*password.*": "Password-like filename",
+        r".*secret.*": "Secret-like filename",
+        r".*credential.*": "Credential-like filename",
+    }
+    
+    def __init__(self, root_path: str = None, include_hash: bool = False):
+        """
+        Initialize analyzer.
+        
+        Args:
+            root_path: Root path to search for .claude/ folder
+            include_hash: Whether to compute file hashes
+        """
+        self.root_path = Path(root_path) if root_path else Path.home()
+        self.include_hash = include_hash
+        self.claude_path = None
+        self.files_metadata: List[FileMetadata] = []
+        self.file_types: Dict[str, int] = {}
+        self.suspicious_findings: List[str] = []
+        self.warnings: List[str] = []
+        self.structure_depth = 0
+        self.total_size = 0
+    
+    def locate_claude_folder(self) -> Optional[Path]:
+        """Locate .claude folder in filesystem"""
+        for root, dirs, files in os.walk(self.root_path):
+            if self.CLAUDE_FOLDER_NAME in dirs:
+                self.claude_path = Path(root) / self.CLAUDE_FOLDER_NAME
+                return self.claude_path
+        return None
+    
+    def _get_file_type(self, path: Path) -> str:
+        """Determine file type from extension"""
+        if path.is_dir():
+            return "directory"
+        suffix = path.suffix.lower()
+        if not suffix:
+            return "no_extension"
+        return suffix.lstrip(".")
+    
+    def _compute_hash(self, file_path: Path) -> Optional[str]:
+        """Compute SHA256 hash of file"""
+        if not self.include_hash or not file_path.is_file():
+            return None
         try:
-            mode = file_path.stat().st_mode
-            return oct(mode)[-3:]
-        except (OSError, AttributeError):
-            return "unknown"
-
-    def scan_folder(self) -> bool:
-        """Scan the folder and collect file information."""
-        if not self.folder_path.exists():
-            return False
-
+            sha256_hash = hashlib.sha256()
+            with open(file_path, "rb") as f:
+                for byte_block in iter(lambda: f.read(4096), b""):
+                    sha256_hash.update(byte_block)
+            return sha256_hash.hexdigest()
+        except (OSError, IOError):
+            return None
+    
+    def _check_suspicious_patterns(self, file_path: Path) -> Optional[str]:
+        """Check if file matches suspicious patterns"""
+        import re
+        filename = file_path.name.lower()
+        
+        for pattern, description in self.SUSPICIOUS_PATTERNS.items():
+            if re.match(pattern, filename):
+                return f"{description}: {file_path.relative_to(self.claude_path)}"
+        return None
+    
+    def _calculate_depth(self, path: Path, root: Path = None) -> int:
+        """Calculate directory depth"""
+        if root is None:
+            root = path
         try:
-            for file_path in self.folder_path.rglob('*'):
+            return len(path.relative_to(root).parts)
+        except ValueError:
+            return 0
+    
+    def analyze(self) -> FolderAnalysis:
+        """Perform complete analysis of .claude/ folder"""
+        if not self.claude_path:
+            self.locate_claude_folder()
+        
+        if not self.claude_path or not self.claude_path.exists():
+            analysis = FolderAnalysis(
+                root_path=str(self.root_path),
+                analysis_timestamp=datetime.now().isoformat(),
+                total_files=0,
+                total_directories=0,
+                total_size_bytes=0,
+                file_types={},
+                structure_depth=0,
+                files=[],
+                suspicious_patterns=[],
+                warnings=["No .claude folder found at specified location"]
+            )
+            return analysis
+        
+        max_depth = 0
+        total_dirs = 1
+        total_files = 0
+        
+        for root, dirs, files in os.walk(self.claude_path):
+            current_depth = self._calculate_depth(Path(root), self.claude_path)
+            max_depth = max(max_depth, current_depth)
+            total_dirs += len(dirs)
+            
+            for file in files:
+                file_path = Path(root) / file
+                total_files += 1
+                
                 try:
                     stat_info = file_path.stat()
-                    file_info = FileInfo(
-                        path=str(file_path),
-                        name=file_path.name,
+                    file_type = self._get_file_type(file_path)
+                    self.file_types[file_type] = self.file_types.get(file_type, 0) + 1
+                    
+                    metadata = FileMetadata(
+                        path=str(file_path.relative_to(self.claude_path)),
                         size=stat_info.st_size,
-                        file_type=self.get_file_type_string(file_path),
-                        is_directory=file_path.is_dir(),
-                        permissions=self.get_permissions(file_path),
-                        extension=file_path.suffix.lower()
+                        is_directory=False,
+                        created=datetime.fromtimestamp(stat_info.st_ctime).isoformat(),
+                        modified=datetime.fromtimestamp(stat_info.st_mtime).isoformat(),
+                        permissions=oct(stat_info.st_mode)[-3:],
+                        file_type=file_type,
+                        hash=self._compute_hash(file_path)
                     )
-                    self.files_info.append(file_info)
-                except (OSError, PermissionError):
-                    continue
-
-            return True
-        except (OSError, PermissionError):
-            return False
-
-    def build_folder_structure(self) -> Dict[str, Any]:
-        """Build a hierarchical representation of folder structure."""
-        structure = {}
-
-        for file_info in self.files_info:
-            parts = Path(file_info.path).relative_to(self.folder_path).parts
-            current = structure
-
-            for part in parts[:-1]:
-                if part not in current:
-                    current[part] = {}
-                current = current[part]
-
-            if parts:
-                current[parts[-1]] = {
-                    'size': file_info.size,
-                    'type': file_info.file_type,
-                    'is_dir': file_info.is_directory
-                }
-
-        return structure
-
-    def get_largest_files(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get the largest files in the folder."""
-        sorted_files = sorted(
-            self.files_info,
-            key=lambda x: x.size,
-            reverse=True
-        )
-        return [
-            {
-                'name': f.name,
-                'path': f.path,
-                'size': f.size,
-                'type': f.file_type
-            }
-            for f in sorted_files[:limit]
-        ]
-
-    def identify_config_files(self) -> List[str]:
-        """Identify configuration files."""
-        return [
-            f.path for f in self.files_info
-            if f.file_type == FileType.CONFIG.value and not f.is_directory
-        ]
-
-    def identify_cache_files(self) -> List[str]:
-        """Identify cache files and directories."""
-        return [
-            f.path for f in self.files_info
-            if f.file_type == FileType.CACHE.value
-        ]
-
-    def identify_log_files(self) -> List[str]:
-        """Identify log files."""
-        return [
-            f.path for f in self.files_info
-            if f.file_type == FileType.LOG.value and not f.is_directory
-        ]
-
-    def detect_issues(self) -> List[str]:
-        """Detect potential issues in the folder structure."""
-        issues = []
-
-        cache_size = sum(
-            f.size for f in self.files_info
-            if f.file_type == FileType.CACHE.value
-        )
-        if cache_size > 100 * 1024 * 1024:
-            issues.append(f"Large cache detected: {cache_size / (1024*1024):.2f} MB")
-
-        orphaned_files = [
-            f for f in self.files_info
-            if f.extension not in [ext for patterns in self.KNOWN_PATTERNS.values() for ext in patterns]
-            and not f.is_directory
-        ]
-        if len(orphaned_files) > 5:
-            issues.append(f"Found {len(orphaned_files)} files with unknown types")
-
-        deeply_nested = [
-            f for f in self.files_info
-            if str(f.path).count(os.sep) > 8
-        ]
-        if deeply_nested:
-            issues.append(f"Found {len(deeply_nested)} deeply nested files (depth > 8)")
-
-        return issues
-
-    def analyze(self) -> FolderAnalysis:
-        """Perform complete analysis of the folder."""
-        if not self.scan_folder():
-            raise FileNotFoundError(f"Cannot access folder: {self.folder_path}")
-
-        files_by_type = {}
-        for file_info in self.files_info:
-            ft = file_info.file_type
-            files_by_type[ft] = files_by_type.get(ft, 0) + 1
-
-        total_size = sum(f.size for f in self.files_info)
-        total_files = len([f for f in self.files_info if not f.is_directory])
-        total_directories = len([f for f in self.files_info if f.is_directory])
-
+                    self.files_metadata.append(metadata)
+                    self.total_size += stat_info.st_size
+                    
+                    suspicious = self._check_suspicious_patterns(file_path)
+                    if suspicious:
+                        self.suspicious_findings.append(suspicious)
+                        
+                except (OSError, IOError) as e:
+                    self.warnings.append(f"Could not read {file}: {str(e)}")
+        
+        self._validate_folder_structure()
+        self.structure_depth = max_depth
+        
         analysis = FolderAnalysis(
-            root_path=str(self.folder_path),
+            root_path=str(self.claude_path),
+            analysis_timestamp=datetime.now().isoformat(),
             total_files=total_files,
-            total_directories=total_directories,
-            total_size=total_size,
-            file_types=files_by_type,
-            largest_files=self.get_largest_files(10),
-            folder_structure=self.build_folder_structure(),
-            config_files=self.identify_config_files(),
-            cache_files=self.identify_cache_files(),
-            log_files=self.identify_log_files(),
-            potential_issues=self.detect_issues()
+            total_directories=total_dirs,
+            total_size_bytes=self.total_size,
+            file_types=self.file_types,
+            structure_depth=self.structure_depth,
+            files=self.files_metadata,
+            suspicious_patterns=self.suspicious_findings,
+            warnings=self.warnings
         )
-
+        
         return analysis
+    
+    def _validate_folder_structure(self):
+        """Validate .claude folder has expected structure"""
+        if not self.claude_path or not self.claude_path.exists():
+            return
+        
+        found_subdirs = set(d.name for d in self.claude_path.iterdir() if d.is_dir())
+        
+        missing_subdirs = self.EXPECTED_SUBDIRS - found_subdirs
+        if missing_subdirs:
+            self.warnings.append(
+                f"Missing expected subdirectories: {', '.join(sorted(missing_subdirs))}"
+            )
+        
+        unexpected_subdirs = found_subdirs - self.EXPECTED_SUBDIRS
+        if unexpected_subdirs:
+            self.warnings.append(
+                f"Unexpected subdirectories found: {', '.join(sorted(unexpected_subdirs))}"
+            )
 
 
-def format_size(size: int) -> str:
-    """Format size in human-readable format."""
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-        if size < 1024.0:
-            return f"{size:.2f} {unit}"
-        size /= 1024.0
-    return f"{size:.2f} PB"
+def create_sample_claude_structure(target_path: Path):
+    """Create sample .claude folder structure for testing"""
+    claude_dir = target_path / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+    
+    subdirs = ["cache", "config", "logs", "data", "state", "temp"]
+    for subdir in subdirs:
+        (claude_dir / subdir).mkdir(exist_ok=True)
+    
+    sample_files = {
+        "cache/session_001.bin": b"cached session data",
+        "config/settings.json": b'{"debug": false, "version": "1.0"}',
+        "logs/activity.log": b"[2024-01-15 10:30:00] Session started\n[2024-01-15 10:31:00] Processing complete\n",
+        "data/model_index.json": b'{"models": ["claude-3", "claude-2"]}',
+        "state/last_run.txt": b"2024-01-15T10:31:00Z",
+        "temp/scratch.tmp": b"temporary processing file",
+    }
+    
+    for file_path, content in sample_files.items():
+        full_path = claude_dir / file_path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_bytes(content)
+    
+    return claude_dir
 
 
-def print_analysis_report(analysis: FolderAnalysis) -> None:
-    """Print a formatted analysis report."""
-    print("\n" + "="*70)
-    print("CLAUDE FOLDER ANALYSIS REPORT")
-    print("="*70)
-
-    print(f"\n📁 Root Path: {analysis.root_path}")
-    print(f"📊 Total Files: {analysis.total_files}")
-    print(f"📂 Total Directories: {analysis.total_directories}")
-    print(f"💾 Total Size: {format_size(analysis.total_size)}")
-
-    print("\n📋 File Types Distribution:")
-    for file_type, count in sorted(analysis.file_types.items()):
-        print(f"  • {file_type}: {count}")
-
-    if analysis.largest_files:
-        print("\n📈 Top 10 Largest Files:")
-        for i, file_info in enumerate(analysis.largest_files, 1):
-            print(f"  {i}. {file_info['name']}")
-            print(f"     Path: {file_info['path']}")
-            print(f"     Size: {format_size(file_info['size'])}")
-            print(f"     Type: {file_info['type']}")
-
-    if analysis.config_files:
-        print(f"\n⚙️  Configuration Files ({len(analysis.config_files)}):")
-        for config_file in analysis.config_files[:5]:
-            print(f"  • {config_file}")
-        if len(analysis.config_files) > 5:
-            print(f"  ... and {len(analysis.config_files) - 5} more")
-
-    if analysis.cache_files:
-        print(f"\n🗑️  Cache Files ({len(analysis.cache_files)}):")
-        for cache_file in analysis.cache_files[:5]:
-            print(f"  • {cache_file}")
-        if len(analysis.cache_files) > 5:
-            print(f"  ... and {len(analysis.cache_files) - 5} more")
-
-    if analysis.log_files:
-        print(f"\n📝 Log Files ({len(analysis.log_files)}):")
-        for log_file in analysis.log_files[:5]:
-            print(f"  • {log_file}")
-        if len(analysis.log_files) > 5:
-            print(f"  ... and {len(analysis.log_files) - 5} more")
-
-    if analysis.potential_issues:
-        print("\n⚠️  Potential Issues:")
-        for issue in analysis.potential_issues:
-            print(f"  • {issue}")
-    else:
-        print("\n✅ No potential issues detected")
-
-    print("\n" + "="*70 + "\n")
-
-
-def export_analysis(analysis: FolderAnalysis, output_file: str) -> None:
-    """Export analysis results to JSON file."""
-    output_data = asdict(analysis)
-    with open(output_file, 'w') as f:
-        json.dump(output_data, f, indent=2)
-    print(f"✅ Analysis exported to: {output_file}")
+def format_output(analysis: FolderAnalysis, format_type: str = "json") -> str:
+    """Format analysis output"""
+    if format_type == "json":
+        data = {
+            "root_path": analysis.root_path,
+            "analysis_timestamp": analysis.analysis_timestamp,
+            "summary": {
+                "total_files": analysis.total_files,
+                "total_directories": analysis.total_directories,
+                "total_size_bytes": analysis.total_size_bytes,
+                "structure_depth": analysis.structure_depth,
+            },
+            "file_types": analysis.file_types,
+            "suspicious_patterns": analysis.suspicious_patterns,
+            "warnings": analysis.warnings,
+            "files": [asdict(f) for f in analysis.files[:20]],
+            "file_count_note": f"Showing first 20 of {len(analysis.files)} files"
+        }
+        return json.dumps(data, indent=2)
+    
+    elif format_type == "text":
+        lines = [
+            "=" * 70,
+            ".CLAUDE FOLDER ANALYSIS REPORT",
+            "=" * 70,
+            f"Root Path: {analysis.root_path}",
+            f"Analysis Time: {analysis.analysis_timestamp}",
+            "",
+            "SUMMARY",
+            f"  Total Files: {analysis.total_files}",
+            f"  Total Directories: {analysis.total_directories}",
+            f"  Total Size: {analysis.total_size_bytes:,} bytes",
+            f"  Structure Depth: {analysis.structure_depth}",
+            "",
+            "FILE TYPES DISTRIBUTION",
+        ]
+        
+        for ftype, count in sorted(analysis.file_types.items(), key=lambda x: x[1], reverse=True):
+            lines.append(f"  {ftype:20s}: {count:4d}")
+        
+        if analysis.suspicious_patterns:
+            lines.extend([
+                "",
+                "SUSPICIOUS PATTERNS DETECTED",
+            ])
+            for pattern in analysis.suspicious_patterns:
+                lines.append(f"  ⚠ {pattern}")
+        
+        if analysis.warnings:
+            lines.extend([
+                "",
+                "WARNINGS",
+            ])
+            for warning in analysis.warnings:
+                lines.append(f"  ⚡ {warning}")
+        
+        lines.extend([
+            "",
+            "FILE LISTING (first 20)",
+        ])
+        
+        for i, file_meta in enumerate(analysis.files[:20], 1):
+            lines.append(f"  {i:2d}. {file_meta.path}")
+            lines.append(f"      Size: {file_meta.size:,} bytes | Modified: {file_meta.modified}")
+        
+        lines.append("=" * 70)
+        return "\n".join(lines)
+    
+    return str(analysis)
 
 
 def main():
-    """Main entry point."""
+    """Main entry point with argument parsing"""
     parser = argparse.ArgumentParser(
-        description="Analyze the anatomy of the .claude/ folder"
+        description="Analyze and scope .claude/ folder structure and contents"
     )
+    
     parser.add_argument(
-        "folder",
-        nargs="?",
-        default=".claude",
-        help="Path to the folder to analyze (default: .claude)"
+        "--root-path",
+        type=str,
+        default=str(Path.home()),
+        help="Root path to search for .claude folder (default: home directory)"
     )
+    
     parser.add_argument(
-        "--export",
-        "-e",
-        help="Export analysis results to JSON file"
-    )
-    parser.add_argument(
-        "--verbose",
-        "-v",
+        "--compute-hashes",
         action="store_true",
-        help="Print detailed output"
+        help="Compute SHA256 hashes for all files"
     )
-
+    
+    parser.add_argument(
+        "--output-format",
+        choices=["json", "text"],
+        default="text",
+        help="Output format (default: text)"
+    )
+    
+    parser.add_argument(
+        "--output-file",
+        type=str,
+        default=None,
+        help="Save output to file (optional)"
+    )
+    
+    parser.add_argument(
+        "--create-sample",
+        action="store_true",
+        help="Create sample .claude folder for testing"
+    )
+    
     args = parser.parse_args()
-
-    folder_path = Path(args.folder).expanduser()
-
-    if not folder_path.exists():
-        print(f"❌ Error: Folder not found: {folder_path}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"🔍 Analyzing folder: {folder_path}")
-
-    try:
-        analyzer = ClaudeFolderAnalyzer(str(folder_path))
-        analysis = analyzer.analyze()
-
-        print_analysis_report(analysis)
-
-        if args.export:
-            export_analysis(analysis, args.export)
-
-        if args.verbose:
-            print("📦 Folder Structure (JSON):")
-            print(json.dumps(analysis.folder_structure, indent=2))
-
-    except Exception as e:
-        print(f"❌ Error during analysis: {e}", file=sys.stderr)
-        sys.exit(1)
+    
+    if args.create_sample:
+        sample_path = Path(args.root_path) / "test_claude_sample"
+        sample_path.mkdir(parents=True, exist_ok=True)
+        created_path = create_sample_claude_structure(sample_path)
+        print(f"Sample .claude folder created at: {created_path}", file=sys.stderr)
+        args.root_path = str(sample_path)
+    
+    analyzer = ClaudeFolderAnalyzer(
+        root_path=args.root_path,
+        include_hash=args.compute_hashes
+    )
+    
+    analysis = analyzer.analyze()
+    output = format_output(analysis, format_type=args.output_format)
+    
+    if args.output_file:
+        output_path = Path(args.output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(output)
+        print(f"Analysis saved to: {output_path}", file=sys.stderr)
+    else:
+        print(output)
+    
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
