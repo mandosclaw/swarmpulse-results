@@ -218,4 +218,121 @@ async def optimization_task(delay: float = 3.0) -> str:
     opt_data = {
         "improvements": random.randint(1, 5),
         "efficiency_gain": f"{random.randint(10, 50)}%",
-        "runtime_reduction": f"{random.randint(5,
+        "runtime_reduction": f"{random.randint(5, 30)}%"
+    }
+    return json.dumps(opt_data)
+
+
+async def parallel_processing_task(delay: float = 2.2) -> str:
+    """Simulate parallel processing task."""
+    await asyncio.sleep(delay)
+    parallel_data = {
+        "batches_processed": random.randint(10, 50),
+        "throughput_items_per_second": random.uniform(100, 500),
+        "parallelization_efficiency": random.uniform(0.7, 0.95)
+    }
+    return json.dumps(parallel_data)
+
+
+async def reporting_task(delay: float = 1.2) -> str:
+    """Simulate reporting generation task."""
+    await asyncio.sleep(delay)
+    report_data = {
+        "report_sections": random.randint(5, 12),
+        "metrics_collected": random.randint(20, 100),
+        "format": "comprehensive"
+    }
+    return json.dumps(report_data)
+
+
+def print_results(summary: Dict[str, Any]) -> None:
+    """Pretty print workflow results."""
+    print("\n" + "="*70)
+    print(f"WORKFLOW EXECUTION SUMMARY: {summary['workflow_name']}")
+    print("="*70)
+    print(f"Total Tasks: {summary['total_tasks']}")
+    print(f"Successful: {summary['successful']}")
+    print(f"Failed: {summary['failed']}")
+    print(f"Total Duration: {summary['total_duration_seconds']:.2f}s")
+    print(f"Max Concurrent: {summary['max_concurrent']}")
+    print(f"Timestamp: {summary['timestamp']}")
+    print("-"*70)
+    print("TASK RESULTS:")
+    print("-"*70)
+    
+    for task in summary['tasks']:
+        status_symbol = "✓" if task['status'] == "completed" else "✗"
+        print(f"{status_symbol} [{task['task_id']}] {task['task_name']}")
+        print(f"  Status: {task['status']} | Duration: {task['duration_seconds']:.2f}s")
+        if task['error']:
+            print(f"  Error: {task['error']}")
+        elif task['result']:
+            result_preview = task['result'][:80] if len(str(task['result'])) > 80 else task['result']
+            print(f"  Result: {result_preview}")
+        print()
+    
+    print("="*70)
+
+
+async def main():
+    """Main entry point for the proof-of-concept."""
+    parser = argparse.ArgumentParser(
+        description="Don't Wait for Claude - Parallel Workflow Orchestration POC"
+    )
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=3,
+        help="Maximum number of concurrent tasks (default: 3)"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["fast", "standard", "comprehensive"],
+        default="standard",
+        help="Execution mode: fast, standard, or comprehensive"
+    )
+    
+    args = parser.parse_args()
+    
+    # Create workflow
+    workflow = SwarmPulseWorkflow(
+        name="Don't Wait for Claude - POC Workflow",
+        max_concurrent=args.max_concurrent
+    )
+    
+    # Add tasks based on mode
+    if args.mode == "fast":
+        workflow.add_task("Research", lambda: research_task(0.5))
+        workflow.add_task("Synthesis", lambda: synthesis_task(0.3))
+        workflow.add_task("Validation", lambda: validation_task(0.5))
+    elif args.mode == "standard":
+        workflow.add_task("Research", lambda: research_task(2.0))
+        workflow.add_task("Synthesis", lambda: synthesis_task(1.5))
+        workflow.add_task("Validation", lambda: validation_task(2.5))
+        workflow.add_task("Documentation", lambda: documentation_task(1.0))
+        workflow.add_task("Optimization", lambda: optimization_task(3.0))
+    else:  # comprehensive
+        workflow.add_task("Research", lambda: research_task(2.0))
+        workflow.add_task("Synthesis", lambda: synthesis_task(1.5))
+        workflow.add_task("Validation", lambda: validation_task(2.5))
+        workflow.add_task("Documentation", lambda: documentation_task(1.0))
+        workflow.add_task("Optimization", lambda: optimization_task(3.0))
+        workflow.add_task("Parallel Processing", lambda: parallel_processing_task(2.2))
+        workflow.add_task("Reporting", lambda: reporting_task(1.2))
+    
+    print(f"\nStarting workflow execution in '{args.mode}' mode...")
+    print(f"Max concurrent tasks: {args.max_concurrent}")
+    
+    # Execute workflow
+    summary = await workflow.execute()
+    
+    # Print results
+    print_results(summary)
+    
+    # Return exit code based on success
+    return 0 if summary['failed'] == 0 else 1
+
+
+if __name__ == "__main__":
+    exit_code = asyncio.run(main())
+    exit(exit_code)
