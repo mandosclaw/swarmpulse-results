@@ -250,3 +250,245 @@ class GrafanaDashboardGenerator:
         self.row_index += 8
 
     def add_anomaly_detection_panel(self) -> None:
+        """Add panel for anomaly detection visualization."""
+        panel = {
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "fieldConfig": {
+                "defaults": {
+                    "color": {"mode": "palette-classic"},
+                    "custom": {
+                        "axisCenteredZero": False,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "gradientMode": "opacity",
+                        "hideFrom": {
+                            "tooltip": False,
+                            "viz": False,
+                            "legend": False
+                        },
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": True,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "dashed"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": None
+                            },
+                            {
+                                "color": "orange",
+                                "value": 2
+                            },
+                            {
+                                "color": "red",
+                                "value": 3
+                            }
+                        ]
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": self._get_grid_position(0, self.row_index, 12, 8),
+            "id": self._get_next_panel_id(),
+            "options": {
+                "legend": {
+                    "calcs": ["mean", "max", "min"],
+                    "displayMode": "table",
+                    "placement": "right",
+                    "showLegend": True
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                }
+            },
+            "pluginVersion": "9.5.3",
+            "targets": [
+                {
+                    "expr": 'agent_anomaly_score',
+                    "interval": "",
+                    "legendFormat": "{{agent_id}} - anomaly score",
+                    "refId": "A"
+                },
+                {
+                    "expr": 'agent_anomaly_threshold',
+                    "interval": "",
+                    "legendFormat": "Threshold",
+                    "refId": "B"
+                }
+            ],
+            "title": "Anomaly Detection Scores",
+            "type": "timeseries"
+        }
+        self.panels.append(panel)
+        self.row_index += 8
+
+    def add_distributed_tracing_panel(self) -> None:
+        """Add panel for distributed tracing visualization."""
+        panel = {
+            "datasource": {"type": "jaeger", "uid": "jaeger"},
+            "fieldConfig": {
+                "defaults": {
+                    "color": {"mode": "palette-classic"},
+                    "custom": {
+                        "hideFrom": {
+                            "tooltip": False,
+                            "viz": False,
+                            "legend": False
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": None
+                            }
+                        ]
+                    },
+                    "unit": "ms"
+                },
+                "overrides": []
+            },
+            "gridPos": self._get_grid_position(0, self.row_index, 12, 8),
+            "id": self._get_next_panel_id(),
+            "options": {
+                "legend": {
+                    "calcs": [],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": True
+                }
+            },
+            "pluginVersion": "9.5.3",
+            "targets": [
+                {
+                    "serviceName": "ai-agent-service",
+                    "refId": "A"
+                }
+            ],
+            "title": "Distributed Tracing - Request Flow",
+            "type": "nodeGraph"
+        }
+        self.panels.append(panel)
+        self.row_index += 8
+
+    def add_error_rate_panel(self) -> None:
+        """Add panel for error rate monitoring."""
+        panel = {
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "fieldConfig": {
+                "defaults": {
+                    "color": {"mode": "thresholds"},
+                    "custom": {
+                        "align": "auto",
+                        "displayMode": "color-background",
+                        "inspect": False
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "percentage",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": None
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 1
+                            },
+                            {
+                                "color": "red",
+                                "value": 5
+                            }
+                        ]
+                    },
+                    "unit": "percent"
+                },
+                "overrides": []
+            },
+            "gridPos": self._get_grid_position(0, self.row_index, 12, 8),
+            "id": self._get_next_panel_id(),
+            "options": {
+                "footer": {
+                    "countRows": False,
+                    "fields": "",
+                    "reducer": ["mean"],
+                    "show": True
+                },
+                "showHeader": True
+            },
+            "pluginVersion": "9.5.3",
+            "targets": [
+                {
+                    "expr": '(sum(rate(agent_errors_total[5m])) / sum(rate(agent_requests_total[5m]))) * 100',
+                    "format": "table",
+                    "instant": True,
+                    "refId": "A"
+                }
+            ],
+            "title": "Error Rate by Agent",
+            "type": "stat"
+        }
+        self.panels.append(panel)
+        self.row_index += 8
+
+    def build_dashboard(self) -> Dict[str, Any]:
+        """Build complete dashboard object."""
+        dashboard = {
+            "annotations": {
+                "list": [
+                    {
+                        "builtIn": 1,
+                        "datasource": "-- Grafana --",
+                        "enable": True,
+                        "hide": True,
+                        "iconColor": "rgba(0, 211, 255, 1)",
+                        "name": "Annotations & Alerts",
+                        "type": "dashboard"
+                    }
+                ]
+            },
+            "editable": True,
+            "fiscalYearStartMonth": 0,
+            "graphTooltip": 1,
+            "id": None,
+            "links": [],
+            "liveNow": False,
+            "panels": self.panels,
+            "refresh": self.refresh_interval,
+            "schemaVersion": 37,
+            "style": "dark",
+            "tags": ["ai-agents", "observability", "performance"],
+            "templating": {
+                "list": [
+                    {
+                        "current": {
+                            "selected": False,
+                            "text": "Prometheus",
+                            "value": "prometheus"
+                        },
+                        "description": None,
+                        "error": None,
+                        "hide":
