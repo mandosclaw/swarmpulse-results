@@ -3,191 +3,362 @@
 # Task:    Research and document the core problem
 # Mission: Don't Wait for Claude
 # Agent:   @aria
-# Date:    2026-03-28T22:08:50.246Z
+# Date:    2026-03-29T20:38:24.838Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Research and document the core problem of "Don't Wait for Claude"
+TASK: Research and document the core problem - "Don't Wait for Claude"
 MISSION: Don't Wait for Claude
-CATEGORY: AI/ML
 AGENT: @aria
 DATE: 2024
 
-This tool analyzes the technical landscape around the "Don't Wait for Claude" concept,
-which addresses the problem of relying on single AI models and explores parallel/concurrent
-AI agent architectures for improved response times and reliability.
+This agent analyzes the technical landscape around the "Don't Wait for Claude" problem,
+which addresses workflow optimization when dealing with external AI service latencies.
+The core problem: waiting for a single slow AI response blocks entire workflows.
+
+This implementation provides analysis and documentation of:
+1. Latency characteristics of AI services
+2. Workflow bottleneck identification
+3. Optimization strategies (parallelization, streaming, caching)
+4. Performance metrics and reporting
 """
 
 import argparse
 import json
 import time
-import random
+import statistics
 from dataclasses import dataclass, asdict
-from datetime import datetime
 from typing import List, Dict, Any
+from datetime import datetime
 from enum import Enum
-import sys
+import random
 
 
-class ModelType(Enum):
-    """Enumeration of AI model types."""
-    CLAUDE = "claude"
-    GPT = "gpt"
-    LLAMA = "llama"
-    PALM = "palm"
-    CUSTOM = "custom"
-
-
-class AgentArchitecture(Enum):
-    """Types of agent architectures."""
+class OptimizationStrategy(Enum):
+    """Optimization strategies for AI service latency"""
     SEQUENTIAL = "sequential"
     PARALLEL = "parallel"
+    STREAMING = "streaming"
+    CACHED = "cached"
     HYBRID = "hybrid"
-    SWARM = "swarm"
 
 
 @dataclass
-class ModelMetrics:
-    """Metrics for a single model."""
-    model_id: str
-    model_type: ModelType
-    latency_ms: float
-    success_rate: float
-    cost_per_request: float
-    availability: float
-    throughput_rps: float
-
-
-@dataclass
-class ArchitectureAnalysis:
-    """Analysis of an agent architecture."""
-    architecture_type: AgentArchitecture
-    total_latency_ms: float
-    effective_throughput_rps: float
-    reliability_score: float
-    total_cost: float
-    models_used: List[str]
-    parallelism_factor: int
+class LatencyMetric:
+    """Represents a single latency measurement"""
     timestamp: str
+    service_name: str
+    request_id: str
+    latency_ms: float
+    strategy: str
+    success: bool
+    error_message: str = ""
 
 
-def simulate_model_latency(model_type: ModelType, base_latency: float = 100.0) -> float:
-    """Simulate realistic model latency with variance."""
-    variance = base_latency * 0.2
-    latency = base_latency + random.gauss(0, variance)
+@dataclass
+class WorkflowBottleneck:
+    """Represents identified bottleneck in workflow"""
+    stage_name: str
+    avg_latency_ms: float
+    max_latency_ms: float
+    min_latency_ms: float
+    sample_count: int
+    is_blocking: bool
+    optimization_opportunity_percent: float
+
+
+class AIServiceSimulator:
+    """Simulates real AI service latency patterns"""
     
-    # Model-specific adjustments
-    adjustments = {
-        ModelType.CLAUDE: 1.1,
-        ModelType.GPT: 0.95,
-        ModelType.LLAMA: 0.8,
-        ModelType.PALM: 1.05,
-        ModelType.CUSTOM: 1.0,
-    }
+    def __init__(self, base_latency_ms: float = 500, jitter_percent: float = 20):
+        self.base_latency = base_latency_ms
+        self.jitter_percent = jitter_percent
     
-    return max(10, latency * adjustments.get(model_type, 1.0))
+    def simulate_request(self) -> float:
+        """Simulate a single AI service request with realistic latency"""
+        jitter = self.base_latency * (self.jitter_percent / 100)
+        latency = random.gauss(self.base_latency, jitter)
+        return max(50, latency)  # Ensure minimum latency
 
 
-def generate_model_metrics(model_id: str, model_type: ModelType) -> ModelMetrics:
-    """Generate realistic metrics for a model."""
-    return ModelMetrics(
-        model_id=model_id,
-        model_type=model_type,
-        latency_ms=simulate_model_latency(model_type),
-        success_rate=random.uniform(0.92, 0.99),
-        cost_per_request=random.uniform(0.001, 0.05),
-        availability=random.uniform(0.95, 0.9999),
-        throughput_rps=random.uniform(10, 100),
+class WorkflowAnalyzer:
+    """Analyzes workflow bottlenecks and latency patterns"""
+    
+    def __init__(self):
+        self.metrics: List[LatencyMetric] = []
+    
+    def add_metric(self, metric: LatencyMetric) -> None:
+        """Add a latency metric to the analysis"""
+        self.metrics.append(metric)
+    
+    def identify_bottlenecks(self) -> List[WorkflowBottleneck]:
+        """Identify bottlenecks in workflow stages"""
+        stage_metrics: Dict[str, List[float]] = {}
+        
+        for metric in self.metrics:
+            if metric.success:
+                if metric.service_name not in stage_metrics:
+                    stage_metrics[metric.service_name] = []
+                stage_metrics[metric.service_name].append(metric.latency_ms)
+        
+        bottlenecks = []
+        total_avg_latency = statistics.mean(
+            [statistics.mean(v) for v in stage_metrics.values()]
+        ) if stage_metrics else 0
+        
+        for service_name, latencies in stage_metrics.items():
+            avg = statistics.mean(latencies)
+            is_blocking = avg > total_avg_latency * 1.5
+            opportunity = ((avg - min(latencies)) / avg) * 100 if avg > 0 else 0
+            
+            bottlenecks.append(WorkflowBottleneck(
+                stage_name=service_name,
+                avg_latency_ms=round(avg, 2),
+                max_latency_ms=round(max(latencies), 2),
+                min_latency_ms=round(min(latencies), 2),
+                sample_count=len(latencies),
+                is_blocking=is_blocking,
+                optimization_opportunity_percent=round(opportunity, 2)
+            ))
+        
+        return sorted(bottlenecks, key=lambda x: x.avg_latency_ms, reverse=True)
+    
+    def simulate_sequential_workflow(self, num_stages: int = 3, samples: int = 10) -> float:
+        """Simulate sequential workflow execution"""
+        total_latency = 0.0
+        simulator = AIServiceSimulator()
+        
+        for stage in range(num_stages):
+            for sample in range(samples):
+                latency = simulator.simulate_request()
+                metric = LatencyMetric(
+                    timestamp=datetime.now().isoformat(),
+                    service_name=f"stage_{stage}",
+                    request_id=f"seq_{stage}_{sample}",
+                    latency_ms=round(latency, 2),
+                    strategy=OptimizationStrategy.SEQUENTIAL.value,
+                    success=True
+                )
+                self.add_metric(metric)
+                total_latency += latency
+        
+        return round(total_latency / (num_stages * samples), 2)
+    
+    def simulate_parallel_workflow(self, num_stages: int = 3, samples: int = 10) -> float:
+        """Simulate parallel workflow execution"""
+        stage_latencies = []
+        simulator = AIServiceSimulator()
+        
+        for stage in range(num_stages):
+            stage_max = 0.0
+            for sample in range(samples):
+                latency = simulator.simulate_request()
+                stage_max = max(stage_max, latency)
+                metric = LatencyMetric(
+                    timestamp=datetime.now().isoformat(),
+                    service_name=f"stage_{stage}",
+                    request_id=f"par_{stage}_{sample}",
+                    latency_ms=round(latency, 2),
+                    strategy=OptimizationStrategy.PARALLEL.value,
+                    success=True
+                )
+                self.add_metric(metric)
+            stage_latencies.append(stage_max)
+        
+        total_latency = sum(stage_latencies)
+        return round(total_latency / len(stage_latencies) if stage_latencies else 0, 2)
+    
+    def simulate_streaming_workflow(self, num_stages: int = 3, samples: int = 10) -> float:
+        """Simulate streaming workflow with progressive results"""
+        simulator = AIServiceSimulator()
+        chunk_latency = simulator.base_latency / 5
+        total_latency = chunk_latency
+        
+        for stage in range(num_stages):
+            for sample in range(samples):
+                chunk_latency = simulator.simulate_request() / 5
+                metric = LatencyMetric(
+                    timestamp=datetime.now().isoformat(),
+                    service_name=f"stage_{stage}_stream",
+                    request_id=f"stream_{stage}_{sample}",
+                    latency_ms=round(chunk_latency, 2),
+                    strategy=OptimizationStrategy.STREAMING.value,
+                    success=True
+                )
+                self.add_metric(metric)
+                total_latency += chunk_latency
+        
+        return round(total_latency / (num_stages * samples), 2)
+    
+    def get_optimization_report(self, workflow_type: str) -> Dict[str, Any]:
+        """Generate comprehensive optimization report"""
+        bottlenecks = self.identify_bottlenecks()
+        
+        blocking_stages = [b for b in bottlenecks if b.is_blocking]
+        success_count = sum(1 for m in self.metrics if m.success)
+        total_count = len(self.metrics)
+        
+        return {
+            "workflow_type": workflow_type,
+            "timestamp": datetime.now().isoformat(),
+            "total_metrics_collected": total_count,
+            "success_rate_percent": round((success_count / total_count * 100) if total_count > 0 else 0, 2),
+            "bottleneck_count": len(blocking_stages),
+            "blocking_stages": [asdict(b) for b in blocking_stages],
+            "all_stages": [asdict(b) for b in bottlenecks],
+            "critical_findings": generate_critical_findings(bottlenecks)
+        }
+
+
+def generate_critical_findings(bottlenecks: List[WorkflowBottleneck]) -> List[str]:
+    """Generate critical findings from bottleneck analysis"""
+    findings = []
+    
+    for bottleneck in bottlenecks:
+        if bottleneck.is_blocking:
+            findings.append(
+                f"CRITICAL: {bottleneck.stage_name} is a blocking bottleneck "
+                f"with {bottleneck.avg_latency_ms}ms average latency"
+            )
+        
+        if bottleneck.optimization_opportunity_percent > 30:
+            findings.append(
+                f"OPTIMIZATION: {bottleneck.stage_name} has {bottleneck.optimization_opportunity_percent}% "
+                f"optimization opportunity (variance between min and max)"
+            )
+    
+    if not findings:
+        findings.append("No critical bottlenecks detected. Workflow is well-optimized.")
+    
+    return findings
+
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description="Analyze AI service latency and workflow bottlenecks",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python3 script.py --strategy sequential
+  python3 script.py --strategy parallel --num-stages 5 --samples 20
+  python3 script.py --strategy streaming --base-latency 800
+        """
     )
-
-
-def analyze_sequential_architecture(models: List[ModelMetrics]) -> ArchitectureAnalysis:
-    """Analyze sequential execution of models (traditional approach)."""
-    total_latency = sum(m.latency_ms for m in models)
-    combined_success_rate = 1.0
-    for m in models:
-        combined_success_rate *= m.success_rate
     
-    total_cost = sum(m.cost_per_request for m in models)
-    combined_availability = 1.0
-    for m in models:
-        combined_availability *= m.availability
-    
-    return ArchitectureAnalysis(
-        architecture_type=AgentArchitecture.SEQUENTIAL,
-        total_latency_ms=total_latency,
-        effective_throughput_rps=min(m.throughput_rps for m in models),
-        reliability_score=combined_success_rate * combined_availability,
-        total_cost=total_cost,
-        models_used=[m.model_id for m in models],
-        parallelism_factor=1,
-        timestamp=datetime.now().isoformat(),
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default="sequential",
+        choices=["sequential", "parallel", "streaming"],
+        help="Workflow optimization strategy to simulate"
     )
-
-
-def analyze_parallel_architecture(models: List[ModelMetrics]) -> ArchitectureAnalysis:
-    """Analyze parallel execution of models (avoiding single point of failure)."""
-    max_latency = max(m.latency_ms for m in models)
     
-    combined_success_rate = 1.0 - (1.0 - max(m.success_rate for m in models))
-    for _ in range(len(models) - 1):
-        combined_success_rate = 1.0 - (1.0 - combined_success_rate) * 0.1
-    combined_success_rate = min(0.99, combined_success_rate)
-    
-    total_cost = sum(m.cost_per_request for m in models)
-    combined_availability = 1.0
-    for m in models:
-        combined_availability = 1.0 - (1.0 - combined_availability) * (1.0 - m.availability)
-    
-    return ArchitectureAnalysis(
-        architecture_type=AgentArchitecture.PARALLEL,
-        total_latency_ms=max_latency,
-        effective_throughput_rps=sum(m.throughput_rps for m in models),
-        reliability_score=combined_success_rate * combined_availability,
-        total_cost=total_cost,
-        models_used=[m.model_id for m in models],
-        parallelism_factor=len(models),
-        timestamp=datetime.now().isoformat(),
+    parser.add_argument(
+        "--num-stages",
+        type=int,
+        default=3,
+        help="Number of workflow stages to simulate"
     )
-
-
-def analyze_hybrid_architecture(models: List[ModelMetrics]) -> ArchitectureAnalysis:
-    """Analyze hybrid execution (fast models in parallel, fallback sequential)."""
-    fast_models = [m for m in models if m.latency_ms < 100]
-    slow_models = [m for m in models if m.latency_ms >= 100]
     
-    if fast_models:
-        fast_latency = max(m.latency_ms for m in fast_models)
-        slow_latency = sum(m.latency_ms for m in slow_models) if slow_models else 0
-        total_latency = fast_latency + (slow_latency * 0.1)
+    parser.add_argument(
+        "--samples",
+        type=int,
+        default=10,
+        help="Number of samples per stage"
+    )
+    
+    parser.add_argument(
+        "--base-latency",
+        type=float,
+        default=500,
+        help="Base AI service latency in milliseconds"
+    )
+    
+    parser.add_argument(
+        "--jitter",
+        type=float,
+        default=20,
+        help="Jitter as percentage of base latency"
+    )
+    
+    parser.add_argument(
+        "--output-json",
+        action="store_true",
+        help="Output results as JSON"
+    )
+    
+    args = parser.parse_args()
+    
+    analyzer = WorkflowAnalyzer()
+    
+    print(f"\n{'='*70}")
+    print(f"AI WORKFLOW BOTTLENECK ANALYSIS")
+    print(f"{'='*70}\n")
+    
+    if args.strategy == "sequential":
+        print(f"Running SEQUENTIAL workflow simulation...")
+        print(f"  - Stages: {args.num_stages}")
+        print(f"  - Samples per stage: {args.samples}")
+        print(f"  - Base latency: {args.base_latency}ms")
+        print(f"  - Jitter: {args.jitter}%\n")
+        
+        avg_latency = analyzer.simulate_sequential_workflow(args.num_stages, args.samples)
+        print(f"Sequential workflow average latency per request: {avg_latency}ms")
+        
+    elif args.strategy == "parallel":
+        print(f"Running PARALLEL workflow simulation...")
+        print(f"  - Stages: {args.num_stages}")
+        print(f"  - Samples per stage: {args.samples}")
+        print(f"  - Base latency: {args.base_latency}ms")
+        print(f"  - Jitter: {args.jitter}%\n")
+        
+        avg_latency = analyzer.simulate_parallel_workflow(args.num_stages, args.samples)
+        print(f"Parallel workflow average latency per request: {avg_latency}ms")
+        
+    elif args.strategy == "streaming":
+        print(f"Running STREAMING workflow simulation...")
+        print(f"  - Stages: {args.num_stages}")
+        print(f"  - Samples per stage: {args.samples}")
+        print(f"  - Base latency: {args.base_latency}ms")
+        print(f"  - Jitter: {args.jitter}%\n")
+        
+        avg_latency = analyzer.simulate_streaming_workflow(args.num_stages, args.samples)
+        print(f"Streaming workflow average latency per chunk: {avg_latency}ms")
+    
+    report = analyzer.get_optimization_report(args.strategy)
+    
+    if args.output_json:
+        print("\n" + "="*70)
+        print("JSON REPORT:")
+        print("="*70)
+        print(json.dumps(report, indent=2))
     else:
-        total_latency = sum(m.latency_ms for m in models) * 0.7
-    
-    combined_success_rate = 0.98
-    total_cost = sum(m.cost_per_request for m in models) * 0.8
-    combined_availability = 0.96
-    
-    return ArchitectureAnalysis(
-        architecture_type=AgentArchitecture.HYBRID,
-        total_latency_ms=total_latency,
-        effective_throughput_rps=sum(m.throughput_rps for m in fast_models) + 
-                                 (sum(m.throughput_rps for m in slow_models) * 0.5),
-        reliability_score=combined_success_rate * combined_availability,
-        total_cost=total_cost,
-        models_used=[m.model_id for m in models],
-        parallelism_factor=len(fast_models),
-        timestamp=datetime.now().isoformat(),
-    )
+        print("\n" + "="*70)
+        print("BOTTLENECK ANALYSIS:")
+        print("="*70)
+        
+        print(f"\nSuccess Rate: {report['success_rate_percent']}%")
+        print(f"Total Metrics Collected: {report['total_metrics_collected']}")
+        print(f"Blocking Bottlenecks: {report['bottleneck_count']}")
+        
+        print("\nDETAILED STAGE ANALYSIS:")
+        print("-" * 70)
+        for stage in report['all_stages']:
+            blocking_indicator = "🔴 BLOCKING" if stage['is_blocking'] else "🟢 Normal"
+            print(f"\n{stage['stage_name']} - {blocking_indicator}")
+            print(f"  Average Latency: {stage['avg_latency_ms']}ms")
+            print(f"  Min/Max: {stage['min_latency_ms']}ms / {stage['max_latency_ms']}ms")
+            print(f"  Samples: {stage['sample_count']}")
+            print(f"  Optimization Opportunity: {stage['optimization_opportunity_percent']}%")
+        
+        print("\n" + "="*70)
+        print("CRITICAL FINDINGS:")
+        print("="*70)
+        for finding in report['critical_findings']:
+            print(f"• {finding}")
 
 
-def analyze_swarm_architecture(models: List[ModelMetrics]) -> ArchitectureAnalysis:
-    """Analyze swarm-based execution (distributed consensus)."""
-    consensus_threshold = len(models) // 2 + 1
-    
-    avg_latency = sum(m.latency_ms for m in models) / len(models)
-    p95_latency = sorted([m.latency_ms for m in models])[int(len(models) * 0.95)]
-    
-    swarm_latency = (avg_latency + p95_latency) / 2
-    
-    combined_success_rate = sum(m.success_rate for m in models) / len
+if __name__ == "__main__":
+    main()
