@@ -255,3 +255,183 @@ class ClaudeFolderValidator:
         if os.name == 'nt':
             self.results.append(ValidationResult(
                 passed=True,
+                check_name="permissions_check",
+                message="Windows system - skipping Unix permission checks",
+                severity="info"
+            ))
+        else:
+            try:
+                stat_info = claude_dir.stat()
+                mode = stat_info.st_mode
+                
+                if mode & 0o077 == 0:
+                    self.results.append(ValidationResult(
+                        passed=True,
+                        check_name="directory_permissions",
+                        message=".claude directory has restrictive permissions",
+                        severity="info"
+                    ))
+                else:
+                    self.results.append(ValidationResult(
+                        passed=True,
+                        check_name="directory_permissions",
+                        message=".claude directory has open permissions",
+                        severity="info"
+                    ))
+            except Exception as e:
+                self.results.append(ValidationResult(
+                    passed=False,
+                    check_name="permissions_check",
+                    message=f"Error checking permissions: {str(e)}",
+                    severity="error"
+                ))
+        
+        return self.results
+    
+    def run_all_validations(self) -> List[ValidationResult]:
+        """Run all validation checks."""
+        self.validate_folder_structure()
+        self.validate_json_files()
+        self.validate_config_schema()
+        self.validate_permissions()
+        
+        return self.results
+    
+    def get_summary(self) -> Dict[str, int]:
+        """Get a summary of validation results."""
+        summary = {
+            "total": len(self.results),
+            "passed": sum(1 for r in self.results if r.passed),
+            "failed": sum(1 for r in self.results if not r.passed),
+            "errors": sum(1 for r in self.results if r.severity == "error"),
+            "warnings": sum(1 for r in self.results if r.severity == "warning"),
+            "info": sum(1 for r in self.results if r.severity == "info"),
+        }
+        return summary
+    
+    def print_results(self) -> None:
+        """Print validation results in a readable format."""
+        print("\n" + "="*70)
+        print("CLAUDE FOLDER VALIDATION REPORT")
+        print("="*70 + "\n")
+        
+        for result in self.results:
+            status = "✓ PASS" if result.passed else "✗ FAIL"
+            print(f"[{result.severity.upper()}] {status}: {result.check_name}")
+            print(f"  → {result.message}\n")
+        
+        summary = self.get_summary()
+        print("="*70)
+        print("SUMMARY")
+        print("="*70)
+        print(f"Total checks: {summary['total']}")
+        print(f"Passed: {summary['passed']}")
+        print(f"Failed: {summary['failed']}")
+        print(f"Errors: {summary['errors']}")
+        print(f"Warnings: {summary['warnings']}")
+        print(f"Info: {summary['info']}")
+        print("="*70 + "\n")
+
+
+class TestClaudeFolderValidator(unittest.TestCase):
+    """Unit tests for ClaudeFolderValidator."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.test_dir = tempfile.mkdtemp()
+        self.claude_dir = Path(self.test_dir) / ".claude"
+        self.claude_dir.mkdir(parents=True, exist_ok=True)
+    
+    def tearDown(self):
+        """Clean up test fixtures."""
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+    
+    def test_validator_init(self):
+        """Test validator initialization."""
+        validator = ClaudeFolderValidator(self.test_dir)
+        self.assertEqual(validator.root_path, Path(self.test_dir))
+        self.assertEqual(len(validator.results), 0)
+    
+    def test_folder_structure_validation_missing_folder(self):
+        """Test validation when .claude folder is missing."""
+        shutil.rmtree(self.claude_dir)
+        validator = ClaudeFolderValidator(self.test_dir)
+        results = validator.validate_folder_structure()
+        
+        failed = [r for r in results if not r.passed]
+        self.assertGreater(len(failed), 0)
+    
+    def test_folder_structure_validation_exists(self):
+        """Test validation when .claude folder exists."""
+        validator = ClaudeFolderValidator(self.test_dir)
+        results = validator.validate_folder_structure()
+        
+        folder_check = [r for r in results if r.check_name == "folder_exists"]
+        self.assertTrue(len(folder_check) > 0)
+        self.assertTrue(folder_check[0].passed)
+    
+    def test_json_validation_valid_file(self):
+        """Test JSON validation with valid JSON file."""
+        config_path = self.claude_dir / "config.json"
+        config_data = {"version": "1.0", "project_name": "test"}
+        with open(config_path, 'w') as f:
+            json.dump(config_data, f)
+        
+        validator = ClaudeFolderValidator(self.test_dir)
+        results = validator.validate_json_files()
+        
+        config_checks = [r for r in results if "config.json" in r.check_name]
+        self.assertTrue(any(r.passed for r in config_checks))
+    
+    def test_json_validation_invalid_file(self):
+        """Test JSON validation with invalid JSON file."""
+        config_path = self.claude_dir / "config.json"
+        with open(config_path, 'w') as f:
+            f.write("{invalid json}")
+        
+        validator = ClaudeFolderValidator(self.test_dir)
+        results = validator.validate_json_files()
+        
+        config_checks = [r for r in results if "config.json" in r.check_name]
+        self.assertTrue(any(not r.passed for r in config_checks))
+    
+    def test_config_schema_validation_required_keys(self):
+        """Test config schema validation with required keys."""
+        config_path = self.claude_dir / "config.json"
+        config_data = {"version": "1.0", "project_name": "test"}
+        with open(config_path, 'w') as f:
+            json.dump(config_data, f)
+        
+        validator = ClaudeFolderValidator(self.test_dir)
+        results = validator.validate_config_schema()
+        
+        schema_checks = [r for r in results if "required_keys" in r.check_name]
+        self.assertTrue(any(r.passed for r in schema_checks))
+    
+    def test_config_schema_validation_missing_keys(self):
+        """Test config schema validation with missing keys."""
+        config_path = self.claude_dir / "config.json"
+        config_data = {"version": "1.0"}
+        with open(config_path, 'w') as f:
+            json.dump(config_data, f)
+        
+        validator = ClaudeFolderValidator(self.test_dir)
+        results = validator.validate_config_schema()
+        
+        schema_checks = [r for r in results if "required_keys" in r.check_name]
+        self.assertTrue(any(not r.passed for r in schema_checks))
+    
+    def test_get_summary(self):
+        """Test getting validation summary."""
+        validator = ClaudeFolderValidator(self.test_dir)
+        validator.run_all_validations()
+        
+        summary = validator.get_summary()
+        self.assertIn("total", summary)
+        self.assertIn("passed", summary)
+        self.assertIn("failed", summary)
+        self.assertGreater(summary["total"], 0)
+    
+    def test_run_all_validations(self):
+        """Test running all validations."""
+        config_path = self
