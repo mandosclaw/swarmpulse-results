@@ -2,235 +2,455 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    Agent health heartbeat monitor
 # Mission: AI Agent Observability Platform
-# Agent:   @dex
-# Date:    2026-03-28T22:02:50.636Z
+# Agent:   @bolt
+# Date:    2026-03-29T13:09:03.691Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Agent Health Heartbeat Monitor
+Task: Agent health heartbeat monitor
 Mission: AI Agent Observability Platform
-Agent: @dex
-Date: 2024
+Agent: @bolt
+Date: 2025-01-10
 
-Monitors health status of distributed AI agents in SwarmPulse network.
-Tracks heartbeats, latency, error rates, and resource utilization.
-Generates alerts when agents fall below health thresholds.
+A script that pings all registered agents every 60s, detects missed heartbeats,
+and triggers webhook alerts. Provides JSON output for monitoring dashboards.
 """
 
-import argparse
 import json
 import time
+import argparse
 import threading
-import random
-import statistics
+import queue
+import hashlib
+import hmac
 from datetime import datetime, timedelta
+from collections import defaultdict
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional
-from collections import defaultdict, deque
+from typing import Dict, List, Optional, Tuple
+from urllib.request import Request, urlopen
+from urllib.error import URLError
+import sys
 
 
 @dataclass
-class HeartbeatMetrics:
-    """Container for agent heartbeat metrics"""
+class Agent:
+    """Represents a registered agent."""
     agent_id: str
-    timestamp: float
-    cpu_usage: float
-    memory_usage: float
-    latency_ms: float
-    error_count: int
-    success_count: int
-    token_cost: float
+    name: str
+    heartbeat_url: str
+    timeout_seconds: int = 30
+    expected_interval_seconds: int = 60
+
+
+@dataclass
+class HeartbeatRecord:
+    """Records a single heartbeat check."""
+    timestamp: str
+    agent_id: str
+    agent_name: str
     status: str
+    response_time_ms: float
+    error_message: Optional[str] = None
+    http_status: Optional[int] = None
 
 
 @dataclass
-class HealthAlert:
-    """Container for health alerts"""
-    alert_id: str
+class AgentHealth:
+    """Aggregate health status for an agent."""
     agent_id: str
-    alert_type: str
-    severity: str
-    message: str
-    timestamp: float
-    metric_value: float
-    threshold: float
+    agent_name: str
+    last_successful_heartbeat: Optional[str]
+    last_check_time: str
+    status: str
+    missed_count: int
+    consecutive_failures: int
+    response_time_ms_avg: float
+    health_percentage: float
 
 
 class AgentHealthMonitor:
-    """Monitors health metrics of distributed AI agents"""
+    """Monitors agent health via periodic heartbeats."""
 
-    def __init__(self, heartbeat_timeout_sec: int, cpu_threshold: float,
-                 memory_threshold: float, latency_threshold_ms: float,
-                 error_rate_threshold: float, check_interval_sec: int):
-        self.heartbeat_timeout_sec = heartbeat_timeout_sec
-        self.cpu_threshold = cpu_threshold
-        self.memory_threshold = memory_threshold
-        self.latency_threshold_ms = latency_threshold_ms
-        self.error_rate_threshold = error_rate_threshold
-        self.check_interval_sec = check_interval_sec
-
-        self.agent_metrics: Dict[str, deque] = defaultdict(
-            lambda: deque(maxlen=100)
-        )
-        self.alerts: List[HealthAlert] = []
-        self.agent_status: Dict[str, str] = {}
-        self.running = False
-        self.lock = threading.RLock()
-
-    def record_heartbeat(self, metrics: HeartbeatMetrics) -> None:
-        """Record a heartbeat from an agent"""
-        with self.lock:
-            self.agent_metrics[metrics.agent_id].append(metrics)
-            self.agent_status[metrics.agent_id] = "healthy"
-
-    def check_agent_health(self, agent_id: str) -> Dict:
-        """Analyze health metrics for a specific agent"""
-        with self.lock:
-            if agent_id not in self.agent_metrics:
-                return {
-                    "agent_id": agent_id,
-                    "status": "unknown",
-                    "message": "No heartbeat data",
-                    "last_seen": None,
-                    "metrics": {}
-                }
-
-            metrics_list = list(self.agent_metrics[agent_id])
-            if not metrics_list:
-                return {
-                    "agent_id": agent_id,
-                    "status": "unknown",
-                    "message": "Empty metrics history",
-                    "last_seen": None,
-                    "metrics": {}
-                }
-
-            last_metric = metrics_list[-1]
-            current_time = time.time()
-            time_since_heartbeat = current_time - last_metric.timestamp
-
-            health_status = "healthy"
-            issues = []
-
-            if time_since_heartbeat > self.heartbeat_timeout_sec:
-                health_status = "offline"
-                issues.append(
-                    f"No heartbeat for {time_since_heartbeat:.1f}s "
-                    f"(timeout: {self.heartbeat_timeout_sec}s)"
-                )
-                self.agent_status[agent_id] = "offline"
-            else:
-                cpu_avg = statistics.mean(m.cpu_usage for m in metrics_list)
-                if cpu_avg > self.cpu_threshold:
-                    health_status = "degraded"
-                    issues.append(
-                        f"High CPU usage: {cpu_avg:.1f}% "
-                        f"(threshold: {self.cpu_threshold}%)"
-                    )
-
-                mem_avg = statistics.mean(m.memory_usage for m in metrics_list)
-                if mem_avg > self.memory_threshold:
-                    health_status = "degraded"
-                    issues.append(
-                        f"High memory usage: {mem_avg:.1f}% "
-                        f"(threshold: {self.memory_threshold}%)"
-                    )
-
-                lat_avg = statistics.mean(m.latency_ms for m in metrics_list)
-                if lat_avg > self.latency_threshold_ms:
-                    health_status = "degraded"
-                    issues.append(
-                        f"High latency: {lat_avg:.1f}ms "
-                        f"(threshold: {self.latency_threshold_ms}ms)"
-                    )
-
-                total_requests = sum(
-                    m.success_count + m.error_count for m in metrics_list
-                )
-                total_errors = sum(m.error_count for m in metrics_list)
-                error_rate = (
-                    (total_errors / total_requests * 100)
-                    if total_requests > 0 else 0
-                )
-
-                if error_rate > self.error_rate_threshold:
-                    health_status = "degraded"
-                    issues.append(
-                        f"High error rate: {error_rate:.2f}% "
-                        f"(threshold: {self.error_rate_threshold}%)"
-                    )
-
-                if health_status != "healthy":
-                    self.agent_status[agent_id] = health_status
-
-            return {
-                "agent_id": agent_id,
-                "status": health_status,
-                "message": (
-                    ", ".join(issues) if issues else "All metrics normal"
-                ),
-                "last_seen": last_metric.timestamp,
-                "time_since_heartbeat_sec": time_since_heartbeat,
-                "metrics": {
-                    "cpu_avg": (
-                        statistics.mean(
-                            m.cpu_usage for m in metrics_list
-                        )
-                    ),
-                    "memory_avg": (
-                        statistics.mean(
-                            m.memory_usage for m in metrics_list
-                        )
-                    ),
-                    "latency_avg_ms": (
-                        statistics.mean(
-                            m.latency_ms for m in metrics_list
-                        )
-                    ),
-                    "error_rate_percent": error_rate,
-                    "total_requests": total_requests,
-                    "token_cost_total": sum(m.token_cost for m in metrics_list),
-                }
-            }
-
-    def generate_alert(
+    def __init__(
         self,
-        agent_id: str,
-        alert_type: str,
-        severity: str,
-        message: str,
-        metric_value: float,
-        threshold: float
-    ) -> HealthAlert:
-        """Generate a health alert"""
-        alert_id = f"{agent_id}_{int(time.time() * 1000)}"
-        alert = HealthAlert(
-            alert_id=alert_id,
+        agents: List[Agent],
+        heartbeat_interval: int = 60,
+        alert_webhook: Optional[str] = None,
+        webhook_secret: Optional[str] = None,
+        max_missed_heartbeats: int = 3,
+    ):
+        self.agents = {agent.agent_id: agent for agent in agents}
+        self.heartbeat_interval = heartbeat_interval
+        self.alert_webhook = alert_webhook
+        self.webhook_secret = webhook_secret
+        self.max_missed_heartbeats = max_missed_heartbeats
+
+        self.heartbeat_records: Dict[str, List[HeartbeatRecord]] = defaultdict(list)
+        self.agent_stats: Dict[str, Dict] = {
+            agent_id: {
+                "missed_count": 0,
+                "consecutive_failures": 0,
+                "last_successful_heartbeat": None,
+                "total_checks": 0,
+                "successful_checks": 0,
+                "response_times_ms": [],
+            }
+            for agent_id in self.agents
+        }
+
+        self.running = False
+        self.monitor_thread: Optional[threading.Thread] = None
+        self.alert_queue: queue.Queue = queue.Queue()
+
+    def check_agent_heartbeat(self, agent: Agent) -> HeartbeatRecord:
+        """Perform a heartbeat check against a single agent."""
+        timestamp = datetime.utcnow().isoformat() + "Z"
+        start_time = time.time()
+
+        try:
+            req = Request(
+                agent.heartbeat_url,
+                method="GET",
+                headers={
+                    "User-Agent": "SwarmPulse-HealthMonitor/1.0",
+                    "Accept": "application/json",
+                },
+            )
+            with urlopen(req, timeout=agent.timeout_seconds) as response:
+                response_time_ms = (time.time() - start_time) * 1000
+                http_status = response.status
+
+                if http_status == 200:
+                    status = "healthy"
+                    error_message = None
+                else:
+                    status = "degraded"
+                    error_message = f"Unexpected HTTP status: {http_status}"
+
+                record = HeartbeatRecord(
+                    timestamp=timestamp,
+                    agent_id=agent.agent_id,
+                    agent_name=agent.name,
+                    status=status,
+                    response_time_ms=response_time_ms,
+                    error_message=error_message,
+                    http_status=http_status,
+                )
+
+                self.heartbeat_records[agent.agent_id].append(record)
+                return record
+
+        except URLError as e:
+            response_time_ms = (time.time() - start_time) * 1000
+            error_message = f"Connection failed: {str(e)}"
+            record = HeartbeatRecord(
+                timestamp=timestamp,
+                agent_id=agent.agent_id,
+                agent_name=agent.name,
+                status="unhealthy",
+                response_time_ms=response_time_ms,
+                error_message=error_message,
+                http_status=None,
+            )
+            self.heartbeat_records[agent.agent_id].append(record)
+            return record
+
+        except Exception as e:
+            response_time_ms = (time.time() - start_time) * 1000
+            error_message = f"Unexpected error: {str(e)}"
+            record = HeartbeatRecord(
+                timestamp=timestamp,
+                agent_id=agent.agent_id,
+                agent_name=agent.name,
+                status="unhealthy",
+                response_time_ms=response_time_ms,
+                error_message=error_message,
+                http_status=None,
+            )
+            self.heartbeat_records[agent.agent_id].append(record)
+            return record
+
+    def update_agent_stats(self, record: HeartbeatRecord):
+        """Update aggregated statistics after a heartbeat check."""
+        stats = self.agent_stats[record.agent_id]
+        stats["total_checks"] += 1
+
+        if record.status == "healthy":
+            stats["consecutive_failures"] = 0
+            stats["successful_checks"] += 1
+            stats["missed_count"] = 0
+            stats["last_successful_heartbeat"] = record.timestamp
+            stats["response_times_ms"].append(record.response_time_ms)
+        else:
+            stats["consecutive_failures"] += 1
+            stats["missed_count"] += 1
+
+        if len(stats["response_times_ms"]) > 100:
+            stats["response_times_ms"] = stats["response_times_ms"][-100:]
+
+    def get_agent_health(self, agent_id: str) -> AgentHealth:
+        """Get current health status for a specific agent."""
+        agent = self.agents[agent_id]
+        stats = self.agent_stats[agent_id]
+
+        response_times = stats["response_times_ms"]
+        avg_response_time = sum(response_times) / len(response_times) if response_times else 0.0
+
+        successful_checks = stats["successful_checks"]
+        total_checks = stats["total_checks"]
+        health_percentage = (successful_checks / total_checks * 100) if total_checks > 0 else 0.0
+
+        if stats["consecutive_failures"] == 0:
+            status = "healthy"
+        elif stats["consecutive_failures"] < self.max_missed_heartbeats:
+            status = "degraded"
+        else:
+            status = "unhealthy"
+
+        return AgentHealth(
             agent_id=agent_id,
-            alert_type=alert_type,
-            severity=severity,
-            message=message,
-            timestamp=time.time(),
-            metric_value=metric_value,
-            threshold=threshold
+            agent_name=agent.name,
+            last_successful_heartbeat=stats["last_successful_heartbeat"],
+            last_check_time=(
+                self.heartbeat_records[agent_id][-1].timestamp
+                if self.heartbeat_records[agent_id]
+                else None
+            ),
+            status=status,
+            missed_count=stats["missed_count"],
+            consecutive_failures=stats["consecutive_failures"],
+            response_time_ms_avg=avg_response_time,
+            health_percentage=health_percentage,
         )
 
-        with self.lock:
-            self.alerts.append(alert)
+    def send_alert(self, alert_data: dict):
+        """Queue an alert to be sent via webhook."""
+        self.alert_queue.put(alert_data)
 
-        return alert
+    def _send_webhook(self, payload: dict) -> bool:
+        """Send alert via webhook with HMAC signature."""
+        if not self.alert_webhook:
+            return False
 
-    def check_all_agents(self) -> List[Dict]:
-        """Check health of all monitored agents"""
-        with self.lock:
-            agent_ids = list(self.agent_metrics.keys())
+        try:
+            json_payload = json.dumps(payload, sort_keys=True)
+            headers = {"Content-Type": "application/json"}
 
-        results = []
-        for agent_id in agent_ids:
-            health = self.check_agent_health(agent_id)
-            results.append(health)
+            if self.webhook_secret:
+                signature = hmac.new(
+                    self.webhook_secret.encode(),
+                    json_payload.encode(),
+                    hashlib.sha256,
+                ).hexdigest()
+                headers["X-Webhook-Signature"] = f"sha256={signature}"
 
-        return results
+            req = Request(
+                self.alert_webhook,
+                data=json_payload.encode(),
+                headers=headers,
+                method="POST",
+            )
 
-    def get_alerts(self, limit: Optional
+            with urlopen(req, timeout=10) as response:
+                return response.status == 200
+        except Exception as e:
+            print(f"Warning: Webhook send failed: {e}", file=sys.stderr)
+            return False
+
+    def _webhook_sender_loop(self):
+        """Background thread that sends queued alerts."""
+        while self.running:
+            try:
+                alert_data = self.alert_queue.get(timeout=5)
+                self._send_webhook(alert_data)
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Error in webhook sender loop: {e}", file=sys.stderr)
+
+    def _monitor_loop(self):
+        """Main monitoring loop that pings agents periodically."""
+        next_check_time = time.time()
+
+        while self.running:
+            current_time = time.time()
+
+            if current_time >= next_check_time:
+                for agent_id, agent in self.agents.items():
+                    record = self.check_agent_heartbeat(agent)
+                    self.update_agent_stats(record)
+
+                    if record.status != "healthy":
+                        health = self.get_agent_health(agent_id)
+                        if (
+                            health.consecutive_failures >= self.max_missed_heartbeats
+                        ):
+                            alert = {
+                                "timestamp": datetime.utcnow().isoformat() + "Z",
+                                "alert_type": "agent_unhealthy",
+                                "agent_id": agent_id,
+                                "agent_name": agent.name,
+                                "consecutive_failures": health.consecutive_failures,
+                                "last_error": record.error_message,
+                                "health_percentage": health.health_percentage,
+                            }
+                            self.send_alert(alert)
+
+                next_check_time = current_time + self.heartbeat_interval
+
+            time.sleep(min(1.0, next_check_time - time.time() + 0.1))
+
+    def start(self):
+        """Start the health monitoring."""
+        if self.running:
+            return
+
+        self.running = True
+        self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=False)
+        self.monitor_thread.start()
+
+        webhook_thread = threading.Thread(target=self._webhook_sender_loop, daemon=True)
+        webhook_thread.start()
+
+    def stop(self):
+        """Stop the health monitoring."""
+        self.running = False
+        if self.monitor_thread:
+            self.monitor_thread.join(timeout=10)
+
+    def get_all_health_status(self) -> List[AgentHealth]:
+        """Get health status for all agents."""
+        return [self.get_agent_health(agent_id) for agent_id in self.agents]
+
+    def get_health_report(self) -> dict:
+        """Generate a comprehensive health report."""
+        health_statuses = self.get_all_health_status()
+        healthy_count = sum(1 for h in health_statuses if h.status == "healthy")
+        degraded_count = sum(1 for h in health_statuses if h.status == "degraded")
+        unhealthy_count = sum(1 for h in health_statuses if h.status == "unhealthy")
+
+        return {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "summary": {
+                "total_agents": len(self.agents),
+                "healthy": healthy_count,
+                "degraded": degraded_count,
+                "unhealthy": unhealthy_count,
+                "overall_health_percentage": (
+                    healthy_count / len(self.agents) * 100 if self.agents else 0.0
+                ),
+            },
+            "agents": [asdict(h) for h in health_statuses],
+        }
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Agent health heartbeat monitor for SwarmPulse observability platform"
+    )
+    parser.add_argument(
+        "--agents-config",
+        type=str,
+        default="agents.json",
+        help="Path to agents configuration JSON file",
+    )
+    parser.add_argument(
+        "--heartbeat-interval",
+        type=int,
+        default=60,
+        help="Heartbeat check interval in seconds (default: 60)",
+    )
+    parser.add_argument(
+        "--alert-webhook",
+        type=str,
+        help="Webhook URL for health alerts",
+    )
+    parser.add_argument(
+        "--webhook-secret",
+        type=str,
+        help="Secret key for webhook HMAC signature",
+    )
+    parser.add_argument(
+        "--max-missed-heartbeats",
+        type=int,
+        default=3,
+        help="Number of consecutive missed heartbeats before marking unhealthy (default: 3)",
+    )
+    parser.add_argument(
+        "--monitor-duration",
+        type=int,
+        help="Duration in seconds to run the monitor (default: infinite)",
+    )
+    parser.add_argument(
+        "--output-report",
+        type=str,
+        help="Path to write health report JSON file (refreshed every interval)",
+    )
+
+    args = parser.parse_args()
+
+    sample_agents = [
+        Agent(
+            agent_id="agent-1",
+            name="DataProcessor",
+            heartbeat_url="http://localhost:8001/health",
+            timeout_seconds=10,
+            expected_interval_seconds=60,
+        ),
+        Agent(
+            agent_id="agent-2",
+            name="QueryEngine",
+            heartbeat_url="http://localhost:8002/health",
+            timeout_seconds=10,
+            expected_interval_seconds=60,
+        ),
+        Agent(
+            agent_id="agent-3",
+            name="Orchestrator",
+            heartbeat_url="http://localhost:8003/health",
+            timeout_seconds=10,
+            expected_interval_seconds=60,
+        ),
+    ]
+
+    monitor = AgentHealthMonitor(
+        agents=sample_agents,
+        heartbeat_interval=args.heartbeat_interval,
+        alert_webhook=args.alert_webhook,
+        webhook_secret=args.webhook_secret,
+        max_missed_heartbeats=args.max_missed_heartbeats,
+    )
+
+    print(f"Starting health monitor with {len(sample_agents)} agents")
+    print(f"Heartbeat interval: {args.heartbeat_interval}s")
+    if args.alert_webhook:
+        print(f"Alert webhook: {args.alert_webhook}")
+
+    monitor.start()
+
+    try:
+        start_time = time.time()
+        while True:
+            time.sleep(5)
+
+            if args.output_report:
+                report = monitor.get_health_report()
+                with open(args.output_report, "w") as f:
+                    json.dump(report, f, indent=2)
+
+            if args.monitor_duration:
+                elapsed = time.time() - start_time
+                if elapsed >= args.monitor_duration:
+                    break
+
+    except KeyboardInterrupt:
+        print("\nShutting down health monitor...")
+    finally:
+        monitor.stop()
+        print("Health monitor stopped")
+
+
+if __name__ == "__main__":
+    main()
