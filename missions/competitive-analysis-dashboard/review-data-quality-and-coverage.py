@@ -220,4 +220,186 @@ class DataQualityAuditor:
             if max_age > self.max_age_hours:
                 self.audit_results["issues"].append(
                     {
-                        "
+                        "severity": "HIGH",
+                        "field": "freshness",
+                        "message": f"Data freshness issue: oldest record is {max_age:.1f} hours old (threshold: {self.max_age_hours}h)",
+                    }
+                )
+        else:
+            self.audit_results["freshness_analysis"] = {
+                "max_age_hours": None,
+                "avg_age_hours": None,
+                "records_analyzed": 0,
+            }
+            self.audit_results["issues"].append(
+                {
+                    "severity": "MEDIUM",
+                    "field": "freshness",
+                    "message": "No timestamp fields found for freshness analysis",
+                }
+            )
+
+    def _validate_data_types(self, data: List[Dict[str, Any]]) -> None:
+        """Validate data types in records."""
+        if not data:
+            return
+
+        type_violations = defaultdict(int)
+
+        for record in data:
+            for field, value in record.items():
+                if value is None or value == "":
+                    continue
+
+                if isinstance(value, str):
+                    if field in ["price", "revenue", "employees", "rating"]:
+                        try:
+                            float(value)
+                        except (ValueError, TypeError):
+                            type_violations[f"{field}_non_numeric"] += 1
+                    elif field in ["date", "created_at", "updated_at", "timestamp"]:
+                        try:
+                            datetime.fromisoformat(value.replace("Z", "+00:00"))
+                        except (ValueError, TypeError, AttributeError):
+                            type_violations[f"{field}_invalid_date"] += 1
+
+        for violation, count in type_violations.items():
+            if count > 0:
+                self.audit_results["issues"].append(
+                    {
+                        "severity": "LOW",
+                        "field": violation,
+                        "message": f"Data type validation: {count} records with invalid format for {violation}",
+                    }
+                )
+
+    def _check_required_fields(self, data: List[Dict[str, Any]]) -> None:
+        """Check for required fields in dataset."""
+        required_fields = ["id", "name", "timestamp"]
+        missing_required = defaultdict(int)
+
+        for record in data:
+            for field in required_fields:
+                if field not in record or record[field] is None or record[field] == "":
+                    missing_required[field] += 1
+
+        for field, count in missing_required.items():
+            if count > 0:
+                self.audit_results["issues"].append(
+                    {
+                        "severity": "CRITICAL",
+                        "field": field,
+                        "message": f"Required field '{field}' missing in {count} records",
+                    }
+                )
+
+    def _generate_recommendations(self) -> None:
+        """Generate recommendations based on audit findings."""
+        recommendations = []
+
+        if self.audit_results["duplicate_analysis"].get("total_duplicates", 0) > 0:
+            recommendations.append(
+                "Remove or consolidate duplicate records to improve data integrity"
+            )
+
+        coverage = self.audit_results.get("coverage_report", {})
+        for field, stats in coverage.items():
+            if stats["coverage_percent"] < 80:
+                recommendations.append(
+                    f"Improve coverage of field '{field}' (currently {stats['coverage_percent']}%)"
+                )
+
+        if self.audit_results["summary"].get("schema_consistency", 1) < 0.95:
+            recommendations.append("Standardize data schema across all records")
+
+        freshness = self.audit_results.get("freshness_analysis", {})
+        if freshness.get("max_age_hours") and freshness["max_age_hours"] > self.max_age_hours:
+            recommendations.append(
+                f"Update stale data: {freshness['max_age_hours']} hours old (max threshold: {self.max_age_hours}h)"
+            )
+
+        issues_by_severity = defaultdict(int)
+        for issue in self.audit_results["issues"]:
+            issues_by_severity[issue["severity"]] += 1
+
+        if issues_by_severity["CRITICAL"] > 0:
+            recommendations.insert(
+                0, f"Address {issues_by_severity['CRITICAL']} critical issues before data use"
+            )
+
+        self.audit_results["recommendations"] = recommendations
+
+    def generate_report(self) -> str:
+        """Generate human-readable audit report."""
+        report = []
+        report.append("=" * 70)
+        report.append("DATA QUALITY AUDIT REPORT")
+        report.append("=" * 70)
+        report.append(f"Audit Date: {self.audit_results['timestamp']}")
+        report.append("")
+
+        summary = self.audit_results.get("summary", {})
+        report.append("SUMMARY")
+        report.append("-" * 70)
+        report.append(f"Total Records: {summary.get('total_records', 0)}")
+        report.append(f"Schema Consistency: {summary.get('schema_consistency', 0)*100:.1f}%")
+        report.append(f"Fields Found: {len(summary.get('fields_found', []))}")
+        report.append("")
+
+        issues = self.audit_results.get("issues", [])
+        if issues:
+            report.append("ISSUES FOUND")
+            report.append("-" * 70)
+            critical = [i for i in issues if i["severity"] == "CRITICAL"]
+            high = [i for i in issues if i["severity"] == "HIGH"]
+            medium = [i for i in issues if i["severity"] == "MEDIUM"]
+            low = [i for i in issues if i["severity"] == "LOW"]
+
+            if critical:
+                report.append(f"CRITICAL ({len(critical)}):")
+                for issue in critical:
+                    report.append(f"  - {issue['message']}")
+            if high:
+                report.append(f"HIGH ({len(high)}):")
+                for issue in high:
+                    report.append(f"  - {issue['message']}")
+            if medium:
+                report.append(f"MEDIUM ({len(medium)}):")
+                for issue in medium[:5]:
+                    report.append(f"  - {issue['message']}")
+            if low:
+                report.append(f"LOW ({len(low)}):")
+                for issue in low[:3]:
+                    report.append(f"  - {issue['message']}")
+            report.append("")
+
+        duplicates = self.audit_results.get("duplicate_analysis", {})
+        if duplicates:
+            report.append("DUPLICATE ANALYSIS")
+            report.append("-" * 70)
+            report.append(f"Total Duplicates: {duplicates.get('total_duplicates', 0)}")
+            report.append(f"Duplicate Percentage: {duplicates.get('duplicate_percentage', 0)}%")
+            report.append("")
+
+        freshness = self.audit_results.get("freshness_analysis", {})
+        if freshness and freshness.get("max_age_hours") is not None:
+            report.append("FRESHNESS ANALYSIS")
+            report.append("-" * 70)
+            report.append(f"Max Age: {freshness.get('max_age_hours', 'N/A')} hours")
+            report.append(f"Avg Age: {freshness.get('avg_age_hours', 'N/A')} hours")
+            report.append(f"Records Analyzed: {freshness.get('records_analyzed', 0)}")
+            report.append("")
+
+        recommendations = self.audit_results.get("recommendations", [])
+        if recommendations:
+            report.append("RECOMMENDATIONS")
+            report.append("-" * 70)
+            for i, rec in enumerate(recommendations, 1):
+                report.append(f"{i}. {rec}")
+            report.append("")
+
+        report.append("=" * 70)
+        return "\n".join(report)
+
+
+def load_data_file(filepath: str) -> List[Dict[str,
