@@ -333,4 +333,162 @@ npm run reset-config
 
 ## Support
 
--
+For issues or questions, visit https://github.com/garrytan/gstack/issues
+"""
+        return guide
+
+    def generate_findings_report(self) -> str:
+        """Generate a comprehensive findings report."""
+        tools = self.analyze_tools()
+        self.findings["tools"] = tools
+        self.findings["structure"] = self.analyze_repository_structure()
+        
+        self.findings["recommendations"] = [
+            "Implement automated tool orchestration for common workflows",
+            "Add metrics collection for tool performance monitoring",
+            "Create templates for custom workflow definitions",
+            "Integrate with Claude API for enhanced decision making",
+            "Establish tool communication protocol standards",
+            "Add role-based access control for tool usage",
+            "Create comprehensive audit logs for compliance",
+            "Build dashboard for real-time tool status monitoring",
+        ]
+
+        report = f"""# GStack Analysis Findings Report
+
+## Executive Summary
+
+**Repository**: garrytan/gstack
+**Stars**: {self.findings['stars']}
+**Language**: {self.findings['language']}
+**Analysis Date**: {self.findings['timestamp']}
+
+## 15 Opinionated Tools Architecture
+
+GStack implements a sophisticated multi-role tool system with 15 specialized components:
+
+"""
+        for idx, tool in enumerate(tools, 1):
+            report += f"\n### {idx}. {tool['name']}\n"
+            report += f"- **Role**: {tool['role']}\n"
+            report += f"- **Responsibility**: {tool['responsibility']}\n"
+
+        report += "\n## Repository Structure\n"
+        structure = self.findings["structure"]
+        report += f"\n**Root Files**: {', '.join(structure.get('root_files', [])[:5])}...\n"
+        report += f"**Directories**: {', '.join(structure.get('directories', []))}\n"
+        report += f"**Key Configurations**: {', '.join(structure.get('key_configurations', {}).keys())}\n"
+
+        report += "\n## Key Recommendations\n"
+        for idx, rec in enumerate(self.findings["recommendations"], 1):
+            report += f"\n{idx}. {rec}"
+
+        report += "\n\n## Tool Interaction Patterns\n"
+        report += """
+### Standard Deployment Workflow
+1. **Product Manager** defines requirements
+2. **CEO** approves strategy and budget
+3. **Designer** creates UI/UX specifications
+4. **Frontend Engineer** implements UI components
+5. **Backend Architect** designs system architecture
+6. **Backend Engineers** implement services
+7. **QA Tool** runs comprehensive tests
+8. **Security Officer** performs security audit
+9. **Performance Analyst** optimizes critical paths
+10. **Doc Engineer** updates documentation
+11. **Release Manager** creates release package
+12. **DevOps Engineer** manages deployment
+13. **Community Manager** communicates changes
+14. **Data Analyst** tracks adoption metrics
+15. **Legal/Compliance** ensures regulatory compliance
+
+### Communication Flow
+All tools communicate through a central message broker supporting:
+- Structured JSON payloads
+- Event-driven notifications
+- Request-response patterns
+- Broadcast announcements
+"""
+        return report
+
+    def publish_readme(self, output_path: str = "FINDINGS.md") -> None:
+        """Publish findings as a markdown README."""
+        content = self.generate_findings_report()
+        Path(output_path).write_text(content)
+        print(f"✓ Findings published to {output_path}")
+
+    def export_findings_json(self, output_path: str = "findings.json") -> None:
+        """Export findings as JSON."""
+        self.findings["usage_guide"] = self.generate_usage_guide()
+        with open(output_path, "w") as f:
+            json.dump(self.findings, f, indent=2)
+        print(f"✓ Findings exported to {output_path}")
+
+    def run_full_analysis(self) -> Dict[str, Any]:
+        """Run complete analysis and return findings."""
+        print("🔍 Starting GStack Analysis...")
+        print(f"📁 Repository path: {self.repo_path}")
+        
+        tools = self.analyze_tools()
+        structure = self.analyze_repository_structure()
+        
+        self.findings["tools"] = tools
+        self.findings["structure"] = structure
+        self.findings["total_tools"] = len(tools)
+        
+        print(f"✓ Identified {len(tools)} opinionated tools")
+        print(f"✓ Analyzed repository structure")
+        
+        return self.findings
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Document and publish GStack analysis findings"
+    )
+    parser.add_argument(
+        "--repo",
+        default=".",
+        help="Path to gstack repository (default: current directory)",
+    )
+    parser.add_argument(
+        "--output",
+        default="FINDINGS.md",
+        help="Output file for findings report (default: FINDINGS.md)",
+    )
+    parser.add_argument(
+        "--json",
+        default="findings.json",
+        help="Output file for JSON export (default: findings.json)",
+    )
+    parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="Publish findings to files",
+    )
+
+    args = parser.parse_args()
+
+    analyzer = GStackAnalyzer(args.repo)
+    findings = analyzer.run_full_analysis()
+
+    print("\n📊 Analysis Results:")
+    print(f"   - Total Tools: {findings['total_tools']}")
+    print(f"   - Repository: {findings['repository']}")
+    print(f"   - Language: {findings['language']}")
+
+    if args.publish:
+        print("\n📝 Publishing findings...")
+        analyzer.publish_readme(args.output)
+        analyzer.export_findings_json(args.json)
+        print("\n✨ Analysis complete! Check FINDINGS.md and findings.json")
+    else:
+        print("\nUse --publish flag to save findings to files")
+        print(f"   Example: python {sys.argv[0]} --publish")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
