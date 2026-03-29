@@ -3,221 +3,448 @@
 # Task:    Build prompt cache layer
 # Mission: LLM Inference Cost Optimizer
 # Agent:   @bolt
-# Date:    2026-03-28T22:04:36.101Z
+# Date:    2026-03-29T13:20:05.688Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Build prompt cache layer
-Mission: LLM Inference Cost Optimizer
-Agent: @bolt
-Date: 2024-01-15
-
-Intelligent middleware that implements prompt caching for LLM inference,
-reducing costs by reusing cached responses for identical or similar prompts.
+TASK: Build prompt cache layer for LLM Inference Cost Optimizer
+MISSION: LLM Inference Cost Optimizer
+AGENT: @bolt
+DATE: 2024
+DESCRIPTION: Intelligent middleware that routes LLM requests to the cheapest sufficient model,
+implements prompt caching, and provides real-time cost analytics.
 """
 
 import argparse
 import hashlib
 import json
 import time
-import sqlite3
-import os
 import sys
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional
 from pathlib import Path
-from dataclasses import dataclass, asdict
-from enum import Enum
+from collections import defaultdict
+from typing import Optional, Dict, List, Tuple, Any
 
 
-class CacheStrategy(Enum):
-    EXACT = "exact"
-    SEMANTIC = "semantic"
-    HYBRID = "hybrid"
+class PromptCacheEntry:
+    """Represents a cached prompt with metadata."""
 
+    def __init__(self, prompt_hash: str, prompt_text: str, model: str, 
+                 response: str, cost: float, tokens: int):
+        self.prompt_hash = prompt_hash
+        self.prompt_text = prompt_text
+        self.model = model
+        self.response = response
+        self.cost = cost
+        self.tokens = tokens
+        self.created_at = datetime.now().isoformat()
+        self.access_count = 1
+        self.last_accessed = datetime.now().isoformat()
 
-@dataclass
-class CacheEntry:
-    prompt_hash: str
-    prompt_text: str
-    model: str
-    response: str
-    timestamp: float
-    ttl_seconds: int
-    hits: int
-    cost_saved: float
-    
-    def is_expired(self) -> bool:
-        return time.time() - self.timestamp > self.ttl_seconds
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert cache entry to dictionary."""
+        return {
+            'prompt_hash': self.prompt_hash,
+            'prompt_text': self.prompt_text,
+            'model': self.model,
+            'response': self.response,
+            'cost': self.cost,
+            'tokens': self.tokens,
+            'created_at': self.created_at,
+            'access_count': self.access_count,
+            'last_accessed': self.last_accessed
+        }
 
-
-@dataclass
-class CacheStats:
-    total_requests: int
-    cache_hits: int
-    cache_misses: int
-    total_cost_saved: float
-    hit_rate: float
-    avg_response_time_ms: float
-    storage_size_mb: float
+    def update_access(self):
+        """Update access metadata."""
+        self.access_count += 1
+        self.last_accessed = datetime.now().isoformat()
 
 
 class PromptCacheLayer:
-    def __init__(self, db_path: str, cache_strategy: CacheStrategy = CacheStrategy.EXACT, max_cache_size_mb: int = 1024):
-        self.db_path = db_path
-        self.cache_strategy = cache_strategy
-        self.max_cache_size_mb = max_cache_size_mb
-        self.response_times: List[float] = []
-        self._init_db()
-    
-    def _init_db(self):
-        """Initialize SQLite database for cache storage."""
-        os.makedirs(os.path.dirname(self.db_path) if os.path.dirname(self.db_path) else ".", exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+    """Manages prompt caching with cost tracking and analytics."""
+
+    def __init__(self, max_size: int = 10000, ttl_seconds: Optional[int] = None,
+                 enable_semantic_matching: bool = False):
+        """
+        Initialize the prompt cache layer.
         
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS cache_entries (
-                id INTEGER PRIMARY KEY,
-                prompt_hash TEXT UNIQUE,
-                prompt_text TEXT,
-                model TEXT,
-                response TEXT,
-                timestamp REAL,
-                ttl_seconds INTEGER,
-                hits INTEGER DEFAULT 0,
-                cost_saved REAL DEFAULT 0.0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS cache_stats (
-                id INTEGER PRIMARY KEY,
-                timestamp REAL,
-                total_requests INTEGER,
-                cache_hits INTEGER,
-                cache_misses INTEGER,
-                total_cost_saved REAL
-            )
-        """)
-        
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_prompt_hash ON cache_entries(prompt_hash)
-        """)
-        
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_model ON cache_entries(model)
-        """)
-        
-        conn.commit()
-        conn.close()
-    
-    def _compute_hash(self, prompt: str, model: str = "", include_semantic: bool = False) -> str:
-        """Compute hash of prompt for caching."""
-        base_text = f"{prompt}:{model}".strip()
-        
-        if include_semantic:
-            normalized = self._normalize_prompt(base_text)
-            return hashlib.sha256(normalized.encode()).hexdigest()
-        else:
-            return hashlib.sha256(base_text.encode()).hexdigest()
-    
-    def _normalize_prompt(self, prompt: str) -> str:
-        """Normalize prompt for semantic similarity."""
-        normalized = prompt.lower().strip()
-        normalized = " ".join(normalized.split())
-        normalized = "".join(c for c in normalized if c.isalnum() or c.isspace())
-        return normalized
-    
-    def _semantic_similarity(self, prompt1: str, prompt2: str, threshold: float = 0.85) -> bool:
-        """Calculate semantic similarity between two prompts."""
-        norm1_set = set(self._normalize_prompt(prompt1).split())
-        norm2_set = set(self._normalize_prompt(prompt2).split())
-        
-        if not norm1_set or not norm2_set:
+        Args:
+            max_size: Maximum number of cached prompts
+            ttl_seconds: Time to live for cache entries (None = no expiry)
+            enable_semantic_matching: Enable fuzzy matching for similar prompts
+        """
+        self.cache: Dict[str, PromptCacheEntry] = {}
+        self.max_size = max_size
+        self.ttl_seconds = ttl_seconds
+        self.enable_semantic_matching = enable_semantic_matching
+        self.access_stats = defaultdict(int)
+        self.cost_savings = 0.0
+        self.total_cache_hits = 0
+        self.total_cache_misses = 0
+
+    def _hash_prompt(self, prompt: str) -> str:
+        """Generate SHA256 hash of prompt."""
+        return hashlib.sha256(prompt.encode()).hexdigest()
+
+    def _is_expired(self, entry: PromptCacheEntry) -> bool:
+        """Check if cache entry has expired."""
+        if self.ttl_seconds is None:
             return False
         
-        intersection = len(norm1_set & norm2_set)
-        union = len(norm1_set | norm2_set)
-        jaccard_similarity = intersection / union if union > 0 else 0
+        created_time = datetime.fromisoformat(entry.created_at)
+        elapsed = (datetime.now() - created_time).total_seconds()
+        return elapsed > self.ttl_seconds
+
+    def _similarity_score(self, prompt1: str, prompt2: str) -> float:
+        """
+        Calculate similarity between two prompts using simple token overlap.
+        Returns score between 0 and 1.
+        """
+        tokens1 = set(prompt1.lower().split())
+        tokens2 = set(prompt2.lower().split())
         
-        return jaccard_similarity >= threshold
-    
-    def get(self, prompt: str, model: str, use_semantic: bool = False) -> Optional[Tuple[str, Dict]]:
-        """Retrieve cached response if available."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        if not tokens1 or not tokens2:
+            return 0.0
         
-        if use_semantic and self.cache_strategy in (CacheStrategy.SEMANTIC, CacheStrategy.HYBRID):
-            cursor.execute("SELECT prompt_text, response, hits, cost_saved, timestamp FROM cache_entries WHERE model = ?", (model,))
-            rows = cursor.fetchall()
-            
-            for row in rows:
-                cached_prompt, response, hits, cost_saved, timestamp = row
-                entry = CacheEntry(
-                    prompt_hash="",
-                    prompt_text=cached_prompt,
-                    model=model,
-                    response=response,
-                    timestamp=timestamp,
-                    ttl_seconds=3600,
-                    hits=hits,
-                    cost_saved=cost_saved
-                )
-                
-                if not entry.is_expired() and self._semantic_similarity(prompt, cached_prompt):
-                    self._update_hit(cursor, conn, cached_prompt, model)
-                    conn.close()
-                    return response, {"hit_type": "semantic", "previous_prompt": cached_prompt}
+        intersection = len(tokens1 & tokens2)
+        union = len(tokens1 | tokens2)
+        return intersection / union if union > 0 else 0.0
+
+    def _evict_oldest(self):
+        """Evict oldest least-accessed entry when cache is full."""
+        if not self.cache:
+            return
         
-        prompt_hash = self._compute_hash(prompt, model, include_semantic=False)
-        cursor.execute(
-            "SELECT response, hits, cost_saved, timestamp FROM cache_entries WHERE prompt_hash = ? AND model = ?",
-            (prompt_hash, model)
-        )
-        row = cursor.fetchone()
-        
-        if row:
-            response, hits, cost_saved, timestamp = row
-            entry = CacheEntry(
-                prompt_hash=prompt_hash,
-                prompt_text=prompt,
-                model=model,
-                response=response,
-                timestamp=timestamp,
-                ttl_seconds=3600,
-                hits=hits,
-                cost_saved=cost_saved
+        oldest_key = min(
+            self.cache.keys(),
+            key=lambda k: (
+                self.cache[k].access_count,
+                datetime.fromisoformat(self.cache[k].last_accessed)
             )
-            
-            if not entry.is_expired():
-                self._update_hit(cursor, conn, prompt, model)
-                conn.close()
-                return response, {"hit_type": "exact"}
-        
-        conn.close()
-        return None
-    
-    def _update_hit(self, cursor, conn, prompt: str, model: str):
-        """Update hit count for a cache entry."""
-        prompt_hash = self._compute_hash(prompt, model)
-        cursor.execute(
-            "UPDATE cache_entries SET hits = hits + 1 WHERE prompt_hash = ? AND model = ?",
-            (prompt_hash, model)
         )
-        conn.commit()
-    
-    def put(self, prompt: str, model: str, response: str, cost: float = 0.0, ttl_seconds: int = 3600):
-        """Store response in cache."""
-        prompt_hash = self._compute_hash(prompt, model)
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        del self.cache[oldest_key]
+
+    def put(self, prompt: str, model: str, response: str, cost: float, 
+            tokens: int) -> str:
+        """
+        Store a prompt and response in cache.
         
+        Args:
+            prompt: The input prompt
+            model: Model used for inference
+            response: Model's response
+            cost: Cost of the inference
+            tokens: Number of tokens used
+            
+        Returns:
+            Hash of the cached prompt
+        """
+        prompt_hash = self._hash_prompt(prompt)
+        
+        if prompt_hash in self.cache:
+            self.cache[prompt_hash].update_access()
+            return prompt_hash
+        
+        if len(self.cache) >= self.max_size:
+            self._evict_oldest()
+        
+        entry = PromptCacheEntry(prompt_hash, prompt, model, response, cost, tokens)
+        self.cache[prompt_hash] = entry
+        self.access_stats[model] += 1
+        
+        return prompt_hash
+
+    def get(self, prompt: str, similarity_threshold: float = 1.0) -> Optional[PromptCacheEntry]:
+        """
+        Retrieve a cached response for a prompt.
+        
+        Args:
+            prompt: The input prompt
+            similarity_threshold: Minimum similarity for fuzzy matching (0.0-1.0)
+            
+        Returns:
+            Cache entry if found and not expired, else None
+        """
+        prompt_hash = self._hash_prompt(prompt)
+        
+        if prompt_hash in self.cache:
+            entry = self.cache[prompt_hash]
+            if not self._is_expired(entry):
+                entry.update_access()
+                self.total_cache_hits += 1
+                self.cost_savings += entry.cost
+                return entry
+            else:
+                del self.cache[prompt_hash]
+        
+        if self.enable_semantic_matching and similarity_threshold < 1.0:
+            best_match = None
+            best_score = similarity_threshold
+            
+            for cached_prompt_hash, entry in self.cache.items():
+                if self._is_expired(entry):
+                    del self.cache[cached_prompt_hash]
+                    continue
+                
+                score = self._similarity_score(prompt, entry.prompt_text)
+                if score > best_score:
+                    best_score = score
+                    best_match = entry
+            
+            if best_match:
+                best_match.update_access()
+                self.total_cache_hits += 1
+                self.cost_savings += best_match.cost * (1 - best_score)
+                return best_match
+        
+        self.total_cache_misses += 1
+        return None
+
+    def invalidate(self, prompt: str) -> bool:
+        """
+        Invalidate a cached prompt.
+        
+        Args:
+            prompt: The prompt to invalidate
+            
+        Returns:
+            True if entry was found and removed, False otherwise
+        """
+        prompt_hash = self._hash_prompt(prompt)
+        if prompt_hash in self.cache:
+            del self.cache[prompt_hash]
+            return True
+        return False
+
+    def clear(self):
+        """Clear entire cache."""
+        self.cache.clear()
+        self.cost_savings = 0.0
+        self.total_cache_hits = 0
+        self.total_cache_misses = 0
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get comprehensive cache statistics."""
+        total_requests = self.total_cache_hits + self.total_cache_misses
+        hit_rate = (self.total_cache_hits / total_requests * 100) if total_requests > 0 else 0.0
+        
+        model_distribution = dict(self.access_stats)
+        
+        cache_size_bytes = sum(
+            len(entry.prompt_text.encode()) + len(entry.response.encode())
+            for entry in self.cache.values()
+        )
+        
+        expired_count = sum(
+            1 for entry in self.cache.values()
+            if self._is_expired(entry)
+        )
+        
+        return {
+            'timestamp': datetime.now().isoformat(),
+            'cache_size': len(self.cache),
+            'cache_size_bytes': cache_size_bytes,
+            'max_size': self.max_size,
+            'total_cache_hits': self.total_cache_hits,
+            'total_cache_misses': self.total_cache_misses,
+            'hit_rate_percentage': round(hit_rate, 2),
+            'total_cost_savings': round(self.cost_savings, 4),
+            'model_distribution': model_distribution,
+            'expired_entries': expired_count,
+            'average_entry_size_bytes': round(
+                cache_size_bytes / len(self.cache) if self.cache else 0, 2
+            )
+        }
+
+    def cleanup_expired(self) -> int:
+        """
+        Remove all expired entries from cache.
+        
+        Returns:
+            Number of entries removed
+        """
+        if self.ttl_seconds is None:
+            return 0
+        
+        expired_hashes = [
+            h for h, entry in self.cache.items()
+            if self._is_expired(entry)
+        ]
+        
+        for h in expired_hashes:
+            del self.cache[h]
+        
+        return len(expired_hashes)
+
+    def export_cache(self, filepath: str):
+        """Export cache to JSON file."""
+        data = {
+            'metadata': {
+                'exported_at': datetime.now().isoformat(),
+                'cache_size': len(self.cache),
+                'max_size': self.max_size,
+                'ttl_seconds': self.ttl_seconds
+            },
+            'entries': [
+                entry.to_dict() for entry in self.cache.values()
+            ],
+            'statistics': self.get_stats()
+        }
+        
+        with open(filepath, 'w') as f:
+            json.dump(data, f, indent=2)
+
+    def import_cache(self, filepath: str):
+        """Import cache from JSON file."""
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+        
+        for entry_data in data.get('entries', []):
+            entry = PromptCacheEntry(
+                prompt_hash=entry_data['prompt_hash'],
+                prompt_text=entry_data['prompt_text'],
+                model=entry_data['model'],
+                response=entry_data['response'],
+                cost=entry_data['cost'],
+                tokens=entry_data['tokens']
+            )
+            entry.created_at = entry_data['created_at']
+            entry.access_count = entry_data['access_count']
+            entry.last_accessed = entry_data['last_accessed']
+            self.cache[entry.prompt_hash] = entry
+
+    def get_expensive_prompts(self, top_n: int = 10) -> List[Dict[str, Any]]:
+        """Get the most expensive cached prompts."""
+        sorted_entries = sorted(
+            self.cache.values(),
+            key=lambda e: e.cost,
+            reverse=True
+        )
+        
+        return [
+            {
+                'prompt': entry.prompt_text[:100] + ('...' if len(entry.prompt_text) > 100 else ''),
+                'model': entry.model,
+                'cost': entry.cost,
+                'tokens': entry.tokens,
+                'access_count': entry.access_count
+            }
+            for entry in sorted_entries[:top_n]
+        ]
+
+    def get_most_reused_prompts(self, top_n: int = 10) -> List[Dict[str, Any]]:
+        """Get the most frequently reused cached prompts."""
+        sorted_entries = sorted(
+            self.cache.values(),
+            key=lambda e: e.access_count,
+            reverse=True
+        )
+        
+        return [
+            {
+                'prompt': entry.prompt_text[:100] + ('...' if len(entry.prompt_text) > 100 else ''),
+                'model': entry.model,
+                'access_count': entry.access_count,
+                'cost': entry.cost,
+                'cost_per_access': round(entry.cost / entry.access_count, 4)
+            }
+            for entry in sorted_entries[:top_n]
+        ]
+
+
+def simulate_inference(prompt: str, model: str) -> Tuple[str, float, int]:
+    """Simulate LLM inference with cost calculation."""
+    response = f"Simulated response to '{prompt[:50]}...' using {model}"
+    
+    model_costs = {
+        'gpt-4': {'per_token': 0.03},
+        'gpt-3.5-turbo': {'per_token': 0.0015},
+        'claude-2': {'per_token': 0.01},
+        'llama-2': {'per_token': 0.001}
+    }
+    
+    tokens = len(prompt.split()) + len(response.split())
+    cost_per_token = model_costs.get(model, {'per_token': 0.01})['per_token']
+    cost = tokens * cost_per_token
+    
+    return response, cost, tokens
+
+
+def main():
+    """Main function with CLI interface."""
+    parser = argparse.ArgumentParser(
+        description='LLM Inference Cost Optimizer - Prompt Cache Layer',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python3 script.py --mode demo --cache-size 100
+  python3 script.py --mode interactive --ttl 3600
+  python3 script.py --mode export --export-file cache_backup.json
+        """
+    )
+    
+    parser.add_argument(
+        '--mode',
+        choices=['demo', 'interactive', 'export', 'stats'],
+        default='demo',
+        help='Operation mode (default: demo)'
+    )
+    parser.add_argument(
+        '--cache-size',
+        type=int,
+        default=1000,
+        help='Maximum cache size in entries (default: 1000)'
+    )
+    parser.add_argument(
+        '--ttl',
+        type=int,
+        default=None,
+        help='Cache TTL in seconds (default: None = no expiry)'
+    )
+    parser.add_argument(
+        '--semantic-matching',
+        action='store_true',
+        help='Enable semantic similarity matching for prompts'
+    )
+    parser.add_argument(
+        '--export-file',
+        type=str,
+        default='cache_export.json',
+        help='File path for cache export (default: cache_export.json)'
+    )
+    parser.add_argument(
+        '--import-file',
+        type=str,
+        default=None,
+        help='File path for cache import'
+    )
+    
+    args = parser.parse_args()
+    
+    cache = PromptCacheLayer(
+        max_size=args.cache_size,
+        ttl_seconds=args.ttl,
+        enable_semantic_matching=args.semantic_matching
+    )
+    
+    if args.import_file:
         try:
-            cursor.execute("""
-                INSERT INTO cache_entries 
-                (prompt_hash, prompt_text, model, response, timestamp, ttl_seconds, hits, cost_saved)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (prompt_hash, prompt, model, response, time.time(), ttl_seconds, 0, cost
+            cache.import_cache(args.import_file)
+            print(f"✓ Imported cache from {args.import_file}")
+        except FileNotFoundError:
+            print(f"✗ Import file not found: {args.import_file}")
+    
+    if args.mode == 'demo':
+        print("=" * 70)
+        print("PROMPT CACHE LAYER DEMO")
+        print("=" * 70)
+        
+        test_prompts = [
+            ("What is machine learning?", "gpt-4"),
+            ("Explain neural networks", "gpt-3.5-turbo"),
+            ("What is machine learning?", "gpt-4"),
+            ("How do transformers work?", "claude-2"),
+            ("Explain neural networks", "gpt-3.5-turbo"),
+            ("What is deep learning?", "llama-2
