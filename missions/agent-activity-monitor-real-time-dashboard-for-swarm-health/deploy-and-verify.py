@@ -1,371 +1,345 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────
 # Task:    Deploy and verify
-# Mission: Agent Activity Monitor — Real-time Dashboard for Swarm Health
+# Mission: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
 # Agent:   @bolt
-# Date:    2026-03-29T13:09:56.539Z
+# Date:    2026-03-29T13:15:37.781Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Agent Activity Monitor — Real-time Dashboard for Swarm Health
-MISSION: Deploy and verify /monitor page, /api/metrics endpoint, and cron job
-AGENT: @bolt
-DATE: 2024
+Task: Agent Activity Monitor - Real-Time Dashboard for Swarm Health
+Mission: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
+Agent: @bolt
+Date: 2025-01-20
+Description: Real-time monitoring dashboard tracking agent health, task throughput,
+error rates, and performance metrics across the entire swarm.
 """
 
-import json
-import sqlite3
 import argparse
-import threading
+import json
 import time
+import random
+import threading
+import statistics
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
-import re
+from collections import deque
+import sys
+
 
 @dataclass
-class AgentMetric:
+class AgentMetrics:
+    """Individual agent metrics snapshot"""
     agent_id: str
     status: str
-    tasks_completed: int
-    tasks_blocked: int
-    uptime_minutes: int
-    last_heartbeat: str
     cpu_usage: float
     memory_usage: float
-
-@dataclass
-class TaskMetric:
-    task_id: str
-    agent_id: str
-    status: str
-    start_time: str
-    end_time: Optional[str]
-    duration_seconds: int
-    project_id: str
-
-@dataclass
-class ProjectVelocity:
-    project_id: str
-    tasks_completed_today: int
-    tasks_completed_week: int
+    active_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+    error_rate: float
     avg_task_duration: float
-    blocked_tasks: int
-    velocity_score: float
+    last_heartbeat: str
+    uptime_seconds: int
 
-class SwarmMetricsDB:
-    def __init__(self, db_path: str = "swarm_metrics.db"):
-        self.db_path = db_path
-        self.init_db()
 
-    def init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS agents (
-                    agent_id TEXT PRIMARY KEY,
-                    status TEXT,
-                    tasks_completed INTEGER,
-                    tasks_blocked INTEGER,
-                    uptime_minutes INTEGER,
-                    last_heartbeat TEXT,
-                    cpu_usage REAL,
-                    memory_usage REAL,
-                    updated_at TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS tasks (
-                    task_id TEXT PRIMARY KEY,
-                    agent_id TEXT,
-                    status TEXT,
-                    start_time TEXT,
-                    end_time TEXT,
-                    duration_seconds INTEGER,
-                    project_id TEXT,
-                    created_at TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS daily_summaries (
-                    summary_date TEXT PRIMARY KEY,
-                    total_agents INTEGER,
-                    active_agents INTEGER,
-                    idle_agents INTEGER,
-                    total_tasks INTEGER,
-                    completed_tasks INTEGER,
-                    blocked_tasks INTEGER,
-                    avg_task_duration REAL,
-                    system_health_score REAL,
-                    created_at TEXT
-                )
-            ''')
-            
-            conn.commit()
+@dataclass
+class SwarmMetrics:
+    """Aggregated swarm-wide metrics"""
+    timestamp: str
+    total_agents: int
+    active_agents: int
+    healthy_agents: int
+    total_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+    swarm_cpu_avg: float
+    swarm_memory_avg: float
+    swarm_error_rate: float
+    overall_health_score: float
+    throughput_tasks_per_minute: float
 
-    def insert_agent(self, metric: AgentMetric):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT OR REPLACE INTO agents 
-                (agent_id, status, tasks_completed, tasks_blocked, uptime_minutes, 
-                 last_heartbeat, cpu_usage, memory_usage, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                metric.agent_id, metric.status, metric.tasks_completed,
-                metric.tasks_blocked, metric.uptime_minutes, metric.last_heartbeat,
-                metric.cpu_usage, metric.memory_usage, datetime.utcnow().isoformat()
-            ))
-            conn.commit()
 
-    def insert_task(self, metric: TaskMetric):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT OR REPLACE INTO tasks
-                (task_id, agent_id, status, start_time, end_time, duration_seconds, project_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                metric.task_id, metric.agent_id, metric.status, metric.start_time,
-                metric.end_time, metric.duration_seconds, metric.project_id,
-                datetime.utcnow().isoformat()
-            ))
-            conn.commit()
-
-    def get_agents(self) -> List[Dict]:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM agents ORDER BY updated_at DESC')
-            return [dict(row) for row in cursor.fetchall()]
-
-    def get_tasks(self, limit: int = 100) -> List[Dict]:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?', (limit,))
-            return [dict(row) for row in cursor.fetchall()]
-
-    def get_tasks_by_status(self, status: str) -> List[Dict]:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM tasks WHERE status = ? ORDER BY created_at DESC', (status,))
-            return [dict(row) for row in cursor.fetchall()]
-
-    def get_project_velocity(self, project_id: str) -> ProjectVelocity:
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            today = datetime.utcnow().date().isoformat()
-            week_ago = (datetime.utcnow() - timedelta(days=7)).date().isoformat()
-            
-            cursor.execute('''
-                SELECT COUNT(*) FROM tasks 
-                WHERE project_id = ? AND status = 'completed' AND DATE(created_at) = ?
-            ''', (project_id, today))
-            tasks_today = cursor.fetchone()[0]
-            
-            cursor.execute('''
-                SELECT COUNT(*) FROM tasks 
-                WHERE project_id = ? AND status = 'completed' AND DATE(created_at) >= ?
-            ''', (project_id, week_ago))
-            tasks_week = cursor.fetchone()[0]
-            
-            cursor.execute('''
-                SELECT AVG(duration_seconds) FROM tasks 
-                WHERE project_id = ? AND status = 'completed'
-            ''', (project_id,))
-            avg_duration = cursor.fetchone()[0] or 0
-            
-            cursor.execute('''
-                SELECT COUNT(*) FROM tasks 
-                WHERE project_id = ? AND status = 'blocked'
-            ''', (project_id,))
-            blocked = cursor.fetchone()[0]
-            
-            velocity_score = (tasks_week / 7.0) if tasks_week > 0 else 0.0
-            
-            return ProjectVelocity(
-                project_id=project_id,
-                tasks_completed_today=tasks_today,
-                tasks_completed_week=tasks_week,
-                avg_task_duration=avg_duration,
-                blocked_tasks=blocked,
-                velocity_score=velocity_score
-            )
-
-    def compute_daily_summary(self) -> Dict:
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT COUNT(DISTINCT agent_id) FROM agents')
-            total_agents = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(DISTINCT agent_id) FROM agents WHERE status = 'active'")
-            active_agents = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(DISTINCT agent_id) FROM agents WHERE status = 'idle'")
-            idle_agents = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT COUNT(*) FROM tasks')
-            total_tasks = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM tasks WHERE status = 'completed'")
-            completed_tasks = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM tasks WHERE status = 'blocked'")
-            blocked_tasks = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT AVG(duration_seconds) FROM tasks WHERE status = 'completed'")
-            avg_duration = cursor.fetchone()[0] or 0
-            
-            cursor.execute('SELECT AVG(cpu_usage), AVG(memory_usage) FROM agents')
-            cpu_avg, mem_avg = cursor.fetchone()
-            cpu_avg = cpu_avg or 0
-            mem_avg = mem_avg or 0
-            
-            health_score = 100.0
-            if cpu_avg > 80:
-                health_score -= 20
-            if mem_avg > 75:
-                health_score -= 20
-            if blocked_tasks > 0:
-                health_score -= min(30, blocked_tasks * 5)
-            if active_agents == 0:
-                health_score = 0
-            
-            health_score = max(0, min(100, health_score))
-            
-            summary = {
-                'summary_date': datetime.utcnow().date().isoformat(),
-                'total_agents': total_agents,
-                'active_agents': active_agents,
-                'idle_agents': idle_agents,
-                'total_tasks': total_tasks,
-                'completed_tasks': completed_tasks,
-                'blocked_tasks': blocked_tasks,
-                'avg_task_duration': avg_duration,
-                'system_health_score': health_score,
-                'created_at': datetime.utcnow().isoformat()
-            }
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO daily_summaries
-                (summary_date, total_agents, active_agents, idle_agents, total_tasks, 
-                 completed_tasks, blocked_tasks, avg_task_duration, system_health_score, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                summary['summary_date'],
-                summary['total_agents'],
-                summary['active_agents'],
-                summary['idle_agents'],
-                summary['total_tasks'],
-                summary['completed_tasks'],
-                summary['blocked_tasks'],
-                summary['avg_task_duration'],
-                summary['system_health_score'],
-                summary['created_at']
-            ))
-            conn.commit()
-            
-            return summary
-
-    def get_daily_summaries(self, days: int = 7) -> List[Dict]:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cutoff = (datetime.utcnow() - timedelta(days=days)).date().isoformat()
-            cursor.execute('SELECT * FROM daily_summaries WHERE summary_date >= ? ORDER BY summary_date DESC', (cutoff,))
-            return [dict(row) for row in cursor.fetchall()]
-
-class MetricsHandler(BaseHTTPRequestHandler):
-    db: Optional[SwarmMetricsDB] = None
+class AgentSimulator:
+    """Simulates agent activity for testing"""
     
-    def do_GET(self):
-        parsed_path = urlparse(self.path)
+    def __init__(self, agent_id: str):
+        self.agent_id = agent_id
+        self.status = "healthy"
+        self.cpu_usage = random.uniform(10, 40)
+        self.memory_usage = random.uniform(20, 60)
+        self.active_tasks = random.randint(0, 8)
+        self.completed_tasks = random.randint(100, 1000)
+        self.failed_tasks = random.randint(0, 50)
+        self.start_time = datetime.now() - timedelta(seconds=random.randint(3600, 86400))
+        self.last_heartbeat = datetime.now()
+        self.task_durations = deque([random.uniform(0.5, 5.0) for _ in range(10)], maxlen=100)
         
-        if parsed_path.path == '/monitor':
-            self.serve_monitor_page()
-        elif parsed_path.path == '/api/metrics':
-            self.serve_metrics_api()
-        elif parsed_path.path == '/api/metrics/agents':
-            self.serve_agents_api()
-        elif parsed_path.path == '/api/metrics/tasks':
-            self.serve_tasks_api()
-        elif parsed_path.path == '/api/metrics/blocked':
-            self.serve_blocked_tasks_api()
-        elif parsed_path.path == '/api/metrics/velocity':
-            query = parse_qs(parsed_path.query)
-            project_id = query.get('project_id', ['default'])[0]
-            self.serve_velocity_api(project_id)
-        elif parsed_path.path == '/api/metrics/summary':
-            self.serve_summary_api()
-        elif parsed_path.path == '/api/health':
-            self.serve_health_api()
+    def simulate_activity(self):
+        """Simulate agent activity changes"""
+        # Randomly vary metrics
+        self.cpu_usage = max(5, min(95, self.cpu_usage + random.uniform(-5, 5)))
+        self.memory_usage = max(10, min(95, self.memory_usage + random.uniform(-3, 3)))
+        self.active_tasks = max(0, min(16, self.active_tasks + random.randint(-1, 1)))
+        
+        # Simulate task completion
+        if random.random() < 0.7:
+            self.completed_tasks += random.randint(1, 3)
+            self.task_durations.append(random.uniform(0.5, 5.0))
+        
+        # Simulate occasional failures
+        if random.random() < 0.05:
+            self.failed_tasks += 1
+        
+        # Simulate status changes
+        error_rate = self.get_error_rate()
+        if error_rate > 0.15:
+            self.status = "degraded"
+        elif self.cpu_usage > 85 or self.memory_usage > 85:
+            self.status = "degraded"
+        elif error_rate > 0.05:
+            self.status = "warning"
         else:
-            self.send_response(404)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({'error': 'Not found'}).encode())
+            self.status = "healthy"
+        
+        self.last_heartbeat = datetime.now()
     
-    def serve_monitor_page(self):
-        html = '''<!DOCTYPE html>
-<html>
-<head>
-    <title>SwarmPulse Agent Activity Monitor</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .header { background: #2c3e50; color: white; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
-        .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 20px; }
-        .metric-card { background: white; padding: 20px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .metric-value { font-size: 28px; font-weight: bold; color: #27ae60; }
-        .metric-label { color: #7f8c8d; font-size: 14px; }
-        .health-good { color: #27ae60; }
-        .health-warning { color: #f39c12; }
-        .health-critical { color: #e74c3c; }
-        .agents-table { width: 100%; border-collapse: collapse; background: white; margin-bottom: 20px; }
-        .agents-table th, .agents-table td { padding: 12px; text-align: left; border-bottom: 1px solid #ecf0f1; }
-        .agents-table th { background: #34495e; color: white; }
-        .status-active { color: #27ae60; font-weight: bold; }
-        .status-idle { color: #f39c12; font-weight: bold; }
-        .status-inactive { color: #e74c3c; font-weight: bold; }
-        .chart-container { background: white; padding: 20px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        .blocked-tasks { background: #fee; padding: 15px; border-left: 4px solid #e74c3c; border-radius: 3px; margin-bottom: 20px; }
-        .last-update { color: #95a5a6; font-size: 12px; margin-top: 10px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🚀 SwarmPulse Agent Activity Monitor</h1>
-            <p>Real-time dashboard for swarm health and task throughput</p>
-        </div>
+    def get_metrics(self) -> AgentMetrics:
+        """Get current agent metrics"""
+        uptime = int((datetime.now() - self.start_time).total_seconds())
+        error_rate = self.get_error_rate()
+        avg_duration = statistics.mean(self.task_durations) if self.task_durations else 0
         
-        <div class="metrics-grid" id="metrics-grid">
-            <div class="metric-card">
-                <div class="metric-label">Active Agents</div>
-                <div class="metric-value" id="active-agents">-</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Total Tasks</div>
-                <div class="metric-value" id="total-tasks">-</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Blocked Tasks</div>
-                <div class="metric-value" id="blocked-tasks">-</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">System Health</div>
-                <div class="metric-value" id="health-score">-</div>
-            </div>
-        </div>
+        return AgentMetrics(
+            agent_id=self.agent_id,
+            status=self.status,
+            cpu_usage=round(self.cpu_usage, 2),
+            memory_usage=round(self.memory_usage, 2),
+            active_tasks=self.active_tasks,
+            completed_tasks=self.completed_tasks,
+            failed_tasks=self.failed_tasks,
+            error_rate=round(error_rate, 4),
+            avg_task_duration=round(avg_duration, 2),
+            last_heartbeat=self.last_heartbeat.isoformat(),
+            uptime_seconds=uptime
+        )
+    
+    def get_error_rate(self) -> float:
+        """Calculate error rate"""
+        total = self.completed_tasks + self.failed_tasks
+        if total == 0:
+            return 0.0
+        return self.failed_tasks / total
+
+
+class SwarmMonitor:
+    """Real-time swarm monitoring system"""
+    
+    def __init__(self, num_agents: int = 10, history_size: int = 100):
+        self.agents: Dict[str, AgentSimulator] = {
+            f"agent-{i:03d}": AgentSimulator(f"agent-{i:03d}")
+            for i in range(num_agents)
+        }
+        self.metrics_history: deque = deque(maxlen=history_size)
+        self.running = False
+        self.monitor_thread = None
+        self.update_interval = 2  # seconds
         
-        <div id="blocked-section" class
+    def update_agents(self):
+        """Update all agent metrics"""
+        for agent in self.agents.values():
+            agent.simulate_activity()
+    
+    def get_swarm_metrics(self) -> SwarmMetrics:
+        """Calculate aggregated swarm metrics"""
+        agent_metrics_list = [agent.get_metrics() for agent in self.agents.values()]
+        
+        total_agents = len(agent_metrics_list)
+        active_agents = sum(1 for m in agent_metrics_list if m.status != "offline")
+        healthy_agents = sum(1 for m in agent_metrics_list if m.status == "healthy")
+        
+        total_tasks = sum(m.completed_tasks + m.failed_tasks for m in agent_metrics_list)
+        completed_tasks = sum(m.completed_tasks for m in agent_metrics_list)
+        failed_tasks = sum(m.failed_tasks for m in agent_metrics_list)
+        
+        cpu_values = [m.cpu_usage for m in agent_metrics_list if m.status != "offline"]
+        memory_values = [m.memory_usage for m in agent_metrics_list if m.status != "offline"]
+        error_rates = [m.error_rate for m in agent_metrics_list if m.status != "offline"]
+        
+        swarm_cpu_avg = statistics.mean(cpu_values) if cpu_values else 0
+        swarm_memory_avg = statistics.mean(memory_values) if memory_values else 0
+        swarm_error_rate = statistics.mean(error_rates) if error_rates else 0
+        
+        # Health score: 0-100, based on agent health and error rate
+        health_components = [
+            (healthy_agents / total_agents) * 60,  # 60% weight: agent health
+            max(0, (1 - swarm_error_rate) * 20),   # 20% weight: error rate
+            max(0, (100 - swarm_cpu_avg) / 100 * 10),  # 10% weight: CPU headroom
+            max(0, (100 - swarm_memory_avg) / 100 * 10)  # 10% weight: memory headroom
+        ]
+        overall_health_score = sum(health_components)
+        
+        # Calculate throughput (tasks per minute)
+        if self.metrics_history:
+            time_span = 60  # last 60 seconds worth of data
+            recent_completed = 0
+            for prev_metrics in list(self.metrics_history)[-time_span:]:
+                recent_completed += prev_metrics.completed_tasks
+            throughput = recent_completed / (len(list(self.metrics_history)) / 30)  # normalize to 1 minute
+        else:
+            throughput = 0
+        
+        return SwarmMetrics(
+            timestamp=datetime.now().isoformat(),
+            total_agents=total_agents,
+            active_agents=active_agents,
+            healthy_agents=healthy_agents,
+            total_tasks=total_tasks,
+            completed_tasks=completed_tasks,
+            failed_tasks=failed_tasks,
+            swarm_cpu_avg=round(swarm_cpu_avg, 2),
+            swarm_memory_avg=round(swarm_memory_avg, 2),
+            swarm_error_rate=round(swarm_error_rate, 4),
+            overall_health_score=round(overall_health_score, 2),
+            throughput_tasks_per_minute=round(throughput, 2)
+        )
+    
+    def monitor_loop(self):
+        """Main monitoring loop"""
+        while self.running:
+            try:
+                self.update_agents()
+                swarm_metrics = self.get_swarm_metrics()
+                self.metrics_history.append(asdict(swarm_metrics))
+                time.sleep(self.update_interval)
+            except Exception as e:
+                print(f"Error in monitor loop: {e}", file=sys.stderr)
+    
+    def start(self):
+        """Start the monitoring system"""
+        self.running = True
+        self.monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
+        self.monitor_thread.start()
+    
+    def stop(self):
+        """Stop the monitoring system"""
+        self.running = False
+        if self.monitor_thread:
+            self.monitor_thread.join(timeout=5)
+    
+    def get_dashboard_data(self, num_agents_to_show: int = None) -> Dict:
+        """Get current dashboard data"""
+        if not self.metrics_history:
+            return {"error": "No metrics collected yet"}
+        
+        latest_swarm = self.metrics_history[-1]
+        agent_metrics_list = [agent.get_metrics() for agent in self.agents.values()]
+        
+        # Sort agents by status and error rate
+        agent_metrics_list.sort(
+            key=lambda m: (m.status != "healthy", m.error_rate, m.cpu_usage),
+            reverse=True
+        )
+        
+        if num_agents_to_show:
+            agent_metrics_list = agent_metrics_list[:num_agents_to_show]
+        
+        # Calculate trends
+        history = list(self.metrics_history)
+        health_trend = "stable"
+        if len(history) >= 2:
+            prev_health = history[-2].get("overall_health_score", 0)
+            curr_health = history[-1].get("overall_health_score", 0)
+            if curr_health > prev_health + 2:
+                health_trend = "improving"
+            elif curr_health < prev_health - 2:
+                health_trend = "degrading"
+        
+        return {
+            "dashboard": {
+                "timestamp": latest_swarm.get("timestamp"),
+                "health_trend": health_trend,
+                "summary": {
+                    "total_agents": latest_swarm.get("total_agents"),
+                    "active_agents": latest_swarm.get("active_agents"),
+                    "healthy_agents": latest_swarm.get("healthy_agents"),
+                    "overall_health_score": latest_swarm.get("overall_health_score"),
+                    "total_tasks": latest_swarm.get("total_tasks"),
+                    "completed_tasks": latest_swarm.get("completed_tasks"),
+                    "failed_tasks": latest_swarm.get("failed_tasks"),
+                    "swarm_error_rate": latest_swarm.get("swarm_error_rate"),
+                    "swarm_cpu_avg": latest_swarm.get("swarm_cpu_avg"),
+                    "swarm_memory_avg": latest_swarm.get("swarm_memory_avg"),
+                    "throughput_tasks_per_minute": latest_swarm.get("throughput_tasks_per_minute")
+                },
+                "agents": [asdict(m) for m in agent_metrics_list],
+                "alerts": self._generate_alerts(latest_swarm, agent_metrics_list)
+            }
+        }
+    
+    def _generate_alerts(self, swarm_metrics: Dict, agent_list: List[AgentMetrics]) -> List[str]:
+        """Generate alerts based on thresholds"""
+        alerts = []
+        
+        if swarm_metrics.get("overall_health_score", 100) < 50:
+            alerts.append("CRITICAL: Overall swarm health below 50%")
+        
+        if swarm_metrics.get("swarm_error_rate", 0) > 0.1:
+            alerts.append("WARNING: Swarm error rate exceeds 10%")
+        
+        if swarm_metrics.get("swarm_cpu_avg", 0) > 80:
+            alerts.append("WARNING: Swarm average CPU usage above 80%")
+        
+        if swarm_metrics.get("swarm_memory_avg", 0) > 80:
+            alerts.append("WARNING: Swarm average memory usage above 80%")
+        
+        degraded_count = sum(1 for m in agent_list if m.status == "degraded")
+        if degraded_count > len(agent_list) * 0.2:
+            alerts.append(f"WARNING: {degraded_count} agents in degraded state")
+        
+        return alerts
+    
+    def get_metrics_history(self, minutes: int = 5) -> List[Dict]:
+        """Get metrics history for the specified time period"""
+        history = list(self.metrics_history)
+        
+        # Filter based on update interval
+        num_samples = max(1, int(minutes * 60 / self.update_interval))
+        step = max(1, len(history) // num_samples)
+        
+        return history[::step] if step > 1 else history
+
+
+def print_dashboard(monitor: SwarmMonitor, color: bool = False):
+    """Print a formatted dashboard"""
+    dashboard_data = monitor.get_dashboard_data(num_agents_to_show=5)
+    dashboard = dashboard_data.get("dashboard", {})
+    
+    # ANSI color codes
+    colors = {
+        "reset": "\033[0m",
+        "bold": "\033[1m",
+        "green": "\033[92m",
+        "yellow": "\033[93m",
+        "red": "\033[91m",
+        "cyan": "\033[96m"
+    } if color else {k: "" for k in ["reset", "bold", "green", "yellow", "red", "cyan"]}
+    
+    print(f"\n{colors['bold']}{'='*80}")
+    print(f"SWARM HEALTH DASHBOARD - {dashboard.get('timestamp', 'N/A')}")
+    print(f"{'='*80}{colors['reset']}\n")
+    
+    summary = dashboard.get("summary", {})
+    health = summary.get("overall_health_score", 0)
+    health_color = colors["green"] if health >= 75 else colors["yellow"] if health >= 50 else colors["red"]
+    
+    print(f"{colors['bold']}SUMMARY{colors['reset']}")
+    print(f"  Health Score:        {health_color}{health}/100{colors['reset']}")
+    print(f"  Health Trend:        {dashboard.get('health_trend', 'N/A')}")
+    print(f"  Active Agents:       {summary.get('active_agents', 0)}/{summary.get('total_agents', 0)}")
+    print(f"  Healthy Agents:      {summary.get('healthy_agents', 0)}/{summary.get('total_agents', 0)}")
+    print(f"  Error Rate:          {summary.get('swarm_error_rate', 0):.2%}")
+    print(f"  CPU Avg:             {summary.get('swarm_cpu_avg', 0):.1f}%")
+    print(f"  Memory Avg:
