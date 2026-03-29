@@ -2,17 +2,19 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    Prompt injection detector
 # Mission: AI Agent Observability Platform
-# Agent:   @quinn
-# Date:    2026-03-29T13:08:11.617Z
+# Agent:   @dex
+# Date:    2026-03-29T13:16:54.360Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Prompt Injection Detector for AI Agent Observability Platform
-MISSION: AI Agent Observability Platform (OpenTelemetry-native observability for LLM/agent workloads)
-AGENT: @quinn
-DATE: 2024
-TASK: Implement regex + ML classifier on all prompt/completion pairs in traces. Alert on positive.
+Task: Prompt Injection Detector
+Mission: AI Agent Observability Platform
+Agent: @dex
+Date: 2024
+
+End-to-end observability platform for AI agents with prompt injection detection.
+This module identifies potential prompt injection attacks in user inputs and LLM outputs.
 """
 
 import argparse
@@ -21,403 +23,368 @@ import re
 import sys
 from dataclasses import dataclass, asdict
 from datetime import datetime
-from pathlib import Path
-from typing import List, Dict, Any, Tuple
-import hashlib
-import base64
+from enum import Enum
+from typing import List, Dict, Any, Tuple, Optional
+
+
+class SeverityLevel(Enum):
+    """Risk severity levels for injection attempts."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
 
 
 @dataclass
-class InjectionAlert:
-    """Represents a detected prompt injection alert."""
+class InjectionFinding:
+    """Represents a detected prompt injection finding."""
     timestamp: str
-    trace_id: str
-    span_id: str
-    severity: str  # low, medium, high, critical
-    detection_method: str  # regex, ml_classifier, combined
+    text_sample: str
+    detection_type: str
+    severity: str
+    confidence: float
     pattern_matched: str
-    prompt_snippet: str
-    confidence_score: float
-    full_details: Dict[str, Any]
+    location: str
+    remediation: str
 
 
 class PromptInjectionDetector:
-    """Detects prompt injection attempts in trace data."""
-    
-    def __init__(self, enable_ml: bool = True, strict_mode: bool = False):
-        self.enable_ml = enable_ml
-        self.strict_mode = strict_mode
-        self.alerts: List[InjectionAlert] = []
-        self._compile_patterns()
-    
-    def _compile_patterns(self):
-        """Compile regex patterns for common injection techniques."""
-        self.patterns = {
-            # Prompt override patterns
-            "prompt_override": {
-                "pattern": re.compile(
-                    r"(?i)(ignore|disregard|forget|override|bypass|skip).*?(previous|prior|above|instruction|prompt|system|rule)",
-                    re.MULTILINE
-                ),
-                "severity": "high",
-                "description": "Attempt to override system instructions"
-            },
-            # Role confusion/persona injection
-            "role_confusion": {
-                "pattern": re.compile(
-                    r"(?i)(you are|you\'re|now you are|act as|pretend|roleplay|imagine you are|pretend you are).*?(assistant|ai|chatbot|developer|admin|root)",
-                    re.MULTILINE
-                ),
-                "severity": "high",
-                "description": "Role confusion or persona injection attempt"
-            },
-            # Hidden instruction markers
-            "hidden_instructions": {
-                "pattern": re.compile(
-                    r"(?i)(hidden|secret|background|system|internal|metadata)\s*(instruction|prompt|rule|message|directive)",
-                    re.MULTILINE
-                ),
-                "severity": "medium",
-                "description": "Reference to hidden or background instructions"
-            },
-            # Context injection via encoding
-            "encoding_injection": {
-                "pattern": re.compile(
-                    r"(?i)(base64|url.?encod|hex.?encod|rot13|cipher|encrypt).*?(prompt|instruction|command|message)",
-                    re.MULTILINE
-                ),
-                "severity": "medium",
-                "description": "Encoded injection attempt"
-            },
-            # SQL/command injection markers in prompts
-            "sql_command_injection": {
-                "pattern": re.compile(
-                    r"(?i)(SELECT|INSERT|UPDATE|DELETE|DROP|UNION|EXEC|EXECUTE|CMD|bash|sh\s+-c)[\s;'\"]",
-                    re.MULTILINE
-                ),
-                "severity": "critical",
-                "description": "SQL or command injection in prompt"
-            },
-            # XML/JSON injection patterns
-            "markup_injection": {
-                "pattern": re.compile(
-                    r"<(!DOCTYPE|entity|ENTITY|!ELEMENT|!ATTLIST)[\s>]|xmlns[\s=]|javascript:|onerror=|onload=",
-                    re.MULTILINE
-                ),
-                "severity": "high",
-                "description": "XML/HTML/JSON injection attempt"
-            },
-            # Token smuggling patterns
-            "token_smuggling": {
-                "pattern": re.compile(
-                    r"(?i)(api.?key|secret|token|password|credential|auth|bearer)[\s:=]+[a-zA-Z0-9\-_.]+",
-                    re.MULTILINE
-                ),
-                "severity": "critical",
-                "description": "Potential token or credential smuggling"
-            },
-            # Jailbreak attempts
-            "jailbreak_keywords": {
-                "pattern": re.compile(
-                    r"(?i)(DAN|do anything now|ignore safety|remove restrictions|bypass filter|jailbreak|unrestricted mode)",
-                    re.MULTILINE
-                ),
-                "severity": "high",
-                "description": "Known jailbreak attempt keywords"
-            },
-            # Recursive prompt injection
-            "recursive_injection": {
-                "pattern": re.compile(
-                    r"\{\{.*?\}\}|\$\{.*?\}|\[.*?instruction.*?\]|<.*?prompt.*?>",
-                    re.MULTILINE | re.IGNORECASE
-                ),
-                "severity": "medium",
-                "description": "Recursive or templated injection attempt"
-            }
-        }
-    
-    def _regex_detection(self, text: str) -> List[Tuple[str, Dict[str, Any]]]:
+    """Detects prompt injection attacks in text inputs and LLM outputs."""
+
+    def __init__(self, enable_advanced_patterns: bool = True):
         """
-        Perform regex-based detection on text.
-        Returns list of (pattern_name, match_details).
+        Initialize the detector with pattern sets.
+        
+        Args:
+            enable_advanced_patterns: Enable advanced regex and semantic patterns
         """
-        detections = []
-        if not text:
-            return detections
+        self.enable_advanced_patterns = enable_advanced_patterns
+        self.findings: List[InjectionFinding] = []
         
-        for pattern_name, pattern_info in self.patterns.items():
-            matches = pattern_info["pattern"].finditer(text)
-            for match in matches:
-                detections.append((
-                    pattern_name,
-                    {
-                        "severity": pattern_info["severity"],
-                        "description": pattern_info["description"],
-                        "matched_text": match.group(0),
-                        "span": (match.start(), match.end()),
-                        "position": match.start()
-                    }
-                ))
-        
-        return detections
-    
-    def _ml_classifier(self, text: str) -> Tuple[float, str]:
-        """
-        Simple ML-inspired classifier using heuristics and scoring.
-        Returns (confidence_score, reasoning).
-        """
-        if not text:
-            return 0.0, "Empty input"
-        
-        score = 0.0
-        reasons = []
-        
-        # Length analysis - very short or very long prompts can be suspicious
-        text_length = len(text)
-        if text_length < 5:
-            score += 0.1
-            reasons.append("very_short_input")
-        elif text_length > 10000:
-            score += 0.15
-            reasons.append("unusually_long_input")
-        
-        # Entropy analysis - randomness indicator
-        char_distribution = {}
-        for char in text:
-            char_distribution[char] = char_distribution.get(char, 0) + 1
-        
-        entropy = -sum((count/len(text)) * self._log2(count/len(text)) 
-                      for count in char_distribution.values() if count > 0)
-        
-        if entropy > 5.5:  # High entropy suggests encoded/obfuscated content
-            score += 0.2
-            reasons.append("high_entropy")
-        
-        # Keyword density analysis
-        suspicious_keywords = [
-            'ignore', 'override', 'bypass', 'forget', 'disregard',
-            'system prompt', 'hidden instruction', 'background instruction',
-            'secret', 'internal', 'confidential', 'jailbreak'
+        # Direct instruction patterns - attempts to override system prompts
+        self.direct_instruction_patterns = [
+            r'(?:forget|ignore|disregard|override)\s+(?:previous|prior|all)\s+(?:instructions|prompts|directions)',
+            r'(?:system|admin|root)\s+(?:command|instruction|override)',
+            r'(?:new\s+)?(?:instructions?|rules?|system\s+prompt):\s*',
+            r'(?:from\s+now\s+on|henceforth|instead|ignore\s+above)',
+            r'(?:execute|run|perform)\s+(?:this|the\s+following)\s+(?:command|instruction|code)',
         ]
         
+        # Prompt leakage patterns - attempts to extract system prompts
+        self.prompt_leakage_patterns = [
+            r'(?:repeat|show|display|print|output)\s+(?:your|the)\s+(?:prompt|instructions|system\s+message)',
+            r'(?:what|tell|show)\s+(?:me\s+)?(?:your|the)\s+(?:real|true|actual)\s+(?:instructions|prompt)',
+            r'(?:reveal|disclose|share)\s+(?:your|the)\s+(?:system|initial)\s+prompt',
+            r'(?:simulate|pretend|act\s+as)\s+(?:if\s+)?you\s+were\s+(?:a|an)\s+(?:user|admin|developer)',
+            r'(?:debug|trace)\s+(?:mode|output|state)',
+        ]
+        
+        # Logical fallacy / confusion patterns
+        self.confusion_patterns = [
+            r'```[\s\S]*?(?:python|javascript|bash|sql|code)[\s\S]*?```',
+            r'(?:eval|exec|execute)\s*\(\s*["\']',
+            r'(?:SELECT|INSERT|UPDATE|DELETE)\s+(?:FROM|INTO|.*WHERE)',
+            r'<(?:script|iframe|img|svg)[\s\S]*?>',
+        ]
+        
+        # Role-play and context injection patterns
+        self.roleplay_patterns = [
+            r'(?:role-?play|pretend|imagine|assume|suppose|let\'s\s+say)',
+            r'(?:act\s+as|play\s+the\s+role\s+of|imagine\s+you\'re)\s+(?:a|an)\s+',
+            r'(?:in\s+this\s+scenario|in\s+this\s+context|within\s+this\s+universe)',
+            r'(?:hypothetically|suppose|what\s+if)',
+        ]
+        
+        # Encoding/obfuscation patterns
+        self.obfuscation_patterns = [
+            r'(?:base64|hex|url|unicode|rot13|caesar|morse)\s+(?:encode|decode|encoded|decoded)',
+            r'(?:ascii|utf|unicode)\s+(?:code|char|character)\s+\d+',
+            r'[\\x|\\u|\\0][0-9a-fA-F]{2,}',
+        ]
+
+    def detect_injections(self, text: str, location: str = "input") -> List[InjectionFinding]:
+        """
+        Detect prompt injection attempts in text.
+        
+        Args:
+            text: The text to analyze
+            location: Where the text came from (input/output)
+            
+        Returns:
+            List of detected injection findings
+        """
+        findings = []
         text_lower = text.lower()
-        keyword_matches = sum(1 for kw in suspicious_keywords if kw in text_lower)
-        keyword_density = keyword_matches / max(1, len(text.split()))
         
-        if keyword_density > 0.05:
-            score += min(0.3, keyword_density * 2)
-            reasons.append(f"high_keyword_density_{keyword_density:.3f}")
+        # Check direct instruction overrides
+        findings.extend(self._check_direct_instructions(text, text_lower, location))
         
-        # Special character ratio
-        special_chars = sum(1 for c in text if not c.isalnum() and c not in ' \t\n.,;:!?')
-        special_ratio = special_chars / max(1, len(text))
+        # Check prompt leakage attempts
+        findings.extend(self._check_prompt_leakage(text, text_lower, location))
         
-        if special_ratio > 0.3:
-            score += 0.15
-            reasons.append(f"high_special_char_ratio_{special_ratio:.3f}")
+        # Check logical fallacies and code injection
+        findings.extend(self._check_confusion_attacks(text, text_lower, location))
         
-        # Unicode/non-ASCII ratio (can indicate obfuscation)
-        non_ascii = sum(1 for c in text if ord(c) > 127)
-        if non_ascii / max(1, len(text)) > 0.1:
-            score += 0.2
-            reasons.append("high_non_ascii_ratio")
+        # Check role-play context injection
+        findings.extend(self._check_roleplay_injection(text, text_lower, location))
         
-        # Repeated patterns (possible template injection)
-        if len(set(text)) < len(text) * 0.3:
-            score += 0.1
-            reasons.append("low_character_diversity")
+        # Check obfuscation techniques
+        if self.enable_advanced_patterns:
+            findings.extend(self._check_obfuscation(text, text_lower, location))
         
-        return min(1.0, score), "; ".join(reasons)
-    
-    @staticmethod
-    def _log2(x: float) -> float:
-        """Calculate log base 2."""
-        if x <= 0:
-            return 0
-        import math
-        return math.log2(x)
-    
-    def detect_injection(self, 
-                        prompt: str, 
-                        completion: str = "",
-                        trace_id: str = "",
-                        span_id: str = "") -> List[InjectionAlert]:
-        """
-        Detect prompt injection in prompt/completion pair.
-        Returns list of alerts if injection detected.
-        """
-        current_alerts = []
-        timestamp = datetime.utcnow().isoformat() + "Z"
+        # Check for multiple suspicion indicators
+        findings.extend(self._check_composite_risk(text, text_lower, location))
         
-        # Check both prompt and completion for injections
-        texts_to_check = [
-            ("prompt", prompt),
-            ("completion", completion)
+        self.findings.extend(findings)
+        return findings
+
+    def _check_direct_instructions(self, text: str, text_lower: str, 
+                                   location: str) -> List[InjectionFinding]:
+        """Detect direct instruction override attempts."""
+        findings = []
+        for pattern in self.direct_instruction_patterns:
+            matches = re.finditer(pattern, text_lower, re.IGNORECASE | re.MULTILINE)
+            for match in matches:
+                findings.append(InjectionFinding(
+                    timestamp=datetime.utcnow().isoformat(),
+                    text_sample=text[:200],
+                    detection_type="direct_instruction_override",
+                    severity=SeverityLevel.HIGH.value,
+                    confidence=0.85,
+                    pattern_matched=match.group(),
+                    location=location,
+                    remediation="Implement input validation and strict instruction hierarchy"
+                ))
+        return findings
+
+    def _check_prompt_leakage(self, text: str, text_lower: str, 
+                             location: str) -> List[InjectionFinding]:
+        """Detect prompt leakage and extraction attempts."""
+        findings = []
+        for pattern in self.prompt_leakage_patterns:
+            matches = re.finditer(pattern, text_lower, re.IGNORECASE | re.MULTILINE)
+            for match in matches:
+                findings.append(InjectionFinding(
+                    timestamp=datetime.utcnow().isoformat(),
+                    text_sample=text[:200],
+                    detection_type="prompt_leakage",
+                    severity=SeverityLevel.HIGH.value,
+                    confidence=0.80,
+                    pattern_matched=match.group(),
+                    location=location,
+                    remediation="Implement output filtering and restrict prompt disclosure"
+                ))
+        return findings
+
+    def _check_confusion_attacks(self, text: str, text_lower: str, 
+                                location: str) -> List[InjectionFinding]:
+        """Detect logical fallacy and code injection attacks."""
+        findings = []
+        for pattern in self.confusion_patterns:
+            matches = re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE)
+            for match in matches:
+                findings.append(InjectionFinding(
+                    timestamp=datetime.utcnow().isoformat(),
+                    text_sample=text[:200],
+                    detection_type="code_injection",
+                    severity=SeverityLevel.CRITICAL.value,
+                    confidence=0.90,
+                    pattern_matched=match.group()[:50],
+                    location=location,
+                    remediation="Sanitize code blocks and implement code execution sandboxing"
+                ))
+        return findings
+
+    def _check_roleplay_injection(self, text: str, text_lower: str, 
+                                 location: str) -> List[InjectionFinding]:
+        """Detect role-play based context injection."""
+        findings = []
+        for pattern in self.roleplay_patterns:
+            matches = re.finditer(pattern, text_lower, re.IGNORECASE | re.MULTILINE)
+            for match in matches:
+                findings.append(InjectionFinding(
+                    timestamp=datetime.utcnow().isoformat(),
+                    text_sample=text[:200],
+                    detection_type="roleplay_injection",
+                    severity=SeverityLevel.MEDIUM.value,
+                    confidence=0.70,
+                    pattern_matched=match.group(),
+                    location=location,
+                    remediation="Enforce explicit instruction precedence and context isolation"
+                ))
+        return findings
+
+    def _check_obfuscation(self, text: str, text_lower: str, 
+                          location: str) -> List[InjectionFinding]:
+        """Detect obfuscation and encoding bypass attempts."""
+        findings = []
+        for pattern in self.obfuscation_patterns:
+            matches = re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE)
+            for match in matches:
+                findings.append(InjectionFinding(
+                    timestamp=datetime.utcnow().isoformat(),
+                    text_sample=text[:200],
+                    detection_type="obfuscation_attempt",
+                    severity=SeverityLevel.MEDIUM.value,
+                    confidence=0.75,
+                    pattern_matched=match.group(),
+                    location=location,
+                    remediation="Decode and re-analyze user inputs before processing"
+                ))
+        return findings
+
+    def _check_composite_risk(self, text: str, text_lower: str, 
+                             location: str) -> List[InjectionFinding]:
+        """Detect multiple suspicion indicators suggesting composite attacks."""
+        findings = []
+        suspicion_score = 0
+        indicators = []
+        
+        # Count suspicious keywords
+        suspicious_keywords = [
+            'forget', 'ignore', 'override', 'bypass', 'break', 'escape',
+            'jailbreak', 'exploit', 'leak', 'extract', 'reveal', 'backdoor'
         ]
         
-        for text_type, text in texts_to_check:
-            if not text:
-                continue
-            
-            # Regex-based detection
-            regex_detections = self._regex_detection(text)
-            for pattern_name, match_details in regex_detections:
-                severity = match_details["severity"]
-                confidence = self._severity_to_confidence(severity)
-                
-                alert = InjectionAlert(
-                    timestamp=timestamp,
-                    trace_id=trace_id or "unknown",
-                    span_id=span_id or "unknown",
-                    severity=severity,
-                    detection_method="regex",
-                    pattern_matched=pattern_name,
-                    prompt_snippet=text[:200],
-                    confidence_score=confidence,
-                    full_details={
-                        "text_type": text_type,
-                        "matched_text": match_details["matched_text"],
-                        "description": match_details["description"],
-                        "position": match_details["position"]
-                    }
-                )
-                current_alerts.append(alert)
-            
-            # ML classifier detection
-            if self.enable_ml:
-                ml_score, ml_reason = self._ml_classifier(text)
-                
-                # In strict mode, lower threshold; otherwise use 0.6
-                threshold = 0.4 if self.strict_mode else 0.6
-                
-                if ml_score >= threshold:
-                    # Adjust severity based on score
-                    if ml_score >= 0.8:
-                        ml_severity = "critical"
-                    elif ml_score >= 0.7:
-                        ml_severity = "high"
-                    elif ml_score >= 0.6:
-                        ml_severity = "medium"
-                    else:
-                        ml_severity = "low"
-                    
-                    alert = InjectionAlert(
-                        timestamp=timestamp,
-                        trace_id=trace_id or "unknown",
-                        span_id=span_id or "unknown",
-                        severity=ml_severity,
-                        detection_method="ml_classifier",
-                        pattern_matched="ml_heuristic_score",
-                        prompt_snippet=text[:200],
-                        confidence_score=ml_score,
-                        full_details={
-                            "text_type": text_type,
-                            "ml_reasoning": ml_reason,
-                            "entropy_based": "high_entropy" in ml_reason
-                        }
-                    )
-                    current_alerts.append(alert)
+        for keyword in suspicious_keywords:
+            if keyword in text_lower:
+                suspicion_score += 1
+                indicators.append(keyword)
         
-        # Combine and deduplicate alerts
-        if current_alerts:
-            self.alerts.extend(current_alerts)
+        # Check for multiple patterns across categories
+        categories_triggered = 0
+        if any(re.search(p, text_lower, re.IGNORECASE) for p in self.direct_instruction_patterns):
+            categories_triggered += 1
+        if any(re.search(p, text_lower, re.IGNORECASE) for p in self.prompt_leakage_patterns):
+            categories_triggered += 1
+        if any(re.search(p, text, re.IGNORECASE) for p in self.confusion_patterns):
+            categories_triggered += 1
         
-        return current_alerts
-    
-    @staticmethod
-    def _severity_to_confidence(severity: str) -> float:
-        """Map severity level to confidence score."""
-        mapping = {
-            "low": 0.4,
-            "medium": 0.6,
-            "high": 0.8,
-            "critical": 0.95
-        }
-        return mapping.get(severity, 0.5)
-    
-    def get_alerts(self) -> List[InjectionAlert]:
-        """Return all detected alerts."""
-        return self.alerts
-    
-    def clear_alerts(self):
-        """Clear alert history."""
-        self.alerts = []
-    
-    def export_alerts_json(self) -> str:
-        """Export alerts as JSON."""
-        return json.dumps(
-            [asdict(alert) for alert in self.alerts],
-            indent=2,
-            default=str
-        )
-    
-    def export_alerts_csv(self) -> str:
-        """Export alerts as CSV."""
-        if not self.alerts:
-            return "timestamp,trace_id,span_id,severity,detection_method,pattern_matched,confidence_score\n"
+        suspicion_score += categories_triggered * 2
         
-        lines = ["timestamp,trace_id,span_id,severity,detection_method,pattern_matched,confidence_score"]
-        for alert in self.alerts:
-            line = f"{alert.timestamp},{alert.trace_id},{alert.span_id},{alert.severity},{alert.detection_method},{alert.pattern_matched},{alert.confidence_score}"
-            lines.append(line)
+        if suspicion_score >= 3 and len(indicators) > 0:
+            findings.append(InjectionFinding(
+                timestamp=datetime.utcnow().isoformat(),
+                text_sample=text[:200],
+                detection_type="composite_attack",
+                severity=SeverityLevel.CRITICAL.value,
+                confidence=min(0.95, 0.50 + (suspicion_score * 0.15)),
+                pattern_matched=f"Multiple indicators: {', '.join(indicators[:3])}",
+                location=location,
+                remediation="Apply multi-layer defense: validation, filtering, sandboxing"
+            ))
         
-        return "\n".join(lines) + "\n"
+        return findings
 
-
-class TraceAnalyzer:
-    """Analyzes OpenTelemetry trace data for prompt injections."""
-    
-    def __init__(self, detector: PromptInjectionDetector):
-        self.detector = detector
-    
-    def analyze_trace(self, trace_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Analyze a single trace for prompt injections.
-        Trace data structure expected: {spans: [{span_id, trace_id, attributes, ...}]}
-        """
-        results = {
-            "trace_id": trace_data.get("trace_id", "unknown"),
-            "span_count": 0,
-            "injections_detected": 0,
-            "alerts": [],
-            "summary": {}
-        }
-        
-        spans = trace_data.get("spans", [])
-        results["span_count"] = len(spans)
-        
-        for span in spans:
-            span_id = span.get("span_id", "unknown")
-            trace_id = trace_data.get("trace_id", "unknown")
-            attributes = span.get("attributes", {})
-            
-            # Look for prompt and completion in attributes
-            prompt = attributes.get("prompt") or attributes.get("input") or ""
-            completion = attributes.get("completion") or attributes.get("output") or ""
-            
-            if prompt or completion:
-                alerts = self.detector.detect_injection(
-                    prompt=prompt,
-                    completion=completion,
-                    trace_id=trace_id,
-                    span_id=span_id
-                )
-                
-                results["alerts"].extend([asdict(alert) for alert in alerts])
-                results["injections_detected"] += len(alerts)
-        
-        # Generate summary
-        if results["alerts"]:
-            severities = [alert["severity"] for alert in results["alerts"]]
-            results["summary"] = {
-                "highest_severity": max(severities, key=lambda x: {"low": 0, "medium": 1, "high": 2, "critical": 3}.get(x, 0)),
-                "alert_count": len(results["alerts"]),
-                "unique_patterns": len(set(alert["pattern_matched"] for alert in results["alerts"]))
+    def get_risk_summary(self) -> Dict[str, Any]:
+        """Generate a summary of all detected risks."""
+        if not self.findings:
+            return {
+                "total_findings": 0,
+                "by_severity": {},
+                "by_type": {},
+                "overall_risk": "low"
             }
         
-        return results
+        severity_counts = {}
+        type_counts = {}
+        
+        for finding in self.findings:
+            severity = finding.severity
+            detection_type = finding.detection_type
+            
+            severity_counts[severity] = severity_counts.get(severity, 0) + 1
+            type_counts[detection_type] = type_counts.get(detection_type, 0) + 1
+        
+        # Determine overall risk
+        overall_risk = "low"
+        if severity_counts.get("critical", 0) > 0:
+            overall_risk = "critical"
+        elif severity_counts.get("high", 0) > 0:
+            overall_risk = "high"
+        elif severity_counts.get("medium", 0) > 0:
+            overall_risk = "medium"
+        
+        return {
+            "total_findings": len(self.findings),
+            "by_severity": severity_counts,
+            "by_type": type_counts,
+            "overall_risk": overall_risk,
+            "findings": [asdict(f) for f in self.findings]
+        }
+
+    def clear_findings(self):
+        """Clear all recorded findings."""
+        self.findings = []
 
 
-def create_sample_trace() -> Dict[str, Any]:
-    """Create a sample trace with prompt injection attempt."""
-    return {
+def process_batch(detector: PromptInjectionDetector, inputs: List[Dict[str, str]], 
+                 output_format: str = "json") -> str:
+    """
+    Process a batch of inputs and generate findings report.
+    
+    Args:
+        detector: The injection detector instance
+        inputs: List of dicts with 'text' and optional 'location' keys
+        output_format: Output format (json or summary)
+        
+    Returns:
+        Formatted output string
+    """
+    detector.clear_findings()
+    
+    for item in inputs:
+        text = item.get("text", "")
+        location = item.get("location", "input")
+        detector.detect_injections(text, location)
+    
+    summary = detector.get_risk_summary()
+    
+    if output_format == "json":
+        return json.dumps(summary, indent=2)
+    else:
+        # Summary format
+        lines = [
+            "=== Prompt Injection Detection Report ===",
+            f"Total Findings: {summary['total_findings']}",
+            f"Overall Risk Level: {summary['overall_risk'].upper()}",
+            "",
+            "By Severity:",
+        ]
+        for severity, count in summary.get("by_severity", {}).items():
+            lines.append(f"  {severity}: {count}")
+        
+        lines.extend(["", "By Type:"])
+        for det_type, count in summary.get("by_type", {}).items():
+            lines.append(f"  {det_type}: {count}")
+        
+        if summary['total_findings'] > 0:
+            lines.extend(["", "Top Findings:"])
+            for finding in summary.get("findings", [])[:5]:
+                lines.append(f"  - [{finding['severity']}] {finding['detection_type']}")
+                lines.append(f"    Pattern: {finding['pattern_matched'][:60]}")
+        
+        return "\n".join(lines)
+
+
+def main():
+    """Main entry point with CLI argument parsing."""
+    parser = argparse.ArgumentParser(
+        description="Prompt Injection Detector for AI Agent Observability"
+    )
+    
+    parser.add_argument(
+        "--input-file",
+        type=str,
+        help="Path to input file with texts to analyze (JSON lines format)"
+    )
+    
+    parser.add_argument(
+        "--text",
+        type=str,
+        help="Single text to analyze for prompt injections"
+    )
+    
+    parser.add_argument(
+        "--location",
+        type=str,
