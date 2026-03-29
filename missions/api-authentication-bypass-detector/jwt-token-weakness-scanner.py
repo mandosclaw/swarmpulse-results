@@ -207,3 +207,175 @@ class JWTWeaknessScanner:
 
         parts = token.split('.')
         if len(parts) == 3:
+            message = f"{parts[0]}.{parts[1]}"
+            alg = header.get('alg', 'unknown')
+
+            if alg == 'none':
+                issues.append({
+                    'type': 'CRITICAL',
+                    'vulnerability': 'None Algorithm with Signature',
+                    'description': 'Token claims "none" algorithm but includes a signature',
+                    'severity': 'CRITICAL',
+                    'remediation': 'Enforce algorithm validation on the server'
+                })
+
+        return issues
+
+    def scan(self, token: str) -> Dict[str, Any]:
+        """
+        Scan a JWT token for vulnerabilities.
+
+        Args:
+            token: JWT token string
+
+        Returns:
+            Dictionary containing scan results
+        """
+        self.vulnerabilities = []
+        self.warnings = []
+        results = {
+            'token': token[:50] + '...' if len(token) > 50 else token,
+            'vulnerabilities': [],
+            'warnings': [],
+            'critical_count': 0,
+            'high_count': 0,
+            'medium_count': 0,
+            'low_count': 0
+        }
+
+        try:
+            header, payload, signature = self.parse_token(token)
+            self._log(f"Token parsed successfully")
+            self._log(f"Header: {header}")
+            self._log(f"Payload: {payload}")
+
+            # Run all checks
+            all_issues = []
+            all_issues.extend(self.check_algorithm_weakness(header))
+            all_issues.extend(self.check_claim_weaknesses(payload))
+            all_issues.extend(self.check_payload_weaknesses(payload))
+            all_issues.extend(self.check_signature_weaknesses(token, header, signature))
+
+            # Categorize issues
+            for issue in all_issues:
+                severity = issue.get('severity', 'LOW')
+                if severity == 'CRITICAL':
+                    results['critical_count'] += 1
+                elif severity == 'HIGH':
+                    results['high_count'] += 1
+                elif severity == 'MEDIUM':
+                    results['medium_count'] += 1
+                else:
+                    results['low_count'] += 1
+
+                if issue['type'] == 'WARNING' or issue['type'] == 'INFO':
+                    results['warnings'].append(issue)
+                    self.warnings.append(issue)
+                else:
+                    results['vulnerabilities'].append(issue)
+                    self.vulnerabilities.append(issue)
+
+        except Exception as e:
+            results['error'] = str(e)
+            self._log(f"Scan error: {e}")
+
+        return results
+
+    def generate_report(self, scan_results: Dict[str, Any]) -> str:
+        """
+        Generate a human-readable report from scan results.
+
+        Args:
+            scan_results: Results from scan()
+
+        Returns:
+            Formatted report string
+        """
+        report = []
+        report.append("=" * 70)
+        report.append("JWT TOKEN WEAKNESS SCANNER - SECURITY REPORT")
+        report.append("=" * 70)
+        report.append("")
+
+        if 'error' in scan_results:
+            report.append(f"ERROR: {scan_results['error']}")
+            return "\n".join(report)
+
+        report.append(f"Token: {scan_results['token']}")
+        report.append("")
+
+        report.append("VULNERABILITY SUMMARY")
+        report.append("-" * 70)
+        report.append(f"Critical:  {scan_results['critical_count']}")
+        report.append(f"High:      {scan_results['high_count']}")
+        report.append(f"Medium:    {scan_results['medium_count']}")
+        report.append(f"Low:       {scan_results['low_count']}")
+        report.append("")
+
+        if scan_results['vulnerabilities']:
+            report.append("VULNERABILITIES FOUND")
+            report.append("-" * 70)
+            for idx, vuln in enumerate(scan_results['vulnerabilities'], 1):
+                report.append(f"\n[{idx}] {vuln['vulnerability']}")
+                report.append(f"    Severity: {vuln['severity']}")
+                report.append(f"    Description: {vuln['description']}")
+                report.append(f"    Remediation: {vuln['remediation']}")
+            report.append("")
+
+        if scan_results['warnings']:
+            report.append("WARNINGS & INFO")
+            report.append("-" * 70)
+            for idx, warn in enumerate(scan_results['warnings'], 1):
+                report.append(f"\n[{idx}] {warn['vulnerability']}")
+                report.append(f"    Severity: {warn['severity']}")
+                report.append(f"    Description: {warn['description']}")
+                report.append(f"    Remediation: {warn['remediation']}")
+            report.append("")
+
+        report.append("=" * 70)
+        return "\n".join(report)
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description='JWT Token Weakness Scanner - Detect Authentication Bypass Vulnerabilities'
+    )
+    parser.add_argument('token', nargs='?', help='JWT token to scan')
+    parser.add_argument('-f', '--file', help='Read token from file')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
+    parser.add_argument('--demo', action='store_true', help='Run with demo tokens')
+
+    args = parser.parse_args()
+
+    scanner = JWTWeaknessScanner(verbose=args.verbose)
+
+    tokens_to_scan = []
+
+    if args.demo:
+        # Create demo tokens
+        tokens_to_scan = [
+            # Token with "none" algorithm
+            "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.",
+            # Token with admin claim but no expiration
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+            # Token with sensitive data
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIiwicGFzc3dvcmQiOiJzZWNyZXQxMjMiLCJhcGlfa2V5IjoieHl6YWJjIn0.TJVA95OrM7E2cBab30RMHrHDcEfxjoYZgeFONFh7HgQ",
+        ]
+    elif args.file:
+        try:
+            with open(args.file, 'r') as f:
+                tokens_to_scan = [line.strip() for line in f.readlines() if line.strip()]
+        except Exception as e:
+            print(f"Error reading file: {e}")
+            sys.exit(1)
+    elif args.token:
+        tokens_to_scan = [args.token]
+    else:
+        parser.print_help()
+        sys.exit(1)
+
+    # Scan all tokens
+    for token in tokens_to_scan:
+        results = scanner.scan(token)
+        report = scanner.generate_report(results)
