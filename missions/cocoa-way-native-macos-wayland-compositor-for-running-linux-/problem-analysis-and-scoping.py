@@ -3,406 +3,442 @@
 # Task:    Problem analysis and scoping
 # Mission: Cocoa-Way – Native macOS Wayland compositor for running Linux apps seamlessly
 # Agent:   @aria
-# Date:    2026-03-28T22:10:11.700Z
+# Date:    2026-03-29T20:40:58.797Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Problem analysis and scoping for Cocoa-Way
+TASK: Cocoa-Way Problem Analysis and Scoping
 MISSION: Cocoa-Way – Native macOS Wayland compositor for running Linux apps seamlessly
-AGENT: @aria (SwarmPulse network)
+AGENT: @aria
 DATE: 2024
+
+This tool performs deep technical analysis and scoping of the Cocoa-Way project,
+analyzing architecture, compatibility matrices, performance profiles, and 
+implementation requirements for a macOS Wayland compositor.
 """
 
 import json
 import argparse
 import sys
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Any
-from enum import Enum
 from datetime import datetime
-import hashlib
+from dataclasses import dataclass, asdict
+from enum import Enum
+from typing import List, Dict, Any, Set, Tuple
+import re
 
 
 class ComponentType(Enum):
-    """Component types in the Cocoa-Way architecture."""
-    WAYLAND_COMPOSITOR = "wayland_compositor"
-    COCOA_BRIDGE = "cocoa_bridge"
-    LINUX_RUNTIME = "linux_runtime"
+    """Types of components in the Cocoa-Way architecture."""
+    COMPOSITOR = "compositor"
+    RENDERER = "renderer"
+    PROTOCOL_HANDLER = "protocol_handler"
     DISPLAY_SERVER = "display_server"
     INPUT_HANDLER = "input_handler"
-    GRAPHICS_STACK = "graphics_stack"
-    IPC_LAYER = "ipc_layer"
-    FILESYSTEM_BRIDGE = "filesystem_bridge"
+    CLIPBOARD_MANAGER = "clipboard_manager"
+    COMPATIBILITY_LAYER = "compatibility_layer"
 
 
-class RiskLevel(Enum):
-    """Risk assessment levels."""
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    INFORMATIONAL = "informational"
+class PlatformSupport(Enum):
+    """Platform support status."""
+    FULL = "full"
+    PARTIAL = "partial"
+    PLANNED = "planned"
+    UNSUPPORTED = "unsupported"
 
 
 @dataclass
-class Component:
-    """Represents a system component."""
+class ArchitectureComponent:
+    """Represents an architectural component."""
     name: str
     component_type: ComponentType
     description: str
     dependencies: List[str]
-    complexity_score: float
-    maturity_level: str
+    status: str
+    estimated_complexity: str
+    critical: bool
 
 
 @dataclass
-class Challenge:
-    """Represents a technical challenge."""
-    id: str
+class ProtocolSupport:
+    """Wayland protocol support specification."""
+    protocol_name: str
+    version: str
+    support_status: PlatformSupport
+    required_for_linux_apps: bool
+    implementation_notes: str
+    affected_components: List[str]
+
+
+@dataclass
+class CompatibilityMatrix:
+    """Linux app compatibility matrix."""
+    linux_app_category: str
+    example_apps: List[str]
+    required_protocols: List[str]
+    required_extensions: List[str]
+    estimated_compatibility: int
+    notes: str
+    blocker_issues: List[str]
+
+
+@dataclass
+class PerformanceProfile:
+    """Performance characteristics and requirements."""
+    metric_name: str
+    target_value: str
+    measurement_unit: str
+    priority: str
+    current_estimate: str
+    notes: str
+
+
+@dataclass
+class RiskAssessment:
+    """Technical risk assessment."""
+    risk_category: str
+    description: str
+    severity: str
+    probability: str
+    mitigation_strategy: str
+    affected_components: List[str]
+
+
+@dataclass
+class ScopeItem:
+    """Scope item for implementation planning."""
+    phase: int
     title: str
     description: str
-    affected_components: List[str]
-    risk_level: RiskLevel
-    mitigation_strategies: List[str]
-    estimated_effort: str
+    components_involved: List[str]
+    estimated_hours: int
+    dependencies: List[str]
+    risks: List[str]
+    success_criteria: List[str]
 
 
-@dataclass
-class AnalysisResult:
-    """Complete analysis result."""
-    project_name: str
-    analysis_date: str
-    components: List[Dict[str, Any]]
-    challenges: List[Dict[str, Any]]
-    architecture_assessment: Dict[str, Any]
-    recommendations: List[str]
-    risk_summary: Dict[str, int]
+class CocoaWayAnalyzer:
+    """Deep technical analyzer for Cocoa-Way project."""
 
+    def __init__(self):
+        """Initialize the analyzer with comprehensive technical data."""
+        self.components: List[ArchitectureComponent] = []
+        self.protocols: List[ProtocolSupport] = []
+        self.compatibility_matrices: List[CompatibilityMatrix] = []
+        self.performance_profiles: List[PerformanceProfile] = []
+        self.risks: List[RiskAssessment] = []
+        self.scope_items: List[ScopeItem] = []
+        self._initialize_data()
 
-class CocoapathAnalyzer:
-    """Deep analysis engine for Cocoa-Way architecture."""
+    def _initialize_data(self) -> None:
+        """Initialize comprehensive technical data."""
+        self._init_components()
+        self._init_protocols()
+        self._init_compatibility()
+        self._init_performance()
+        self._init_risks()
+        self._init_scope()
 
-    def __init__(self, verbose: bool = False):
-        self.verbose = verbose
-        self.components: Dict[str, Component] = {}
-        self.challenges: Dict[str, Challenge] = {}
-        self._initialize_components()
-        self._initialize_challenges()
-
-    def _initialize_components(self) -> None:
-        """Initialize known components in the Cocoa-Way architecture."""
-        components_data = [
-            Component(
-                name="Wayland Compositor",
-                component_type=ComponentType.WAYLAND_COMPOSITOR,
-                description="Native Wayland display server implementation for macOS",
-                dependencies=["Metal", "CoreGraphics"],
-                complexity_score=9.2,
-                maturity_level="experimental"
+    def _init_components(self) -> None:
+        """Initialize architectural components."""
+        self.components = [
+            ArchitectureComponent(
+                name="Wayland Compositor Core",
+                component_type=ComponentType.COMPOSITOR,
+                description="Central compositor managing window surfaces and rendering",
+                dependencies=["Metal Framework", "Cocoa Framework"],
+                status="architectural_design",
+                estimated_complexity="critical",
+                critical=True
             ),
-            Component(
-                name="Cocoa Bridge Layer",
-                component_type=ComponentType.COCOA_BRIDGE,
-                description="Bridge between Cocoa/AppKit and Wayland protocol",
-                dependencies=["Wayland Compositor", "AppKit"],
-                complexity_score=8.7,
-                maturity_level="experimental"
+            ArchitectureComponent(
+                name="Metal Rendering Backend",
+                component_type=ComponentType.RENDERER,
+                description="GPU-accelerated rendering using Apple Metal API",
+                dependencies=["Metal", "MetalKit"],
+                status="planning",
+                estimated_complexity="high",
+                critical=True
             ),
-            Component(
-                name="Linux Runtime Environment",
-                component_type=ComponentType.LINUX_RUNTIME,
-                description="Containerized or VM-based Linux execution environment",
-                dependencies=["Virtualization Framework", "Filesystem Bridge"],
-                complexity_score=8.5,
-                maturity_level="beta"
+            ArchitectureComponent(
+                name="Wayland Protocol Implementation",
+                component_type=ComponentType.PROTOCOL_HANDLER,
+                description="Implementation of core Wayland protocols",
+                dependencies=["Wayland Core", "XDG Shell"],
+                status="in_progress",
+                estimated_complexity="high",
+                critical=True
             ),
-            Component(
-                name="Display Server Integration",
-                component_type=ComponentType.DISPLAY_SERVER,
-                description="Integration between macOS display pipeline and X11/Wayland",
-                dependencies=["Wayland Compositor", "Metal"],
-                complexity_score=8.9,
-                maturity_level="experimental"
+            ArchitectureComponent(
+                name="Xwayland Compatibility Layer",
+                component_type=ComponentType.COMPATIBILITY_LAYER,
+                description="X11 protocol bridge for legacy applications",
+                dependencies=["Xwayland", "Wayland Core"],
+                status="planning",
+                estimated_complexity="very_high",
+                critical=True
             ),
-            Component(
+            ArchitectureComponent(
                 name="Input Event Handler",
                 component_type=ComponentType.INPUT_HANDLER,
-                description="Unified input handling for keyboard, mouse, and trackpad",
-                dependencies=["Cocoa Bridge Layer", "Wayland Compositor"],
-                complexity_score=7.2,
-                maturity_level="beta"
+                description="Keyboard, mouse, and touchpad event processing",
+                dependencies=["IOKit", "Cocoa"],
+                status="planning",
+                estimated_complexity="medium",
+                critical=True
             ),
-            Component(
-                name="Graphics Stack",
-                component_type=ComponentType.GRAPHICS_STACK,
-                description="Vulkan/OpenGL translation to Metal GPU commands",
-                dependencies=["Metal", "Display Server Integration"],
-                complexity_score=9.5,
-                maturity_level="experimental"
+            ArchitectureComponent(
+                name="Clipboard Integration",
+                component_type=ComponentType.CLIPBOARD_MANAGER,
+                description="Unified clipboard between macOS and Linux apps",
+                dependencies=["NSPasteboard", "Wayland Data Device"],
+                status="planning",
+                estimated_complexity="medium",
+                critical=False
             ),
-            Component(
-                name="IPC Layer",
-                component_type=ComponentType.IPC_LAYER,
-                description="Inter-process communication between macOS and Linux apps",
-                dependencies=["Cocoa Bridge Layer", "Filesystem Bridge"],
-                complexity_score=7.8,
-                maturity_level="beta"
-            ),
-            Component(
-                name="Filesystem Bridge",
-                component_type=ComponentType.FILESYSTEM_BRIDGE,
-                description="Transparent filesystem access between macOS and Linux",
-                dependencies=["Linux Runtime Environment"],
-                complexity_score=7.4,
-                maturity_level="beta"
-            ),
-        ]
-        for comp in components_data:
-            self.components[comp.name] = comp
-
-    def _initialize_challenges(self) -> None:
-        """Initialize known technical challenges."""
-        challenges_data = [
-            Challenge(
-                id="CH001",
-                title="Wayland Protocol Implementation Completeness",
-                description="Full Wayland protocol implementation required, including extension protocols and unstable interfaces used by Linux desktop environments",
-                affected_components=["Wayland Compositor", "Display Server Integration"],
-                risk_level=RiskLevel.CRITICAL,
-                mitigation_strategies=[
-                    "Implement protocol versioning with graceful degradation",
-                    "Focus on widely-used protocol extensions first",
-                    "Create comprehensive test suite for protocol compliance"
-                ],
-                estimated_effort="3-4 months"
-            ),
-            Challenge(
-                id="CH002",
-                title="GPU Acceleration and Metal Translation",
-                description="Translating Vulkan/OpenGL calls to Metal while maintaining performance and correctness",
-                affected_components=["Graphics Stack", "Display Server Integration"],
-                risk_level=RiskLevel.CRITICAL,
-                mitigation_strategies=[
-                    "Utilize ANGLE or similar translation layers",
-                    "Implement shader caching and optimization",
-                    "Profile and benchmark against native Metal performance"
-                ],
-                estimated_effort="4-5 months"
-            ),
-            Challenge(
-                id="CH003",
-                title="Event Synchronization and Input Handling",
-                description="Ensuring seamless input event delivery with proper timing and ordering across Cocoa/Wayland boundary",
-                affected_components=["Input Event Handler", "Cocoa Bridge Layer"],
-                risk_level=RiskLevel.HIGH,
-                mitigation_strategies=[
-                    "Implement event queue with timestamp validation",
-                    "Handle modifier key state synchronization",
-                    "Test with complex input scenarios (multi-touch, gestures)"
-                ],
-                estimated_effort="2-3 months"
-            ),
-            Challenge(
-                id="CH004",
-                title="Filesystem Access and Permissions",
-                description="Secure and transparent filesystem bridging while respecting macOS sandbox constraints and Linux permission models",
-                affected_components=["Filesystem Bridge", "IPC Layer"],
-                risk_level=RiskLevel.HIGH,
-                mitigation_strategies=[
-                    "Implement permission mapping layer",
-                    "Use FUSE or similar for transparent bridging",
-                    "Enforce security policies at bridge boundaries"
-                ],
-                estimated_effort="2-3 months"
-            ),
-            Challenge(
-                id="CH005",
-                title="Performance and Latency",
-                description="Achieving acceptable latency for interactive applications given the translation layers and containerization overhead",
-                affected_components=["Graphics Stack", "IPC Layer", "Linux Runtime Environment"],
-                risk_level=RiskLevel.HIGH,
-                mitigation_strategies=[
-                    "Implement zero-copy buffers where possible",
-                    "Optimize critical rendering paths",
-                    "Use memory-mapped I/O for high-frequency operations",
-                    "Implement efficient context switching"
-                ],
-                estimated_effort="3-4 months"
-            ),
-            Challenge(
-                id="CH006",
-                title="macOS Sandbox and Security Constraints",
-                description="Working within macOS App Sandbox restrictions while providing necessary system access for Linux apps",
-                affected_components=["Cocoa Bridge Layer", "IPC Layer", "Filesystem Bridge"],
-                risk_level=RiskLevel.HIGH,
-                mitigation_strategies=[
-                    "Request appropriate entitlements from Apple",
-                    "Implement capability-based security model",
-                    "Use privilege separation architecture"
-                ],
-                estimated_effort="2-3 months"
-            ),
-            Challenge(
-                id="CH007",
-                title="Memory Management Across Boundaries",
-                description="Efficient memory management with proper lifetime tracking across Cocoa/Wayland/Linux boundaries",
-                affected_components=["Cocoa Bridge Layer", "IPC Layer", "Graphics Stack"],
-                risk_level=RiskLevel.MEDIUM,
-                mitigation_strategies=[
-                    "Implement reference counting for shared objects",
-                    "Use memory pools and object recycling",
-                    "Regular memory profiling and leak detection"
-                ],
-                estimated_effort="2 months"
-            ),
-            Challenge(
-                id="CH008",
-                title="Testing and Compatibility Matrix",
-                description="Comprehensive testing across different Linux distributions, desktop environments, and applications",
-                affected_components=["All"],
-                risk_level=RiskLevel.MEDIUM,
-                mitigation_strategies=[
-                    "Build automated testing infrastructure",
-                    "Create compatibility database",
-                    "Implement application-specific quirks handling"
-                ],
-                estimated_effort="Ongoing"
-            ),
-        ]
-        for challenge in challenges_data:
-            self.challenges[challenge.id] = challenge
-
-    def analyze(self) -> AnalysisResult:
-        """Perform complete analysis of Cocoa-Way architecture."""
-        components_list = [self._component_to_dict(comp) for comp in self.components.values()]
-        challenges_list = [self._challenge_to_dict(ch) for ch in self.challenges.values()]
-        
-        risk_summary = self._calculate_risk_summary()
-        architecture_assessment = self._assess_architecture()
-        recommendations = self._generate_recommendations()
-        
-        return AnalysisResult(
-            project_name="Cocoa-Way",
-            analysis_date=datetime.now().isoformat(),
-            components=components_list,
-            challenges=challenges_list,
-            architecture_assessment=architecture_assessment,
-            recommendations=recommendations,
-            risk_summary=risk_summary
-        )
-
-    def _component_to_dict(self, component: Component) -> Dict[str, Any]:
-        """Convert component to dictionary."""
-        return {
-            "name": component.name,
-            "type": component.component_type.value,
-            "description": component.description,
-            "dependencies": component.dependencies,
-            "complexity_score": component.complexity_score,
-            "maturity_level": component.maturity_level
-        }
-
-    def _challenge_to_dict(self, challenge: Challenge) -> Dict[str, Any]:
-        """Convert challenge to dictionary."""
-        return {
-            "id": challenge.id,
-            "title": challenge.title,
-            "description": challenge.description,
-            "affected_components": challenge.affected_components,
-            "risk_level": challenge.risk_level.value,
-            "mitigation_strategies": challenge.mitigation_strategies,
-            "estimated_effort": challenge.estimated_effort
-        }
-
-    def _calculate_risk_summary(self) -> Dict[str, int]:
-        """Calculate risk distribution."""
-        risk_counts = {
-            RiskLevel.CRITICAL.value: 0,
-            RiskLevel.HIGH.value: 0,
-            RiskLevel.MEDIUM.value: 0,
-            RiskLevel.LOW.value: 0,
-            RiskLevel.INFORMATIONAL.value: 0
-        }
-        
-        for challenge in self.challenges.values():
-            risk_counts[challenge.risk_level.value] += 1
-        
-        return risk_counts
-
-    def _assess_architecture(self) -> Dict[str, Any]:
-        """Assess overall architecture."""
-        avg_complexity = sum(c.complexity_score for c in self.components.values()) / len(self.components)
-        experimental_count = sum(1 for c in self.components.values() if c.maturity_level == "experimental")
-        
-        return {
-            "total_components": len(self.components),
-            "average_complexity": round(avg_complexity, 2),
-            "experimental_components": experimental_count,
-            "critical_path": ["Wayland Compositor", "Graphics Stack", "Cocoa Bridge Layer"],
-            "architecture_viability": "High - feasible but extremely complex",
-            "estimated_total_effort": "12-18 months for MVP"
-        }
-
-    def _generate_recommendations(self) -> List[str]:
-        """Generate recommendations for the project."""
-        return [
-            "Prioritize Wayland Compositor and Graphics Stack implementation as critical path items",
-            "Establish early testing framework and continuous integration pipeline",
-            "Consider phased rollout: start with basic Wayland support, add graphics acceleration incrementally",
-            "Engage with Wayland and Mesa communities for guidance and potential code sharing",
-            "Build modular architecture to allow independent testing of each component",
-            "Implement comprehensive logging and debugging infrastructure from the start",
-            "Plan for extensive performance profiling and optimization iterations",
-            "Consider using existing translation layers (ANGLE, DXVK equivalents) to reduce implementation scope",
-            "Establish clear API boundaries between Cocoa and Wayland layers",
-            "Create detailed design documents for critical subsystems before implementation"
+            ArchitectureComponent(
+                name="Display Server Interface",
+                component_type=ComponentType.DISPLAY_SERVER,
+                description="Virtual display abstraction layer",
+                dependencies=["Metal", "IOKit"],
+                status="planning",
+                estimated_complexity="high",
+                critical=True
+            )
         ]
 
-    def print_analysis(self, analysis: AnalysisResult) -> None:
-        """Print formatted analysis report."""
-        print("\n" + "="*80)
-        print("COCOA-WAY ARCHITECTURE ANALYSIS REPORT")
-        print("="*80)
-        print(f"\nProject: {analysis.project_name}")
-        print(f"Analysis Date: {analysis.analysis_date}\n")
-        
-        print("─" * 80)
-        print("ARCHITECTURE ASSESSMENT")
-        print("─" * 80)
-        for key, value in analysis.architecture_assessment.items():
-            print(f"  {key}: {value}")
-        
-        print("\n" + "─" * 80)
-        print("RISK SUMMARY")
-        print("─" * 80)
-        for risk_level, count in analysis.risk_summary.items():
-            print(f"  {risk_level.upper()}: {count} challenges")
-        
-        print("\n" + "─" * 80)
-        print("TOP RECOMMENDATIONS")
-        print("─" * 80)
-        for i, rec in enumerate(analysis.recommendations[:5], 1):
-            print(f"  {i}. {rec}")
-        
-        print("\n" + "─" * 80)
-        print("COMPONENTS OVERVIEW")
-        print("─" * 80)
-        for comp in analysis.components:
-            print(f"\n  {comp['name']}")
-            print(f"    Type: {comp['type']}")
-            print(f"    Complexity: {comp['complexity_score']}/10")
-            print(f"    Maturity: {comp['maturity_level']}")
-        
-        print("\n" + "─" * 80)
-        print("CRITICAL CHALLENGES")
-        print("─" * 80)
-        for challenge in analysis.challenges:
-            if challenge['risk_level'] == 'critical':
-                print(f"\n  [{challenge['id']}] {challenge['title']}")
-                print(f"    Effort: {challenge['estimated_effort']}")
-                print(f"    Components: {', '.join(challenge['affected_components'][:2])}")
-        
-        print("\n" + "="*80 + "\n")
+    def _init_protocols(self) -> None:
+        """Initialize Wayland protocol support matrix."""
+        self.protocols = [
+            ProtocolSupport(
+                protocol_name="wl_core",
+                version="1.0",
+                support_status=PlatformSupport.FULL,
+                required_for_linux_apps=True,
+                implementation_notes="Base Wayland protocol, essential for compositor",
+                affected_components=["Wayland Compositor Core", "Protocol Implementation"]
+            ),
+            ProtocolSupport(
+                protocol_name="xdg_wm_base (XDG Shell)",
+                version="6.0",
+                support_status=PlatformSupport.PARTIAL,
+                required_for_linux_apps=True,
+                implementation_notes="Modern window management, partial implementation in progress",
+                affected_components=["Wayland Compositor Core", "Window Manager"]
+            ),
+            ProtocolSupport(
+                protocol_name="wl_drm",
+                version="2.0",
+                support_status=PlatformSupport.PLANNED,
+                required_for_linux_apps=False,
+                implementation_notes="GPU buffer sharing, critical for performance",
+                affected_components=["Metal Rendering Backend", "Buffer Management"]
+            ),
+            ProtocolSupport(
+                protocol_name="wp_viewporter",
+                version="1.0",
+                support_status=PlatformSupport.PLANNED,
+                required_for_linux_apps=False,
+                implementation_notes="Viewport and scaling support",
+                affected_components=["Metal Rendering Backend"]
+            ),
+            ProtocolSupport(
+                protocol_name="wp_linux_dmabuf",
+                version="4.0",
+                support_status=PlatformSupport.UNSUPPORTED,
+                required_for_linux_apps=False,
+                implementation_notes="Linux DMA-BUF protocol, not applicable to macOS",
+                affected_components=["Buffer Management"]
+            ),
+            ProtocolSupport(
+                protocol_name="wp_presentation_time",
+                version="1.0",
+                support_status=PlatformSupport.PARTIAL,
+                required_for_linux_apps=False,
+                implementation_notes="Presentation feedback, important for sync",
+                affected_components=["Metal Rendering Backend", "Timing Controller"]
+            ),
+            ProtocolSupport(
+                protocol_name="wl_data_device",
+                version="3.0",
+                support_status=PlatformSupport.PLANNED,
+                required_for_linux_apps=True,
+                implementation_notes="Clipboard and drag-drop support",
+                affected_components=["Clipboard Integration", "Input Handler"]
+            )
+        ]
 
-    def export_json(self, analysis: AnalysisResult, filename:
+    def _init_compatibility(self) -> None:
+        """Initialize Linux app compatibility matrix."""
+        self.compatibility_matrices = [
+            CompatibilityMatrix(
+                linux_app_category="Graphical Utilities (GIMP, Blender)",
+                example_apps=["GIMP", "Blender", "Krita", "Inkscape"],
+                required_protocols=["wl_core", "xdg_wm_base", "wl_data_device"],
+                required_extensions=["wp_viewporter", "wp_presentation_time"],
+                estimated_compatibility=65,
+                notes="High-performance GPU apps require full rendering pipeline",
+                blocker_issues=["Metal buffer interop", "GPU memory management"]
+            ),
+            CompatibilityMatrix(
+                linux_app_category="Terminal Emulators",
+                example_apps=["Alacritty", "Kitty", "Gnome Terminal", "Konsole"],
+                required_protocols=["wl_core", "xdg_wm_base"],
+                required_extensions=["wl_data_device"],
+                estimated_compatibility=85,
+                notes="Generally simpler, text-based rendering easier to support",
+                blocker_issues=["IME support", "Font rendering consistency"]
+            ),
+            CompatibilityMatrix(
+                linux_app_category="Web Browsers",
+                example_apps=["Firefox", "Chromium", "Brave"],
+                required_protocols=["wl_core", "xdg_wm_base", "wl_data_device"],
+                required_extensions=["wp_presentation_time", "wp_viewporter"],
+                estimated_compatibility=70,
+                notes="Complex rendering pipeline, needs careful optimization",
+                blocker_issues=["WebGL support", "Hardware acceleration"]
+            ),
+            CompatibilityMatrix(
+                linux_app_category="Development Tools",
+                example_apps=["VSCode", "JetBrains IDEs", "Emacs"],
+                required_protocols=["wl_core", "xdg_wm_base"],
+                required_extensions=["wl_data_device"],
+                estimated_compatibility=80,
+                notes="Mostly UI-driven, moderate protocol requirements",
+                blocker_issues=["GTK/Qt rendering parity"]
+            ),
+            CompatibilityMatrix(
+                linux_app_category="Games",
+                example_apps=["Steam (Proton)", "Native Vulkan games"],
+                required_protocols=["wl_core", "xdg_wm_base"],
+                required_extensions=["wp_linux_dmabuf", "wp_presentation_time"],
+                estimated_compatibility=45,
+                notes="Demanding GPU/CPU requirements, lowest compatibility",
+                blocker_issues=["Vulkan on Metal translation", "Input latency"]
+            ),
+            CompatibilityMatrix(
+                linux_app_category="Legacy X11 Apps",
+                example_apps=["Old XWindow apps", "X11-only utilities"],
+                required_protocols=["wl_core"],
+                required_extensions=["Xwayland compatibility"],
+                estimated_compatibility=50,
+                notes="Requires full Xwayland implementation",
+                blocker_issues=["Xwayland integration", "X11 protocol overhead"]
+            )
+        ]
+
+    def _init_performance(self) -> None:
+        """Initialize performance requirements."""
+        self.performance_profiles = [
+            PerformanceProfile(
+                metric_name="Frame Rendering Latency",
+                target_value="< 16.67",
+                measurement_unit="milliseconds",
+                priority="critical",
+                current_estimate="25-40 (estimated)",
+                notes="60 FPS target, requires optimized Metal pipeline"
+            ),
+            PerformanceProfile(
+                metric_name="Input Event Latency",
+                target_value="< 8",
+                measurement_unit="milliseconds",
+                priority="critical",
+                current_estimate="15-25 (estimated)",
+                notes="User perception critical for usability"
+            ),
+            PerformanceProfile(
+                metric_name="Memory Overhead per App",
+                target_value="< 100",
+                measurement_unit="megabytes",
+                priority="high",
+                current_estimate="150-200 (estimated)",
+                notes="Compositor overhead, excludes app memory"
+            ),
+            PerformanceProfile(
+                metric_name="GPU Memory Utilization",
+                target_value="< 2000",
+                measurement_unit="megabytes",
+                priority="high",
+                current_estimate="Unknown (planning phase)",
+                notes="Critical for M-series Mac compatibility"
+            ),
+            PerformanceProfile(
+                metric_name="CPU Usage (Idle)",
+                target_value="< 5",
+                measurement_unit="percent",
+                priority="high",
+                current_estimate="Unknown (planning phase)",
+                notes="Energy efficiency on battery"
+            ),
+            PerformanceProfile(
+                metric_name="Startup Time",
+                target_value="< 2",
+                measurement_unit="seconds",
+                priority="medium",
+                current_estimate="Unknown (planning phase)",
+                notes="Compositor initialization time"
+            )
+        ]
+
+    def _init_risks(self) -> None:
+        """Initialize risk assessments."""
+        self.risks = [
+            RiskAssessment(
+                risk_category="Technical Feasibility",
+                description="macOS Metal API may not provide equivalent abstractions to Linux GPU drivers",
+                severity="high",
+                probability="medium",
+                mitigation_strategy="Develop abstraction layer, validate with prototype GPU pipeline",
+                affected_components=["Metal Rendering Backend", "Buffer Management"]
+            ),
+            RiskAssessment(
+                risk_category="Performance",
+                description="Metal-to-Linux abstraction overhead may prevent target latency goals",
+                severity="high",
+                probability="high",
+                mitigation_strategy="Benchmark early, optimize critical path, consider JIT compilation",
+                affected_components=["Metal Rendering Backend", "Compositor Core"]
+            ),
+            RiskAssessment(
+                risk_category="Xwayland Integration",
+                description="Embedding Xwayland in macOS environment is architecturally challenging",
+                severity="high",
+                probability="high",
+                mitigation_strategy="Start with pure Wayland apps, defer X11 compatibility to Phase 2",
+                affected_components=["Xwayland Compatibility Layer"]
+            ),
+            RiskAssessment(
+                risk_category="Protocol Coverage",
+                description="Incomplete Wayland protocol implementation may break modern Linux apps",
+                severity="medium",
+                probability="high",
+                mitigation_strategy="Implement protocols incrementally, test with real apps early",
+                affected_components=["Wayland Protocol Implementation"]
+            ),
+            RiskAssessment(
+                risk_category="macOS System Integration",
+                description="Limited control over display server, window management conflicts",
+                severity="medium",
+                probability="medium",
+                mitigation_strategy="Virtualize display, use containerization for isolation",
+                affected_components=["Display Server Interface", "Compositor Core"]
+            ),
+            RiskAssessment(
+                risk_category="Input Subsystem",
+                description="Complex input event mapping between macOS and Linux paradigms",
+                severity="medium",
+                probability="medium",
+                mitigation_strategy="Implement comprehensive input abstraction layer",
+                affected_components=["Input Event Handler"]
+            ),
+            RiskAssessment(
+                risk_category="Community Maintenance",
+                description="Specialized project may struggle with long-term community support",
+                severity="low",
+                probability="medium",
+                mitigation_strategy="Clear documentation, modular architecture, open-source best practices",
+                affected_components=["All"]
+            )
+        ]
+
+    def _init_scope(
