@@ -3,242 +3,450 @@
 # Task:    Add tests and validation
 # Mission: Cocoa-Way – Native macOS Wayland compositor for running Linux apps seamlessly
 # Agent:   @aria
-# Date:    2026-03-28T22:10:09.594Z
+# Date:    2026-03-29T20:40:51.720Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 Task: Add tests and validation for Cocoa-Way
 Mission: Cocoa-Way – Native macOS Wayland compositor for running Linux apps seamlessly
-Agent: @aria
-Date: 2024
-Category: Engineering
-Source: https://github.com/J-x-Z/cocoa-way
+Agent: @aria (SwarmPulse)
+Date: 2025
 
-This module provides comprehensive unit tests and validation for the Cocoa-Way
-Wayland compositor, covering main scenarios including compositor initialization,
-surface management, input handling, and Linux app integration.
+Unit tests covering main scenarios for the Cocoa-Way Wayland compositor.
+This module provides comprehensive test coverage and validation for core functionality.
 """
 
 import unittest
 import json
-import argparse
 import sys
-import hashlib
+import argparse
+from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Any, Optional
 from enum import Enum
 from datetime import datetime
-import io
-from contextlib import redirect_stdout, redirect_stderr
 
 
-class WaylandProtocolVersion(Enum):
-    """Supported Wayland protocol versions"""
-    V1_0 = "1.0"
-    V1_1 = "1.1"
-    V1_2 = "1.2"
+class PlatformType(Enum):
+    """Supported platform types."""
+    MACOS = "macos"
+    LINUX = "linux"
+    WAYLAND = "wayland"
 
 
-class AppType(Enum):
-    """Types of applications that can run on Cocoa-Way"""
-    WAYLAND_NATIVE = "wayland_native"
-    XWAYLAND_COMPAT = "xwayland_compat"
-    LEGACY_X11 = "legacy_x11"
-
-
-@dataclass
-class CompositorConfig:
-    """Configuration for Cocoa-Way compositor"""
-    protocol_version: str = "1.2"
-    display_name: str = ":0"
-    width: int = 1920
-    height: int = 1080
-    refresh_rate: int = 60
-    enable_gpu: bool = True
-    enable_xwayland: bool = True
-    max_surfaces: int = 256
-    buffer_size: int = 16777216
+class AppStatus(Enum):
+    """Application status states."""
+    RUNNING = "running"
+    STOPPED = "stopped"
+    CRASHED = "crashed"
+    SUSPENDED = "suspended"
 
 
 @dataclass
-class Surface:
-    """Represents a Wayland surface"""
-    surface_id: int
-    app_name: str
-    app_type: AppType
+class WaylandDisplay:
+    """Represents a Wayland display configuration."""
+    display_id: str
     width: int
     height: int
-    buffer_size: int
-    visible: bool = True
-    damage_region: List[tuple] = None
+    refresh_rate: float
+    scale: float
+    enabled: bool
 
-    def __post_init__(self):
-        if self.damage_region is None:
-            self.damage_region = []
-
-    def validate(self) -> tuple[bool, str]:
-        """Validate surface configuration"""
+    def validate(self) -> Tuple[bool, str]:
+        """Validate display configuration."""
         if self.width <= 0 or self.height <= 0:
-            return False, "Surface dimensions must be positive"
-        if self.buffer_size <= 0:
-            return False, "Buffer size must be positive"
-        if self.surface_id < 0:
-            return False, "Surface ID must be non-negative"
-        if not self.app_name or len(self.app_name.strip()) == 0:
-            return False, "App name cannot be empty"
-        return True, "Valid"
+            return False, "Display dimensions must be positive"
+        if self.refresh_rate <= 0:
+            return False, "Refresh rate must be positive"
+        if self.scale <= 0:
+            return False, "Scale factor must be positive"
+        if not self.display_id:
+            return False, "Display ID cannot be empty"
+        return True, "Display configuration valid"
 
 
 @dataclass
-class InputEvent:
-    """Represents an input event"""
-    event_type: str
-    timestamp: float
-    surface_id: int
-    x: float = 0.0
-    y: float = 0.0
-    key_code: Optional[int] = None
-    modifiers: int = 0
+class LinuxApplication:
+    """Represents a Linux application running under Cocoa-Way."""
+    app_id: str
+    name: str
+    pid: int
+    status: AppStatus
+    memory_mb: float
+    cpu_percent: float
+    platform: PlatformType
+    wayland_socket: Optional[str] = None
 
-    def validate(self) -> tuple[bool, str]:
-        """Validate input event"""
-        valid_types = ["mouse_move", "mouse_click", "key_press", "key_release", "scroll"]
-        if self.event_type not in valid_types:
-            return False, f"Invalid event type: {self.event_type}"
-        if self.timestamp < 0:
-            return False, "Timestamp cannot be negative"
-        if self.surface_id < 0:
-            return False, "Surface ID must be non-negative"
-        return True, "Valid"
+    def validate(self) -> Tuple[bool, str]:
+        """Validate application configuration."""
+        if not self.app_id:
+            return False, "Application ID cannot be empty"
+        if not self.name:
+            return False, "Application name cannot be empty"
+        if self.pid < 0:
+            return False, "PID must be non-negative"
+        if self.memory_mb < 0:
+            return False, "Memory usage cannot be negative"
+        if self.cpu_percent < 0 or self.cpu_percent > 100:
+            return False, "CPU percentage must be between 0 and 100"
+        if self.platform != PlatformType.LINUX:
+            return False, f"App must target Linux, got {self.platform}"
+        return True, "Application configuration valid"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation."""
+        data = asdict(self)
+        data['status'] = self.status.value
+        data['platform'] = self.platform.value
+        return data
 
 
-class CocoaWayCompositor:
-    """Mock implementation of Cocoa-Way compositor"""
+class CompositorCore:
+    """Core Cocoa-Way compositor functionality."""
 
-    def __init__(self, config: CompositorConfig):
-        self.config = config
-        self.surfaces: Dict[int, Surface] = {}
-        self.surface_counter = 0
-        self.running = False
-        self.event_queue: List[InputEvent] = []
-        self.rendered_frames = 0
+    def __init__(self):
+        """Initialize the compositor."""
+        self.displays: Dict[str, WaylandDisplay] = {}
+        self.applications: Dict[str, LinuxApplication] = {}
+        self.active_display: Optional[str] = None
+        self.initialization_time = datetime.now()
 
-    def start(self) -> bool:
-        """Start the compositor"""
-        if self.running:
-            return False
-        self.running = True
-        self.rendered_frames = 0
-        return True
+    def add_display(self, display: WaylandDisplay) -> Tuple[bool, str]:
+        """Register a Wayland display."""
+        is_valid, message = display.validate()
+        if not is_valid:
+            return False, message
 
-    def stop(self) -> bool:
-        """Stop the compositor"""
-        if not self.running:
-            return False
-        self.running = False
-        return True
+        if display.display_id in self.displays:
+            return False, f"Display {display.display_id} already registered"
 
-    def create_surface(self, app_name: str, app_type: AppType, width: int, height: int) -> Optional[int]:
-        """Create a new surface"""
-        if not self.running:
-            raise RuntimeError("Compositor not running")
-        if len(self.surfaces) >= self.config.max_surfaces:
-            raise RuntimeError("Maximum surfaces exceeded")
+        self.displays[display.display_id] = display
+        if self.active_display is None:
+            self.active_display = display.display_id
+        return True, f"Display {display.display_id} registered successfully"
 
-        surface_id = self.surface_counter
-        self.surface_counter += 1
+    def remove_display(self, display_id: str) -> Tuple[bool, str]:
+        """Unregister a Wayland display."""
+        if display_id not in self.displays:
+            return False, f"Display {display_id} not found"
 
-        surface = Surface(
-            surface_id=surface_id,
-            app_name=app_name,
-            app_type=app_type,
-            width=width,
-            height=height,
-            buffer_size=width * height * 4
+        if self.active_display == display_id:
+            remaining = [d for d in self.displays.keys() if d != display_id]
+            self.active_display = remaining[0] if remaining else None
+
+        del self.displays[display_id]
+        return True, f"Display {display_id} removed successfully"
+
+    def launch_application(self, app: LinuxApplication) -> Tuple[bool, str]:
+        """Launch a Linux application."""
+        is_valid, message = app.validate()
+        if not is_valid:
+            return False, message
+
+        if app.app_id in self.applications:
+            return False, f"Application {app.app_id} already running"
+
+        if not self.active_display:
+            return False, "No active display available"
+
+        app.wayland_socket = f"wayland-{self.active_display}"
+        self.applications[app.app_id] = app
+        return True, f"Application {app.app_id} launched successfully"
+
+    def terminate_application(self, app_id: str) -> Tuple[bool, str]:
+        """Terminate a running Linux application."""
+        if app_id not in self.applications:
+            return False, f"Application {app_id} not found"
+
+        app = self.applications[app_id]
+        if app.status == AppStatus.RUNNING:
+            app.status = AppStatus.STOPPED
+        del self.applications[app_id]
+        return True, f"Application {app_id} terminated successfully"
+
+    def get_application_metrics(self, app_id: str) -> Optional[Dict[str, Any]]:
+        """Get metrics for a running application."""
+        if app_id not in self.applications:
+            return None
+
+        app = self.applications[app_id]
+        return {
+            "app_id": app.app_id,
+            "name": app.name,
+            "status": app.status.value,
+            "memory_mb": app.memory_mb,
+            "cpu_percent": app.cpu_percent,
+            "wayland_socket": app.wayland_socket
+        }
+
+    def update_application_status(self, app_id: str, status: AppStatus) -> Tuple[bool, str]:
+        """Update application execution status."""
+        if app_id not in self.applications:
+            return False, f"Application {app_id} not found"
+
+        self.applications[app_id].status = status
+        return True, f"Application {app_id} status updated to {status.value}"
+
+    def get_display_info(self, display_id: str) -> Optional[Dict[str, Any]]:
+        """Get information about a registered display."""
+        if display_id not in self.displays:
+            return None
+
+        display = self.displays[display_id]
+        return {
+            "display_id": display.display_id,
+            "width": display.width,
+            "height": display.height,
+            "refresh_rate": display.refresh_rate,
+            "scale": display.scale,
+            "enabled": display.enabled
+        }
+
+    def get_system_status(self) -> Dict[str, Any]:
+        """Get overall system status."""
+        running_apps = sum(1 for app in self.applications.values()
+                          if app.status == AppStatus.RUNNING)
+        total_memory = sum(app.memory_mb for app in self.applications.values())
+        avg_cpu = (sum(app.cpu_percent for app in self.applications.values()) /
+                   len(self.applications) if self.applications else 0)
+
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "active_displays": len([d for d in self.displays.values() if d.enabled]),
+            "total_displays": len(self.displays),
+            "running_applications": running_apps,
+            "total_applications": len(self.applications),
+            "total_memory_mb": total_memory,
+            "average_cpu_percent": avg_cpu,
+            "uptime_seconds": (datetime.now() - self.initialization_time).total_seconds()
+        }
+
+
+class TestWaylandDisplay(unittest.TestCase):
+    """Unit tests for Wayland display configuration."""
+
+    def test_valid_display_creation(self):
+        """Test creating a valid display configuration."""
+        display = WaylandDisplay(
+            display_id="HDMI-1",
+            width=1920,
+            height=1080,
+            refresh_rate=60.0,
+            scale=1.0,
+            enabled=True
         )
+        is_valid, message = display.validate()
+        self.assertTrue(is_valid)
+        self.assertIn("valid", message.lower())
 
-        valid, msg = surface.validate()
-        if not valid:
-            raise ValueError(f"Invalid surface: {msg}")
-
-        self.surfaces[surface_id] = surface
-        return surface_id
-
-    def destroy_surface(self, surface_id: int) -> bool:
-        """Destroy a surface"""
-        if surface_id not in self.surfaces:
-            return False
-        del self.surfaces[surface_id]
-        return True
-
-    def submit_event(self, event: InputEvent) -> bool:
-        """Submit an input event"""
-        valid, msg = event.validate()
-        if not valid:
-            return False
-        if event.surface_id not in self.surfaces:
-            return False
-        self.event_queue.append(event)
-        return True
-
-    def process_events(self) -> int:
-        """Process queued input events"""
-        count = len(self.event_queue)
-        self.event_queue.clear()
-        return count
-
-    def render_frame(self) -> bool:
-        """Render a frame"""
-        if not self.running:
-            return False
-        self.rendered_frames += 1
-        return True
-
-    def get_surface(self, surface_id: int) -> Optional[Surface]:
-        """Get surface by ID"""
-        return self.surfaces.get(surface_id)
-
-    def list_surfaces(self) -> List[Surface]:
-        """List all surfaces"""
-        return list(self.surfaces.values())
-
-
-class TestCompositorConfig(unittest.TestCase):
-    """Tests for compositor configuration"""
-
-    def test_default_config_creation(self):
-        """Test creating compositor with default config"""
-        config = CompositorConfig()
-        self.assertEqual(config.protocol_version, "1.2")
-        self.assertEqual(config.width, 1920)
-        self.assertEqual(config.height, 1080)
-        self.assertEqual(config.refresh_rate, 60)
-        self.assertTrue(config.enable_gpu)
-        self.assertTrue(config.enable_xwayland)
-
-    def test_custom_config_creation(self):
-        """Test creating compositor with custom config"""
-        config = CompositorConfig(
-            protocol_version="1.1",
-            width=2560,
-            height=1440,
-            refresh_rate=144,
-            enable_gpu=False
+    def test_invalid_display_dimensions(self):
+        """Test display with invalid dimensions."""
+        display = WaylandDisplay(
+            display_id="HDMI-1",
+            width=-1,
+            height=1080,
+            refresh_rate=60.0,
+            scale=1.0,
+            enabled=True
         )
-        self.assertEqual(config.protocol_version, "1.1")
-        self.assertEqual(config.width, 2560)
-        self.assertEqual(config.height, 1440)
-        self.assertEqual(config.refresh_rate, 144)
-        self.assertFalse(config.enable_gpu)
+        is_valid, message = display.validate()
+        self.assertFalse(is_valid)
+        self.assertIn("dimensions", message.lower())
 
-    def test_config_bounds(self):
-        """Test config with boundary values"""
-        config = CompositorConfig(
-            width=1,
-            height=1,
-            refresh_rate=1,
-            max_surfaces=1
+    def test_invalid_display_refresh_rate(self):
+        """Test display with invalid refresh rate."""
+        display = WaylandDisplay(
+            display_id="HDMI-1",
+            width=1920,
+            height=1080,
+            refresh_rate=0,
+            scale=1.0,
+            enabled=True
         )
-        self.assertEqual(config.width, 1)
-        self.assertEqual(config.height, 1)
+        is_valid, message = display.validate()
+        self.assertFalse(is_valid)
+        self.assertIn("refresh", message.lower())
+
+    def test_invalid_display_scale(self):
+        """Test display with invalid scale factor."""
+        display = WaylandDisplay(
+            display_id="HDMI-1",
+            width=1920,
+            height=1080,
+            refresh_rate=60.0,
+            scale=-1.0,
+            enabled=True
+        )
+        is_valid, message = display.validate()
+        self.assertFalse(is_valid)
+        self.assertIn("scale", message.lower())
+
+    def test_empty_display_id(self):
+        """Test display with empty ID."""
+        display = WaylandDisplay(
+            display_id="",
+            width=1920,
+            height=1080,
+            refresh_rate=60.0,
+            scale=1.0,
+            enabled=True
+        )
+        is_valid, message = display.validate()
+        self.assertFalse(is_valid)
+        self.assertIn("id", message.lower())
+
+
+class TestLinuxApplication(unittest.TestCase):
+    """Unit tests for Linux application configuration."""
+
+    def test_valid_application_creation(self):
+        """Test creating a valid Linux application."""
+        app = LinuxApplication(
+            app_id="firefox-001",
+            name="Firefox",
+            pid=1234,
+            status=AppStatus.RUNNING,
+            memory_mb=512.5,
+            cpu_percent=25.0,
+            platform=PlatformType.LINUX
+        )
+        is_valid, message = app.validate()
+        self.assertTrue(is_valid)
+        self.assertIn("valid", message.lower())
+
+    def test_invalid_application_pid(self):
+        """Test application with invalid PID."""
+        app = LinuxApplication(
+            app_id="firefox-001",
+            name="Firefox",
+            pid=-1,
+            status=AppStatus.RUNNING,
+            memory_mb=512.5,
+            cpu_percent=25.0,
+            platform=PlatformType.LINUX
+        )
+        is_valid, message = app.validate()
+        self.assertFalse(is_valid)
+        self.assertIn("pid", message.lower())
+
+    def test_invalid_application_memory(self):
+        """Test application with invalid memory."""
+        app = LinuxApplication(
+            app_id="firefox-001",
+            name="Firefox",
+            pid=1234,
+            status=AppStatus.RUNNING,
+            memory_mb=-100.0,
+            cpu_percent=25.0,
+            platform=PlatformType.LINUX
+        )
+        is_valid, message = app.validate()
+        self.assertFalse(is_valid)
+        self.assertIn("memory", message.lower())
+
+    def test_invalid_application_cpu(self):
+        """Test application with invalid CPU usage."""
+        app = LinuxApplication(
+            app_id="firefox-001",
+            name="Firefox",
+            pid=1234,
+            status=AppStatus.RUNNING,
+            memory_mb=512.5,
+            cpu_percent=150.0,
+            platform=PlatformType.LINUX
+        )
+        is_valid, message = app.validate()
+        self.assertFalse(is_valid)
+        self.assertIn("cpu", message.lower())
+
+    def test_invalid_application_empty_name(self):
+        """Test application with empty name."""
+        app = LinuxApplication(
+            app_id="firefox-001",
+            name="",
+            pid=1234,
+            status=AppStatus.RUNNING,
+            memory_mb=512.5,
+            cpu_percent=25.0,
+            platform=PlatformType.LINUX
+        )
+        is_valid, message = app.validate()
+        self.assertFalse(is_valid)
+        self.assertIn("name", message.lower())
+
+    def test_invalid_application_platform(self):
+        """Test application with wrong platform."""
+        app = LinuxApplication(
+            app_id="firefox-001",
+            name="Firefox",
+            pid=1234,
+            status=AppStatus.RUNNING,
+            memory_mb=512.5,
+            cpu_percent=25.0,
+            platform=PlatformType.MACOS
+        )
+        is_valid, message = app.validate()
+        self.assertFalse(is_valid)
+        self.assertIn("linux", message.lower())
+
+    def test_application_to_dict(self):
+        """Test converting application to dictionary."""
+        app = LinuxApplication(
+            app_id="firefox-001",
+            name="Firefox",
+            pid=1234,
+            status=AppStatus.RUNNING,
+            memory_mb=512.5,
+            cpu_percent=25.0,
+            platform=PlatformType.LINUX
+        )
+        app_dict = app.to_dict()
+        self.assertEqual(app_dict["app_id"], "firefox-001")
+        self.assertEqual(app_dict["status"], "running")
+        self.assertEqual(app_dict["platform"], "linux")
+
+
+class TestCompositorCore(unittest.TestCase):
+    """Unit tests for Cocoa-Way compositor core functionality."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.compositor = CompositorCore()
+
+    def test_compositor_initialization(self):
+        """Test compositor initializes correctly."""
+        self.assertEqual(len(self.compositor.displays), 0)
+        self.assertEqual(len(self.compositor.applications), 0)
+        self.assertIsNone(self.compositor.active_display)
+
+    def test_add_single_display(self):
+        """Test adding a single display."""
+        display = WaylandDisplay(
+            display_id="HDMI-1",
+            width=1920,
+            height=1080,
+            refresh_rate=60.0,
+            scale=1.0,
+            enabled=True
+        )
+        success, message = self.compositor.add_display(display)
+        self.assertTrue(success)
+        self.assertEqual(len(self.compositor.displays), 1)
+        self.assertEqual(self.compositor.active_display, "HDMI-1")
+
+    def test_add_multiple_displays(self):
+        """Test adding multiple displays."""
+        for i in range(3):
+            display = WaylandDisplay(
+                display_id=f"HDMI-{i}",
+                width=1920,
+                height=1080,
+                refresh_rate=60.0,
+                scale=1.0,
+                enabled=True
+            )
+            success, message = self.compositor.add_display(display)
+            self.assertTrue(success)
+
+        self.assertEqual(len(self.compositor.displays), 3)
+        self.assertEqual(self
