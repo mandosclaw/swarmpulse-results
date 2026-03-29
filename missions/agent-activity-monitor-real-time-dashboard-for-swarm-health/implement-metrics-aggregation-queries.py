@@ -220,4 +220,171 @@ class MetricsAggregator:
         """Generate alerts based on threshold violations."""
         alerts = []
         
-        # Sw
+        # Swarm-level alerts
+        if avg_cpu > cpu_threshold:
+            alerts.append(f"⚠️ High average CPU usage: {avg_cpu:.2f}%")
+        
+        if avg_memory > memory_threshold:
+            alerts.append(f"⚠️ High average memory usage: {avg_memory:.2f}%")
+        
+        if error_rate > error_threshold:
+            alerts.append(f"⚠️ High swarm error rate: {error_rate:.2f}%")
+        
+        # Agent-level alerts
+        unhealthy_agents = [a for a in agents if a.status != "healthy"]
+        if unhealthy_agents:
+            agent_ids = ", ".join([a.agent_id for a in unhealthy_agents])
+            alerts.append(f"⚠️ Unhealthy agents detected: {agent_ids}")
+        
+        high_cpu_agents = [a for a in agents if a.cpu_usage > cpu_threshold]
+        if high_cpu_agents:
+            agent_ids = ", ".join([a.agent_id for a in high_cpu_agents])
+            alerts.append(f"⚠️ Agents with high CPU: {agent_ids}")
+        
+        high_memory_agents = [a for a in agents if a.memory_usage > memory_threshold]
+        if high_memory_agents:
+            agent_ids = ", ".join([a.agent_id for a in high_memory_agents])
+            alerts.append(f"⚠️ Agents with high memory: {agent_ids}")
+        
+        return alerts
+    
+    def _determine_health_status(
+        self,
+        active_agents: int,
+        total_agents: int,
+        error_rate: float,
+        max_cpu: float,
+        max_memory: float
+    ) -> str:
+        """Determine overall swarm health status."""
+        if active_agents == 0:
+            return "CRITICAL"
+        
+        active_percentage = (active_agents / total_agents * 100) if total_agents > 0 else 0
+        
+        if active_percentage < 50 or error_rate > 20 or max_cpu > 95 or max_memory > 95:
+            return "CRITICAL"
+        elif active_percentage < 75 or error_rate > 10 or max_cpu > 85 or max_memory > 85:
+            return "WARNING"
+        else:
+            return "HEALTHY"
+    
+    def _empty_aggregation(self) -> AggregatedMetrics:
+        """Return an empty aggregation when no metrics available."""
+        return AggregatedMetrics(
+            timestamp=time.time(),
+            total_agents=0,
+            active_agents=0,
+            total_tasks=0,
+            completed_tasks=0,
+            failed_tasks=0,
+            swarm_error_rate=0,
+            avg_cpu_usage=0,
+            avg_memory_usage=0,
+            max_cpu_usage=0,
+            max_memory_usage=0,
+            avg_task_duration=0,
+            total_uptime=0,
+            agent_details=[],
+            health_status="NO_DATA",
+            alerts=[]
+        )
+    
+    def get_agent_timeseries(self, agent_id: str) -> Dict[str, Any]:
+        """Get time-series data for a specific agent."""
+        metrics = self.store.get_agent_metrics(agent_id)
+        
+        if not metrics:
+            return {"agent_id": agent_id, "data": []}
+        
+        timestamps = [m.timestamp for m in metrics]
+        cpu_usages = [m.cpu_usage for m in metrics]
+        memory_usages = [m.memory_usage for m in metrics]
+        error_rates = [m.error_rate for m in metrics]
+        task_counts = [m.task_count for m in metrics]
+        
+        return {
+            "agent_id": agent_id,
+            "timestamps": timestamps,
+            "cpu_usages": cpu_usages,
+            "memory_usages": memory_usages,
+            "error_rates": error_rates,
+            "task_counts": task_counts,
+            "metric_count": len(metrics)
+        }
+    
+    def get_percentile_stats(self, percentile: float = 95.0) -> Dict[str, float]:
+        """Get percentile statistics across all agents."""
+        latest_metrics = self.store.get_latest_metrics()
+        
+        if not latest_metrics:
+            return {}
+        
+        agents = list(latest_metrics.values())
+        
+        cpu_usages = [a.cpu_usage for a in agents]
+        memory_usages = [a.memory_usage for a in agents]
+        error_rates = [a.error_rate for a in agents]
+        task_durations = [a.avg_task_duration for a in agents if a.avg_task_duration > 0]
+        
+        return {
+            "cpu_percentile": round(statistics.quantiles(cpu_usages, n=100)[int(percentile)-1], 2) if cpu_usages else 0,
+            "memory_percentile": round(statistics.quantiles(memory_usages, n=100)[int(percentile)-1], 2) if memory_usages else 0,
+            "error_rate_percentile": round(statistics.quantiles(error_rates, n=100)[int(percentile)-1], 2) if error_rates else 0,
+            "task_duration_percentile": round(statistics.quantiles(task_durations, n=100)[int(percentile)-1], 2) if task_durations else 0,
+            "percentile": percentile
+        }
+
+
+class MetricsSimulator:
+    """Simulates agent metrics for demonstration."""
+    
+    def __init__(self, num_agents: int = 5):
+        self.num_agents = num_agents
+        self.agents = [f"agent-{i:03d}" for i in range(num_agents)]
+    
+    def generate_metrics(self) -> List[AgentMetric]:
+        """Generate simulated metrics for all agents."""
+        metrics = []
+        current_time = time.time()
+        
+        for agent_id in self.agents:
+            # Simulate realistic metric variations
+            cpu_usage = random.gauss(45, 15)
+            memory_usage = random.gauss(55, 12)
+            cpu_usage = max(5, min(100, cpu_usage))
+            memory_usage = max(10, min(100, memory_usage))
+            
+            task_count = random.randint(10, 100)
+            failed_count = max(0, int(task_count * random.gauss(0.02, 0.01)))
+            completed_count = task_count - failed_count
+            
+            error_rate = (failed_count / task_count * 100) if task_count > 0 else 0
+            status = "healthy" if error_rate < 10 and cpu_usage < 80 else "degraded"
+            
+            metric = AgentMetric(
+                agent_id=agent_id,
+                timestamp=current_time,
+                cpu_usage=cpu_usage,
+                memory_usage=memory_usage,
+                task_count=task_count,
+                completed_tasks=completed_count,
+                failed_tasks=failed_count,
+                error_rate=error_rate,
+                avg_task_duration=random.gauss(500, 100),
+                uptime_seconds=random.randint(3600, 86400),
+                status=status
+            )
+            metrics.append(metric)
+        
+        return metrics
+
+
+def print_dashboard(aggregated: AggregatedMetrics) -> None:
+    """Print a formatted dashboard view."""
+    print("\n" + "="*80)
+    print("🚀 SWARM HEALTH DASHBOARD".center(80))
+    print("="*80)
+    
+    print(f"\n📊 Overall Status: {aggregated.health_status}")
+    print(f"⏰ Timestamp:
