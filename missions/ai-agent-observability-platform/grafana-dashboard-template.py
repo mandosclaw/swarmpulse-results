@@ -2,493 +2,462 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    Grafana dashboard template
 # Mission: AI Agent Observability Platform
-# Agent:   @dex
-# Date:    2026-03-28T22:02:37.453Z
+# Agent:   @sue
+# Date:    2026-03-29T13:13:56.600Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Grafana dashboard template
-Mission: AI Agent Observability Platform
-Agent: @dex
-Date: 2024
+TASK: Grafana dashboard template
+MISSION: AI Agent Observability Platform
+AGENT: @sue
+DATE: 2025-01-20
 
-This module generates a complete Grafana dashboard template for AI agent observability,
-including distributed tracing, token cost attribution, and anomaly detection visualizations.
+Implementation of an OOTB Grafana dashboard template generator for LLM/agent
+observability with P50/P95 latency, cost per request, error rate, and injection
+detection metrics.
 """
 
-import json
 import argparse
+import json
+import sys
+import statistics
 from datetime import datetime, timedelta
-from typing import Dict, List, Any
-import hashlib
-import random
-import string
+from typing import Any, Dict, List
+from dataclasses import dataclass, asdict
+from enum import Enum
+
+
+class InjectionSeverity(Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+@dataclass
+class TraceSpan:
+    span_id: str
+    parent_span_id: str
+    operation_name: str
+    start_time: float
+    end_time: float
+    duration_ms: float
+    status: str
+    token_count_input: int
+    token_count_output: int
+    cost_usd: float
+    error_message: str = ""
+    injection_detected: bool = False
+    injection_severity: InjectionSeverity = InjectionSeverity.LOW
+    prompt_text: str = ""
+
+
+@dataclass
+class MetricSnapshot:
+    timestamp: str
+    p50_latency_ms: float
+    p95_latency_ms: float
+    p99_latency_ms: float
+    avg_latency_ms: float
+    error_rate_pct: float
+    injection_rate_pct: float
+    high_severity_injection_count: int
+    total_requests: int
+    total_cost_usd: float
+    avg_cost_per_request: float
+    total_tokens_input: int
+    total_tokens_output: int
+
+
+class InjectionDetector:
+    INJECTION_PATTERNS = [
+        r"ignore previous",
+        r"forget about",
+        r"disregard",
+        r"override",
+        r"bypass",
+        r"system prompt",
+        r"hidden instruction",
+        r"execute this",
+        r"jailbreak",
+        r"prompt injection",
+        r"break character",
+    ]
+
+    SUSPICIOUS_TOKEN_SEQUENCES = [
+        "<!--",
+        "-->",
+        "{{",
+        "}}",
+        "${",
+        "<%",
+        "%>",
+        "<script",
+        "javascript:",
+    ]
+
+    @staticmethod
+    def detect_injection(text: str) -> tuple[bool, InjectionSeverity]:
+        if not text:
+            return False, InjectionSeverity.LOW
+
+        text_lower = text.lower()
+
+        severity = InjectionSeverity.LOW
+        detected = False
+
+        for pattern in InjectionDetector.INJECTION_PATTERNS:
+            if pattern in text_lower:
+                detected = True
+                severity = InjectionSeverity.MEDIUM
+                break
+
+        for sequence in InjectionDetector.SUSPICIOUS_TOKEN_SEQUENCES:
+            if sequence in text:
+                detected = True
+                severity = InjectionSeverity.HIGH
+                break
+
+        if (
+            text_lower.count("prompt") > 2
+            or text_lower.count("system") > 3
+        ):
+            severity = InjectionSeverity.HIGH
+
+        return detected, severity
+
+
+class MetricsCalculator:
+    @staticmethod
+    def calculate_percentile(values: List[float], percentile: int) -> float:
+        if not values:
+            return 0.0
+        sorted_values = sorted(values)
+        index = int((percentile / 100.0) * len(sorted_values))
+        if index >= len(sorted_values):
+            index = len(sorted_values) - 1
+        return float(sorted_values[index])
+
+    @staticmethod
+    def process_spans(spans: List[TraceSpan]) -> MetricSnapshot:
+        if not spans:
+            return MetricSnapshot(
+                timestamp=datetime.utcnow().isoformat(),
+                p50_latency_ms=0.0,
+                p95_latency_ms=0.0,
+                p99_latency_ms=0.0,
+                avg_latency_ms=0.0,
+                error_rate_pct=0.0,
+                injection_rate_pct=0.0,
+                high_severity_injection_count=0,
+                total_requests=0,
+                total_cost_usd=0.0,
+                avg_cost_per_request=0.0,
+                total_tokens_input=0,
+                total_tokens_output=0,
+            )
+
+        latencies = [span.duration_ms for span in spans]
+        errors = [span for span in spans if span.status != "success"]
+        injections = [
+            span
+            for span in spans
+            if span.injection_detected
+        ]
+        high_severity_injections = [
+            span
+            for span in injections
+            if span.injection_severity == InjectionSeverity.HIGH
+        ]
+
+        p50 = MetricsCalculator.calculate_percentile(latencies, 50)
+        p95 = MetricsCalculator.calculate_percentile(latencies, 95)
+        p99 = MetricsCalculator.calculate_percentile(latencies, 99)
+        avg_latency = (
+            statistics.mean(latencies) if latencies else 0.0
+        )
+
+        error_rate = (
+            (len(errors) / len(spans) * 100) if spans else 0.0
+        )
+        injection_rate = (
+            (len(injections) / len(spans) * 100) if spans else 0.0
+        )
+
+        total_cost = sum(span.cost_usd for span in spans)
+        avg_cost = (
+            total_cost / len(spans) if spans else 0.0
+        )
+
+        total_tokens_in = sum(span.token_count_input for span in spans)
+        total_tokens_out = sum(
+            span.token_count_output for span in spans
+        )
+
+        return MetricSnapshot(
+            timestamp=datetime.utcnow().isoformat(),
+            p50_latency_ms=round(p50, 2),
+            p95_latency_ms=round(p95, 2),
+            p99_latency_ms=round(p99, 2),
+            avg_latency_ms=round(avg_latency, 2),
+            error_rate_pct=round(error_rate, 2),
+            injection_rate_pct=round(injection_rate, 2),
+            high_severity_injection_count=len(high_severity_injections),
+            total_requests=len(spans),
+            total_cost_usd=round(total_cost, 4),
+            avg_cost_per_request=round(avg_cost, 4),
+            total_tokens_input=total_tokens_in,
+            total_tokens_output=total_tokens_out,
+        )
 
 
 class GrafanaDashboardGenerator:
-    """Generates Grafana dashboard templates for AI agent observability."""
-
-    def __init__(self, dashboard_name: str, refresh_interval: str = "30s"):
-        """Initialize dashboard generator.
-        
-        Args:
-            dashboard_name: Name of the dashboard
-            refresh_interval: How often to refresh the dashboard
-        """
-        self.dashboard_name = dashboard_name
-        self.refresh_interval = refresh_interval
-        self.dashboard_uid = self._generate_uid()
-        self.panels = []
-        self.panel_id = 1
-        self.row_index = 0
-
-    def _generate_uid(self) -> str:
-        """Generate unique identifier for dashboard."""
-        hash_input = f"{self.dashboard_name}{datetime.now().isoformat()}"
-        return hashlib.md5(hash_input.encode()).hexdigest()[:8]
-
-    def _get_next_panel_id(self) -> int:
-        """Get next available panel ID."""
-        current_id = self.panel_id
-        self.panel_id += 1
-        return current_id
-
-    def _get_grid_position(self, column: int, row: int, width: int = 12, height: int = 8) -> Dict[str, int]:
-        """Generate grid position for panel."""
-        return {
-            "h": height,
-            "w": width,
-            "x": column,
-            "y": row
-        }
-
-    def add_agent_performance_panel(self) -> None:
-        """Add panel for agent performance metrics."""
-        panel = {
-            "datasource": {"type": "prometheus", "uid": "prometheus"},
-            "fieldConfig": {
-                "defaults": {
-                    "color": {"mode": "palette-classic"},
-                    "custom": {
-                        "axisCenteredZero": False,
-                        "axisColorMode": "text",
-                        "axisLabel": "",
-                        "axisPlacement": "auto",
-                        "barAlignment": 0,
-                        "drawStyle": "line",
-                        "fillOpacity": 10,
-                        "gradientMode": "none",
-                        "hideFrom": {
-                            "tooltip": False,
-                            "viz": False,
-                            "legend": False
-                        },
-                        "lineInterpolation": "linear",
-                        "lineWidth": 1,
-                        "pointSize": 5,
-                        "scaleDistribution": {
-                            "type": "linear"
-                        },
-                        "showPoints": "auto",
-                        "spanNulls": False,
-                        "stacking": {
-                            "group": "A",
-                            "mode": "none"
-                        },
-                        "thresholdsStyle": {
-                            "mode": "off"
-                        }
-                    },
-                    "mappings": [],
-                    "thresholds": {
-                        "mode": "absolute",
-                        "steps": [
-                            {
-                                "color": "green",
-                                "value": None
-                            },
-                            {
-                                "color": "red",
-                                "value": 80
-                            }
-                        ]
-                    },
-                    "unit": "ms"
-                },
-                "overrides": []
-            },
-            "gridPos": self._get_grid_position(0, self.row_index, 12, 8),
-            "id": self._get_next_panel_id(),
-            "options": {
-                "legend": {
-                    "calcs": ["mean", "max"],
-                    "displayMode": "table",
-                    "placement": "bottom",
-                    "showLegend": True
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "none"
-                }
-            },
-            "pluginVersion": "9.5.3",
-            "targets": [
-                {
-                    "expr": 'rate(agent_request_duration_seconds_sum[5m])',
-                    "interval": "",
-                    "legendFormat": "{{agent_id}} - avg latency",
-                    "refId": "A"
-                },
-                {
-                    "expr": 'rate(agent_request_duration_seconds_count[5m])',
-                    "interval": "",
-                    "legendFormat": "{{agent_id}} - throughput",
-                    "refId": "B"
-                }
-            ],
-            "title": "Agent Performance - Latency & Throughput",
-            "type": "timeseries"
-        }
-        self.panels.append(panel)
-        self.row_index += 8
-
-    def add_token_cost_panel(self) -> None:
-        """Add panel for token cost attribution."""
-        panel = {
-            "datasource": {"type": "prometheus", "uid": "prometheus"},
-            "fieldConfig": {
-                "defaults": {
-                    "color": {"mode": "thresholds"},
-                    "custom": {
-                        "align": "auto",
-                        "displayMode": "auto",
-                        "inspect": False
-                    },
-                    "mappings": [],
-                    "thresholds": {
-                        "mode": "absolute",
-                        "steps": [
-                            {
-                                "color": "green",
-                                "value": None
-                            },
-                            {
-                                "color": "yellow",
-                                "value": 1000
-                            },
-                            {
-                                "color": "red",
-                                "value": 5000
-                            }
-                        ]
-                    },
-                    "unit": "short"
-                },
-                "overrides": [
-                    {
-                        "matcher": {"id": "byName", "options": "Cost ($)"},
-                        "properties": [
-                            {
-                                "id": "color",
-                                "value": {"mode": "palette-classic"}
-                            },
-                            {
-                                "id": "custom.displayMode",
-                                "value": "color-background"
-                            }
-                        ]
-                    }
-                ]
-            },
-            "gridPos": self._get_grid_position(0, self.row_index, 12, 8),
-            "id": self._get_next_panel_id(),
-            "options": {
-                "footer": {
-                    "countRows": False,
-                    "fields": "",
-                    "reducer": ["sum"],
-                    "show": True
-                },
-                "showHeader": True,
-                "sortBy": [
-                    {
-                        "displayName": "Cost ($)",
-                        "desc": True
-                    }
-                ]
-            },
-            "pluginVersion": "9.5.3",
-            "targets": [
-                {
-                    "expr": 'sum by (agent_id) (increase(token_cost_total[1h]))',
-                    "format": "table",
-                    "instant": True,
-                    "refId": "A"
-                }
-            ],
-            "title": "Token Cost Attribution by Agent",
-            "transformations": [
-                {
-                    "id": "organize",
-                    "options": {
-                        "excludeByName": {
-                            "Time": True,
-                            "__name__": True
-                        },
-                        "indexByName": {},
-                        "renameByName": {
-                            "Value": "Cost ($)",
-                            "agent_id": "Agent ID"
-                        }
-                    }
-                }
-            ],
-            "type": "table"
-        }
-        self.panels.append(panel)
-        self.row_index += 8
-
-    def add_anomaly_detection_panel(self) -> None:
-        """Add panel for anomaly detection visualization."""
-        panel = {
-            "datasource": {"type": "prometheus", "uid": "prometheus"},
-            "fieldConfig": {
-                "defaults": {
-                    "color": {"mode": "palette-classic"},
-                    "custom": {
-                        "axisCenteredZero": False,
-                        "axisColorMode": "text",
-                        "axisLabel": "",
-                        "axisPlacement": "auto",
-                        "barAlignment": 0,
-                        "drawStyle": "line",
-                        "fillOpacity": 20,
-                        "gradientMode": "opacity",
-                        "hideFrom": {
-                            "tooltip": False,
-                            "viz": False,
-                            "legend": False
-                        },
-                        "lineInterpolation": "smooth",
-                        "lineWidth": 2,
-                        "pointSize": 5,
-                        "scaleDistribution": {
-                            "type": "linear"
-                        },
-                        "showPoints": "never",
-                        "spanNulls": True,
-                        "stacking": {
-                            "group": "A",
-                            "mode": "none"
-                        },
-                        "thresholdsStyle": {
-                            "mode": "dashed"
-                        }
-                    },
-                    "mappings": [],
-                    "thresholds": {
-                        "mode": "absolute",
-                        "steps": [
-                            {
-                                "color": "green",
-                                "value": None
-                            },
-                            {
-                                "color": "orange",
-                                "value": 2
-                            },
-                            {
-                                "color": "red",
-                                "value": 3
-                            }
-                        ]
-                    },
-                    "unit": "short"
-                },
-                "overrides": []
-            },
-            "gridPos": self._get_grid_position(0, self.row_index, 12, 8),
-            "id": self._get_next_panel_id(),
-            "options": {
-                "legend": {
-                    "calcs": ["mean", "max", "min"],
-                    "displayMode": "table",
-                    "placement": "right",
-                    "showLegend": True
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "desc"
-                }
-            },
-            "pluginVersion": "9.5.3",
-            "targets": [
-                {
-                    "expr": 'agent_anomaly_score',
-                    "interval": "",
-                    "legendFormat": "{{agent_id}} - anomaly score",
-                    "refId": "A"
-                },
-                {
-                    "expr": 'agent_anomaly_threshold',
-                    "interval": "",
-                    "legendFormat": "Threshold",
-                    "refId": "B"
-                }
-            ],
-            "title": "Anomaly Detection Scores",
-            "type": "timeseries"
-        }
-        self.panels.append(panel)
-        self.row_index += 8
-
-    def add_distributed_tracing_panel(self) -> None:
-        """Add panel for distributed tracing visualization."""
-        panel = {
-            "datasource": {"type": "jaeger", "uid": "jaeger"},
-            "fieldConfig": {
-                "defaults": {
-                    "color": {"mode": "palette-classic"},
-                    "custom": {
-                        "hideFrom": {
-                            "tooltip": False,
-                            "viz": False,
-                            "legend": False
-                        }
-                    },
-                    "mappings": [],
-                    "thresholds": {
-                        "mode": "absolute",
-                        "steps": [
-                            {
-                                "color": "green",
-                                "value": None
-                            }
-                        ]
-                    },
-                    "unit": "ms"
-                },
-                "overrides": []
-            },
-            "gridPos": self._get_grid_position(0, self.row_index, 12, 8),
-            "id": self._get_next_panel_id(),
-            "options": {
-                "legend": {
-                    "calcs": [],
-                    "displayMode": "list",
-                    "placement": "bottom",
-                    "showLegend": True
-                }
-            },
-            "pluginVersion": "9.5.3",
-            "targets": [
-                {
-                    "serviceName": "ai-agent-service",
-                    "refId": "A"
-                }
-            ],
-            "title": "Distributed Tracing - Request Flow",
-            "type": "nodeGraph"
-        }
-        self.panels.append(panel)
-        self.row_index += 8
-
-    def add_error_rate_panel(self) -> None:
-        """Add panel for error rate monitoring."""
-        panel = {
-            "datasource": {"type": "prometheus", "uid": "prometheus"},
-            "fieldConfig": {
-                "defaults": {
-                    "color": {"mode": "thresholds"},
-                    "custom": {
-                        "align": "auto",
-                        "displayMode": "color-background",
-                        "inspect": False
-                    },
-                    "mappings": [],
-                    "thresholds": {
-                        "mode": "percentage",
-                        "steps": [
-                            {
-                                "color": "green",
-                                "value": None
-                            },
-                            {
-                                "color": "yellow",
-                                "value": 1
-                            },
-                            {
-                                "color": "red",
-                                "value": 5
-                            }
-                        ]
-                    },
-                    "unit": "percent"
-                },
-                "overrides": []
-            },
-            "gridPos": self._get_grid_position(0, self.row_index, 12, 8),
-            "id": self._get_next_panel_id(),
-            "options": {
-                "footer": {
-                    "countRows": False,
-                    "fields": "",
-                    "reducer": ["mean"],
-                    "show": True
-                },
-                "showHeader": True
-            },
-            "pluginVersion": "9.5.3",
-            "targets": [
-                {
-                    "expr": '(sum(rate(agent_errors_total[5m])) / sum(rate(agent_requests_total[5m]))) * 100',
-                    "format": "table",
-                    "instant": True,
-                    "refId": "A"
-                }
-            ],
-            "title": "Error Rate by Agent",
-            "type": "stat"
-        }
-        self.panels.append(panel)
-        self.row_index += 8
-
-    def build_dashboard(self) -> Dict[str, Any]:
-        """Build complete dashboard object."""
+    @staticmethod
+    def generate_dashboard_json(
+        dashboard_title: str = "AI Agent Observability",
+        refresh_interval: str = "30s",
+    ) -> Dict[str, Any]:
+        """Generate a complete Grafana dashboard JSON template."""
         dashboard = {
-            "annotations": {
-                "list": [
-                    {
-                        "builtIn": 1,
-                        "datasource": "-- Grafana --",
-                        "enable": True,
-                        "hide": True,
-                        "iconColor": "rgba(0, 211, 255, 1)",
-                        "name": "Annotations & Alerts",
-                        "type": "dashboard"
-                    }
-                ]
-            },
-            "editable": True,
-            "fiscalYearStartMonth": 0,
-            "graphTooltip": 1,
-            "id": None,
-            "links": [],
-            "liveNow": False,
-            "panels": self.panels,
-            "refresh": self.refresh_interval,
-            "schemaVersion": 37,
-            "style": "dark",
-            "tags": ["ai-agents", "observability", "performance"],
-            "templating": {
-                "list": [
-                    {
-                        "current": {
-                            "selected": False,
-                            "text": "Prometheus",
-                            "value": "prometheus"
+            "dashboard": {
+                "title": dashboard_title,
+                "tags": ["ai-agents", "observability", "otel"],
+                "timezone": "browser",
+                "schemaVersion": 38,
+                "version": 1,
+                "refresh": refresh_interval,
+                "time": {
+                    "from": "now-1h",
+                    "to": "now",
+                },
+                "panels": [
+                    GrafanaDashboardGenerator._create_p50_latency_panel(),
+                    GrafanaDashboardGenerator._create_p95_latency_panel(),
+                    GrafanaDashboardGenerator._create_p99_latency_panel(),
+                    GrafanaDashboardGenerator._create_error_rate_panel(),
+                    GrafanaDashboardGenerator._create_injection_rate_panel(),
+                    GrafanaDashboardGenerator._create_cost_per_request_panel(),
+                    GrafanaDashboardGenerator._create_total_cost_panel(),
+                    GrafanaDashboardGenerator._create_request_volume_panel(),
+                    GrafanaDashboardGenerator._create_token_usage_panel(),
+                    GrafanaDashboardGenerator._create_injection_severity_panel(),
+                    GrafanaDashboardGenerator._create_latency_distribution_panel(),
+                    GrafanaDashboardGenerator._create_cost_breakdown_panel(),
+                ],
+                "templating": {
+                    "list": [
+                        {
+                            "name": "datasource",
+                            "type": "datasource",
+                            "datasource": "prometheus",
+                            "current": {
+                                "value": "Prometheus",
+                                "text": "Prometheus",
+                            },
                         },
-                        "description": None,
-                        "error": None,
-                        "hide":
+                        {
+                            "name": "service",
+                            "type": "query",
+                            "datasource": "prometheus",
+                            "query": 'label_values(agent_requests_total, service)',
+                            "current": {"value": "all", "text": "All"},
+                            "multi": True,
+                        },
+                    ]
+                },
+            }
+        }
+        return dashboard
+
+    @staticmethod
+    def _create_p50_latency_panel() -> Dict[str, Any]:
+        return {
+            "id": 1,
+            "title": "P50 Latency (ms)",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0},
+            "targets": [
+                {
+                    "expr": 'histogram_quantile(0.50, rate(agent_request_duration_seconds_bucket[5m])) * 1000',
+                    "refId": "A",
+                    "legendFormat": "P50",
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "custom": {},
+                    "unit": "ms",
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": None},
+                            {"color": "yellow", "value": 500},
+                            {"color": "red", "value": 1000},
+                        ],
+                    },
+                },
+                "overrides": [],
+            },
+        }
+
+    @staticmethod
+    def _create_p95_latency_panel() -> Dict[str, Any]:
+        return {
+            "id": 2,
+            "title": "P95 Latency (ms)",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0},
+            "targets": [
+                {
+                    "expr": 'histogram_quantile(0.95, rate(agent_request_duration_seconds_bucket[5m])) * 1000',
+                    "refId": "A",
+                    "legendFormat": "P95",
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "custom": {},
+                    "unit": "ms",
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": None},
+                            {"color": "yellow", "value": 1000},
+                            {"color": "red", "value": 2000},
+                        ],
+                    },
+                },
+                "overrides": [],
+            },
+        }
+
+    @staticmethod
+    def _create_p99_latency_panel() -> Dict[str, Any]:
+        return {
+            "id": 3,
+            "title": "P99 Latency (ms)",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+            "targets": [
+                {
+                    "expr": 'histogram_quantile(0.99, rate(agent_request_duration_seconds_bucket[5m])) * 1000',
+                    "refId": "A",
+                    "legendFormat": "P99",
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "custom": {},
+                    "unit": "ms",
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": None},
+                            {"color": "yellow", "value": 2000},
+                            {"color": "red", "value": 5000},
+                        ],
+                    },
+                },
+                "overrides": [],
+            },
+        }
+
+    @staticmethod
+    def _create_error_rate_panel() -> Dict[str, Any]:
+        return {
+            "id": 4,
+            "title": "Error Rate (%)",
+            "type": "gauge",
+            "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+            "targets": [
+                {
+                    "expr": 'rate(agent_requests_errors_total[5m]) / rate(agent_requests_total[5m]) * 100',
+                    "refId": "A",
+                    "legendFormat": "Error Rate",
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "custom": {},
+                    "unit": "percent",
+                    "min": 0,
+                    "max": 100,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": None},
+                            {"color": "yellow", "value": 5},
+                            {"color": "red", "value": 10},
+                        ],
+                    },
+                },
+                "overrides": [],
+            },
+        }
+
+    @staticmethod
+    def _create_injection_rate_panel() -> Dict[str, Any]:
+        return {
+            "id": 5,
+            "title": "Injection Attempt Rate (%)",
+            "type": "gauge",
+            "gridPos": {"h": 8, "w": 6, "x": 0, "y": 8},
+            "targets": [
+                {
+                    "expr": 'rate(agent_injections_detected_total[5m]) / rate(agent_requests_total[5m]) * 100',
+                    "refId": "A",
+                    "legendFormat": "Injection Rate",
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "custom": {},
+                    "unit": "percent",
+                    "min": 0,
+                    "max": 100,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": None},
+                            {"color": "yellow", "value": 1},
+                            {"color": "red", "value": 5},
+                        ],
+                    },
+                },
+                "overrides": [],
+            },
+        }
+
+    @staticmethod
+    def _create_cost_per_request_panel() -> Dict[str, Any]:
+        return {
+            "id": 6,
+            "title": "Cost Per Request (USD)",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 6, "x": 6, "y": 8},
+            "targets": [
+                {
+                    "expr": 'rate(agent_cost_total[5m]) / rate(agent_requests_total[5m])',
+                    "refId": "A",
+                    "legendFormat": "Avg Cost/Request",
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "custom": {},
+                    "unit": "short",
+                    "custom": {"decimals": 6},
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": None},
+                            {"color": "yellow", "value": 0.01},
+                            {"color": "red", "value": 0.05},
+                        ],
+                    },
+                },
+                "overrides": [],
+            },
+        }
+
+    @
