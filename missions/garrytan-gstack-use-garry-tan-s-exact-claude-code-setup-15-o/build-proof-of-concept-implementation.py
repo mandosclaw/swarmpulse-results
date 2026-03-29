@@ -211,4 +211,190 @@ class DesignerAgent:
         validation_results = {
             "is_valid": True,
             "depth": 0,
-            "component_count
+            "component_count": len(structure.get("components", [])),
+            "issues": [],
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        def check_depth(obj, current_depth=0):
+            if current_depth > validation_results["depth"]:
+                validation_results["depth"] = current_depth
+            if current_depth > 5:
+                validation_results["issues"].append("Component nesting too deep (>5 levels)")
+                validation_results["is_valid"] = False
+            
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    if isinstance(value, (dict, list)):
+                        check_depth(value, current_depth + 1)
+            elif isinstance(obj, list):
+                for item in obj:
+                    check_depth(item, current_depth + 1)
+        
+        check_depth(structure)
+        return validation_results
+
+
+class EngManagerAgent:
+    """Engineering manager - oversees code quality and technical debt"""
+    
+    def __init__(self):
+        self.role = Role.ENG_MANAGER
+        self.code_reviews = []
+    
+    def review_code_quality(self, code_content: str, file_path: str) -> CodeReview:
+        """Review code for quality standards"""
+        issues = []
+        severity = "info"
+        
+        # Check for code complexity patterns
+        if len(code_content) > 1000:
+            issues.append("File exceeds 1000 lines - consider splitting")
+        
+        if code_content.count("TODO") > 0:
+            issues.append(f"Found {code_content.count('TODO')} TODO comments")
+        
+        if code_content.count("FIXME") > 0:
+            issues.append(f"Found {code_content.count('FIXME')} FIXME comments")
+        
+        # Check for proper docstrings
+        docstring_count = len(re.findall(r'""".*?"""', code_content, re.DOTALL))
+        function_count = len(re.findall(r'def\s+\w+', code_content))
+        
+        if function_count > 0 and docstring_count < function_count * 0.5:
+            issues.append("Insufficient docstring coverage")
+            severity = "warning"
+        
+        # Check for type hints
+        type_hint_count = len(re.findall(r':\s*\w+\s*=|->|List\[|Dict\[|Optional\[', code_content))
+        if type_hint_count == 0 and function_count > 0:
+            issues.append("Missing type hints")
+            severity = "warning"
+        
+        approved = len(issues) == 0
+        
+        review = CodeReview(
+            reviewer_role="eng_manager",
+            file_path=file_path,
+            issues=issues or ["Code quality acceptable"],
+            severity=severity,
+            approved=approved,
+            comment="Code review completed by Engineering Manager"
+        )
+        
+        self.code_reviews.append(review)
+        return review
+    
+    def assess_technical_debt(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """Assess technical debt in the project"""
+        debt_score = 0.0
+        concerns = []
+        
+        if metrics.get("code_duplication", 0) > 0.2:
+            debt_score += 0.3
+            concerns.append("High code duplication detected")
+        
+        if metrics.get("deprecated_dependencies", 0) > 0:
+            debt_score += 0.2
+            concerns.append("Deprecated dependencies found")
+        
+        if metrics.get("test_coverage", 0) < 0.75:
+            debt_score += 0.25
+            concerns.append("Low test coverage increases debt")
+        
+        if metrics.get("documentation_coverage", 0) < 0.7:
+            debt_score += 0.25
+            concerns.append("Poor documentation adds to technical debt")
+        
+        return {
+            "debt_score": round(min(1.0, debt_score), 2),
+            "level": "critical" if debt_score > 0.7 else "high" if debt_score > 0.5 else "moderate" if debt_score > 0.3 else "low",
+            "concerns": concerns or ["Technical debt within acceptable limits"],
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+class ReleaseManagerAgent:
+    """Release manager - coordinates release planning and deployment"""
+    
+    def __init__(self):
+        self.role = Role.RELEASE_MANAGER
+        self.release_plans = []
+    
+    def plan_release(self, version: str, tasks: List[Task]) -> Dict[str, Any]:
+        """Plan a release with timeline and milestones"""
+        completed = [t for t in tasks if t.status == "completed"]
+        in_progress = [t for t in tasks if t.status == "in_progress"]
+        blocked = [t for t in tasks if t.status == "blocked"]
+        
+        completion_percentage = (len(completed) / len(tasks) * 100) if tasks else 0
+        
+        # Calculate estimated completion date
+        remaining_tasks = len(tasks) - len(completed)
+        days_per_task = 2  # Estimate
+        estimated_days = remaining_tasks * days_per_task
+        estimated_completion = datetime.now() + timedelta(days=estimated_days)
+        
+        release_plan = {
+            "version": version,
+            "current_progress": round(completion_percentage, 2),
+            "completed_tasks": len(completed),
+            "in_progress_tasks": len(in_progress),
+            "blocked_tasks": len(blocked),
+            "total_tasks": len(tasks),
+            "estimated_completion": estimated_completion.isoformat(),
+            "blockers": [f"Task {t.id}: {t.title}" for t in blocked],
+            "ready_for_release": len(blocked) == 0 and completion_percentage >= 95,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        self.release_plans.append(release_plan)
+        return release_plan
+    
+    def create_release_checklist(self, version: str) -> Dict[str, Any]:
+        """Create pre-release checklist"""
+        return {
+            "version": version,
+            "checklist": {
+                "code_review": False,
+                "testing_complete": False,
+                "documentation_updated": False,
+                "performance_validated": False,
+                "security_audit": False,
+                "database_migrations": False,
+                "deployment_script_tested": False,
+                "rollback_plan": False,
+                "stakeholder_approval": False,
+                "release_notes": False
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+class DocEngineerAgent:
+    """Documentation engineer - ensures comprehensive and accurate documentation"""
+    
+    def __init__(self):
+        self.role = Role.DOC_ENGINEER
+        self.doc_reviews = []
+    
+    def review_documentation(self, doc_content: str, doc_type: str) -> Dict[str, Any]:
+        """Review documentation for completeness and clarity"""
+        issues = []
+        sections = {}
+        
+        # Check for required sections based on doc type
+        required_sections = {
+            "api": ["Overview", "Installation", "Usage", "Examples", "API Reference", "Error Handling"],
+            "guide": ["Introduction", "Prerequisites", "Steps", "Examples", "Troubleshooting"],
+            "readme": ["Description", "Installation", "Usage", "Contributing", "License"]
+        }
+        
+        expected_sections = required_sections.get(doc_type, [])
+        
+        for section in expected_sections:
+            if section.lower() in doc_content.lower():
+                sections[section] = True
+            else:
+                sections[section] = False
+                issues.append(f"Missing '{section}' section
