@@ -138,7 +138,7 @@ class ClaudeFolderAnalyzer:
         structure = {}
 
         for file_info in self.files_info:
-            parts = Path(file_info['path']).relative_to(self.folder_path).parts
+            parts = Path(file_info.path).relative_to(self.folder_path).parts
             current = structure
 
             for part in parts[:-1]:
@@ -148,9 +148,9 @@ class ClaudeFolderAnalyzer:
 
             if parts:
                 current[parts[-1]] = {
-                    'size': file_info['size'],
-                    'type': file_info['file_type'],
-                    'is_dir': file_info['is_directory']
+                    'size': file_info.size,
+                    'type': file_info.file_type,
+                    'is_dir': file_info.is_directory
                 }
 
         return structure
@@ -229,4 +229,150 @@ class ClaudeFolderAnalyzer:
         files_by_type = {}
         for file_info in self.files_info:
             ft = file_info.file_type
-            files_by_type[ft] = files_by_type.get(ft, 0)
+            files_by_type[ft] = files_by_type.get(ft, 0) + 1
+
+        total_size = sum(f.size for f in self.files_info)
+        total_files = len([f for f in self.files_info if not f.is_directory])
+        total_directories = len([f for f in self.files_info if f.is_directory])
+
+        analysis = FolderAnalysis(
+            root_path=str(self.folder_path),
+            total_files=total_files,
+            total_directories=total_directories,
+            total_size=total_size,
+            file_types=files_by_type,
+            largest_files=self.get_largest_files(10),
+            folder_structure=self.build_folder_structure(),
+            config_files=self.identify_config_files(),
+            cache_files=self.identify_cache_files(),
+            log_files=self.identify_log_files(),
+            potential_issues=self.detect_issues()
+        )
+
+        return analysis
+
+
+def format_size(size: int) -> str:
+    """Format size in human-readable format."""
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size < 1024.0:
+            return f"{size:.2f} {unit}"
+        size /= 1024.0
+    return f"{size:.2f} PB"
+
+
+def print_analysis_report(analysis: FolderAnalysis) -> None:
+    """Print a formatted analysis report."""
+    print("\n" + "="*70)
+    print("CLAUDE FOLDER ANALYSIS REPORT")
+    print("="*70)
+
+    print(f"\n📁 Root Path: {analysis.root_path}")
+    print(f"📊 Total Files: {analysis.total_files}")
+    print(f"📂 Total Directories: {analysis.total_directories}")
+    print(f"💾 Total Size: {format_size(analysis.total_size)}")
+
+    print("\n📋 File Types Distribution:")
+    for file_type, count in sorted(analysis.file_types.items()):
+        print(f"  • {file_type}: {count}")
+
+    if analysis.largest_files:
+        print("\n📈 Top 10 Largest Files:")
+        for i, file_info in enumerate(analysis.largest_files, 1):
+            print(f"  {i}. {file_info['name']}")
+            print(f"     Path: {file_info['path']}")
+            print(f"     Size: {format_size(file_info['size'])}")
+            print(f"     Type: {file_info['type']}")
+
+    if analysis.config_files:
+        print(f"\n⚙️  Configuration Files ({len(analysis.config_files)}):")
+        for config_file in analysis.config_files[:5]:
+            print(f"  • {config_file}")
+        if len(analysis.config_files) > 5:
+            print(f"  ... and {len(analysis.config_files) - 5} more")
+
+    if analysis.cache_files:
+        print(f"\n🗑️  Cache Files ({len(analysis.cache_files)}):")
+        for cache_file in analysis.cache_files[:5]:
+            print(f"  • {cache_file}")
+        if len(analysis.cache_files) > 5:
+            print(f"  ... and {len(analysis.cache_files) - 5} more")
+
+    if analysis.log_files:
+        print(f"\n📝 Log Files ({len(analysis.log_files)}):")
+        for log_file in analysis.log_files[:5]:
+            print(f"  • {log_file}")
+        if len(analysis.log_files) > 5:
+            print(f"  ... and {len(analysis.log_files) - 5} more")
+
+    if analysis.potential_issues:
+        print("\n⚠️  Potential Issues:")
+        for issue in analysis.potential_issues:
+            print(f"  • {issue}")
+    else:
+        print("\n✅ No potential issues detected")
+
+    print("\n" + "="*70 + "\n")
+
+
+def export_analysis(analysis: FolderAnalysis, output_file: str) -> None:
+    """Export analysis results to JSON file."""
+    output_data = asdict(analysis)
+    with open(output_file, 'w') as f:
+        json.dump(output_data, f, indent=2)
+    print(f"✅ Analysis exported to: {output_file}")
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Analyze the anatomy of the .claude/ folder"
+    )
+    parser.add_argument(
+        "folder",
+        nargs="?",
+        default=".claude",
+        help="Path to the folder to analyze (default: .claude)"
+    )
+    parser.add_argument(
+        "--export",
+        "-e",
+        help="Export analysis results to JSON file"
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print detailed output"
+    )
+
+    args = parser.parse_args()
+
+    folder_path = Path(args.folder).expanduser()
+
+    if not folder_path.exists():
+        print(f"❌ Error: Folder not found: {folder_path}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"🔍 Analyzing folder: {folder_path}")
+
+    try:
+        analyzer = ClaudeFolderAnalyzer(str(folder_path))
+        analysis = analyzer.analyze()
+
+        print_analysis_report(analysis)
+
+        if args.export:
+            export_analysis(analysis, args.export)
+
+        if args.verbose:
+            print("📦 Folder Structure (JSON):")
+            print(json.dumps(analysis.folder_structure, indent=2))
+
+    except Exception as e:
+        print(f"❌ Error during analysis: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
