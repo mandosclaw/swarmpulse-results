@@ -3,407 +3,395 @@
 # Task:    Design the solution architecture
 # Mission: Anatomy of the .claude/ folder
 # Agent:   @aria
-# Date:    2026-03-28T22:06:54.834Z
+# Date:    2026-03-29T20:34:41.771Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Anatomy of the .claude/ folder - Solution Architecture Design
-Mission: Engineering
-Agent: @aria
+Task: Design the solution architecture for .claude/ folder anatomy
+Mission: Anatomy of the .claude/ folder
+Agent: @aria (SwarmPulse network)
 Date: 2024
 
-This solution documents and analyzes the structure, purpose, and trade-offs
-of the .claude/ configuration folder used by Claude-based applications.
+This solution provides a comprehensive analysis of the .claude/ folder structure,
+documenting the architecture, trade-offs, and implementation details for managing
+Claude API configurations and artifacts.
 """
 
 import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Tuple
 from enum import Enum
-import hashlib
-from datetime import datetime
 
 
-class ComponentType(Enum):
-    """Types of components in .claude/ folder structure."""
-    CONFIG = "config"
-    CACHE = "cache"
-    STATE = "state"
-    CREDENTIALS = "credentials"
-    LOGS = "logs"
-    TEMP = "temp"
-    METADATA = "metadata"
+class StorageStrategy(Enum):
+    """Storage strategy options with trade-offs."""
+    FLAT = "flat"           # Single-level directory
+    HIERARCHICAL = "hierarchical"  # Multi-level directory tree
+    HYBRID = "hybrid"       # Combination of flat and hierarchical
 
 
 @dataclass
-class ComponentAnalysis:
-    """Analysis of a single component in .claude/ folder."""
+class ArchitectureConfig:
+    """Configuration for .claude/ folder architecture."""
+    storage_strategy: StorageStrategy
+    enable_caching: bool
+    max_cache_size_mb: int
+    enable_versioning: bool
+    enable_encryption: bool
+    config_format: str  # json, yaml, toml
+
+
+@dataclass
+class TradeOff:
+    """Represents a single architectural trade-off."""
     name: str
-    component_type: str
-    purpose: str
-    typical_contents: List[str]
-    risk_level: str
-    trade_offs: List[str]
-    recommendations: List[str]
-    persistence: bool
+    pros: List[str]
+    cons: List[str]
+    recommended_for: str
+    impact: str  # high, medium, low
 
 
-@dataclass
-class FolderArchitecture:
-    """Complete architecture analysis of .claude/ folder."""
-    timestamp: str
-    components: List[ComponentAnalysis]
-    total_risk_score: float
-    storage_efficiency: Dict[str, Any]
-    security_considerations: List[str]
-    optimization_opportunities: List[str]
-
-
-class ClaudeFolderAnalyzer:
-    """Analyzes and documents .claude/ folder architecture."""
-
-    def __init__(self, verbose: bool = False):
-        self.verbose = verbose
-        self.components_database = self._initialize_components_db()
-
-    def _initialize_components_db(self) -> Dict[str, Dict[str, Any]]:
-        """Initialize database of known .claude/ folder components."""
-        return {
-            "config": {
-                "type": ComponentType.CONFIG.value,
-                "purpose": "Configuration files for Claude client and plugins",
-                "typical_contents": [
-                    "claude.json",
-                    "settings.toml",
-                    "preferences.yaml",
-                    "extensions.json",
-                    "api_config.json"
+class ClaudeFolderArchitect:
+    """Designs and documents .claude/ folder architecture with trade-offs."""
+    
+    def __init__(self, base_path: Optional[str] = None):
+        self.base_path = Path(base_path or os.path.expanduser("~/.claude"))
+        self.config: Optional[ArchitectureConfig] = None
+        self.trade_offs: List[TradeOff] = []
+        
+    def analyze_storage_strategies(self) -> Dict[str, Dict]:
+        """Analyze different storage strategies with trade-offs."""
+        strategies = {
+            "flat": {
+                "structure": "All files in single directory",
+                "example_paths": [
+                    ".claude/config.json",
+                    ".claude/api_key.enc",
+                    ".claude/conversation_1.json",
+                    ".claude/conversation_2.json",
                 ],
-                "risk_level": "medium",
-                "trade_offs": [
-                    "Local config faster than remote but requires synchronization",
-                    "Plain text readable but less secure than encrypted",
-                    "Version control friendly but may expose sensitive data"
-                ],
-                "recommendations": [
-                    "Use environment variables for sensitive config",
-                    "Implement .gitignore patterns for secrets",
-                    "Enable file encryption for sensitive sections",
-                    "Validate schema on load"
-                ],
-                "persistence": True
+                "trade_offs": TradeOff(
+                    name="Flat Storage",
+                    pros=[
+                        "Simple to implement and understand",
+                        "Fast file access with minimal path traversal",
+                        "Easy backup and synchronization",
+                        "Suitable for small-scale usage (< 1000 files)",
+                    ],
+                    cons=[
+                        "Becomes unwieldy with many files",
+                        "Difficult to organize and categorize",
+                        "Name collision risks increase",
+                        "Poor scalability for large deployments",
+                    ],
+                    recommended_for="Personal use, development, small teams",
+                    impact="low"
+                )
             },
-            "cache": {
-                "type": ComponentType.CACHE.value,
-                "purpose": "Caching layer for API responses and computations",
-                "typical_contents": [
-                    "response_cache/",
-                    "embeddings_cache/",
-                    "compiled_artifacts/",
-                    "index_cache/"
+            "hierarchical": {
+                "structure": "Multi-level directory tree organized by type/time/project",
+                "example_paths": [
+                    ".claude/config/api.json",
+                    ".claude/config/preferences.json",
+                    ".claude/keys/prod.enc",
+                    ".claude/keys/dev.enc",
+                    ".claude/conversations/2024/01/conversation_abc123.json",
+                    ".claude/conversations/2024/02/conversation_def456.json",
+                    ".claude/artifacts/projects/project_1/file.py",
                 ],
-                "risk_level": "low",
-                "trade_offs": [
-                    "Improves performance but increases storage footprint",
-                    "Stale cache can cause inconsistencies",
-                    "Easy to clear but loses performance gains"
-                ],
-                "recommendations": [
-                    "Implement cache invalidation strategy",
-                    "Monitor cache hit rates",
-                    "Set maximum cache age thresholds",
-                    "Use content hashing for cache keys"
-                ],
-                "persistence": False
+                "trade_offs": TradeOff(
+                    name="Hierarchical Storage",
+                    pros=[
+                        "Excellent scalability (handles millions of files)",
+                        "Logical organization by category and time",
+                        "Reduced name collisions",
+                        "Better permission granularity",
+                        "Facilitates incremental backups",
+                    ],
+                    cons=[
+                        "More complex implementation",
+                        "Deeper path traversal overhead",
+                        "Requires careful index management",
+                        "Migration complexity from flat structure",
+                    ],
+                    recommended_for="Production systems, large teams, enterprise",
+                    impact="high"
+                )
             },
-            "state": {
-                "type": ComponentType.STATE.value,
-                "purpose": "Session and application state persistence",
-                "typical_contents": [
-                    "session.json",
-                    "conversation_history.db",
-                    "undo_stack.json",
-                    "open_buffers.json"
+            "hybrid": {
+                "structure": "Flat config files + hierarchical data storage",
+                "example_paths": [
+                    ".claude/config.json",
+                    ".claude/api_keys.enc",
+                    ".claude/data/conversations/2024/01/conv_123.json",
+                    ".claude/data/artifacts/project_1/code.py",
+                    ".claude/data/cache/embeddings/xyz.bin",
                 ],
-                "risk_level": "medium",
-                "trade_offs": [
-                    "Enables recovery but can become corrupted",
-                    "Lightweight persistence vs robust database",
-                    "Fast recovery vs potential data loss"
-                ],
-                "recommendations": [
-                    "Implement atomic writes with temporary files",
-                    "Create automatic backups of state",
-                    "Validate state on load",
-                    "Implement state versioning"
-                ],
-                "persistence": True
-            },
-            "credentials": {
-                "type": ComponentType.CREDENTIALS.value,
-                "purpose": "Secure storage for API keys and authentication tokens",
-                "typical_contents": [
-                    "api_keys.json",
-                    "oauth_tokens/",
-                    "ssh_keys/",
-                    "certificates/"
-                ],
-                "risk_level": "critical",
-                "trade_offs": [
-                    "Local storage faster but less secure than system keychain",
-                    "File-based simpler but requires encryption",
-                    "Centralized creds vs distributed per-service keys"
-                ],
-                "recommendations": [
-                    "Use OS keychain integration (Keyring/Credential Manager)",
-                    "Encrypt at rest with PBKDF2 or similar",
-                    "Never commit credentials to version control",
-                    "Implement rotation policies",
-                    "Use short-lived tokens when possible"
-                ],
-                "persistence": True
-            },
-            "logs": {
-                "type": ComponentType.LOGS.value,
-                "purpose": "Debug and operational logging",
-                "typical_contents": [
-                    "app.log",
-                    "api.log",
-                    "error.log",
-                    "performance.log",
-                    "audit.log"
-                ],
-                "risk_level": "medium",
-                "trade_offs": [
-                    "Verbose logging helps debugging but hurts performance",
-                    "Local logs fast but consume storage",
-                    "Structured logs queryable but larger size"
-                ],
-                "recommendations": [
-                    "Implement log rotation and retention policies",
-                    "Use structured logging (JSON) for analysis",
-                    "Sanitize sensitive data from logs",
-                    "Set appropriate log levels by component",
-                    "Monitor log file growth"
-                ],
-                "persistence": True
-            },
-            "temp": {
-                "type": ComponentType.TEMP.value,
-                "purpose": "Temporary files for work-in-progress",
-                "typical_contents": [
-                    "scratch/",
-                    "uploads/",
-                    "processing/",
-                    "incomplete_artifacts/"
-                ],
-                "risk_level": "low",
-                "trade_offs": [
-                    "Isolates temp files but requires cleanup",
-                    "Per-app temp vs system temp directory",
-                    "Quick access vs potential clutter"
-                ],
-                "recommendations": [
-                    "Implement automatic cleanup on app exit",
-                    "Use secure temp file creation (mkstemp-like)",
-                    "Set maximum temp directory size limits",
-                    "Clean files older than threshold"
-                ],
-                "persistence": False
-            },
-            "metadata": {
-                "type": ComponentType.METADATA.value,
-                "purpose": "Version info, checksums, and folder metadata",
-                "typical_contents": [
-                    ".version",
-                    ".structure",
-                    "manifest.json",
-                    ".checksums"
-                ],
-                "risk_level": "low",
-                "trade_offs": [
-                    "Enables verification but requires maintenance",
-                    "Semantic versioning vs simple timestamps",
-                    "Detailed manifest vs minimal metadata"
-                ],
-                "recommendations": [
-                    "Maintain version manifest for compatibility",
-                    "Implement integrity checksums",
-                    "Document schema versions",
-                    "Enable migration pathways"
-                ],
-                "persistence": True
+                "trade_offs": TradeOff(
+                    name="Hybrid Storage",
+                    pros=[
+                        "Simple config access with flat structure",
+                        "Scalable data management with hierarchy",
+                        "Good balance of simplicity and scalability",
+                        "Easy to migrate from flat approach",
+                        "Suits diverse file types and access patterns",
+                    ],
+                    cons=[
+                        "Adds organizational overhead",
+                        "Requires clear separation logic",
+                        "Potential inconsistency if not carefully managed",
+                    ],
+                    recommended_for="Balanced production use, growing teams",
+                    impact="medium"
+                )
             }
         }
-
-    def _calculate_risk_score(self, risk_level: str) -> float:
-        """Convert risk level to numeric score."""
-        risk_mapping = {
-            "low": 1.0,
-            "medium": 2.5,
-            "high": 4.0,
-            "critical": 5.0
+        return strategies
+    
+    def design_architecture(self, strategy: StorageStrategy) -> Dict:
+        """Design complete architecture for chosen strategy."""
+        strategies = self.analyze_storage_strategies()
+        strategy_key = strategy.value
+        base_design = strategies.get(strategy_key, {})
+        
+        design = {
+            "strategy": strategy.value,
+            "timestamp": datetime.now().isoformat(),
+            "base_structure": base_design.get("structure", ""),
+            "example_paths": base_design.get("example_paths", []),
+            "recommended_directory_tree": self._generate_tree(strategy),
+            "file_specifications": self._generate_file_specs(strategy),
+            "access_patterns": self._generate_access_patterns(strategy),
+            "trade_off_analysis": asdict(base_design.get("trade_offs", TradeOff(
+                name="Unknown", pros=[], cons=[], recommended_for="", impact=""
+            ))),
         }
-        return risk_mapping.get(risk_level, 0.0)
-
-    def analyze_architecture(self) -> FolderArchitecture:
-        """Perform complete architectural analysis."""
-        components = []
-        risk_scores = []
-
-        for comp_name, comp_data in self.components_database.items():
-            analysis = ComponentAnalysis(
-                name=comp_name,
-                component_type=comp_data["type"],
-                purpose=comp_data["purpose"],
-                typical_contents=comp_data["typical_contents"],
-                risk_level=comp_data["risk_level"],
-                trade_offs=comp_data["trade_offs"],
-                recommendations=comp_data["recommendations"],
-                persistence=comp_data["persistence"]
-            )
-            components.append(analysis)
-            risk_scores.append(self._calculate_risk_score(comp_data["risk_level"]))
-
-        total_risk_score = sum(risk_scores) / len(risk_scores) if risk_scores else 0.0
-
-        storage_efficiency = {
-            "persistent_components": len([c for c in components if c.persistence]),
-            "temporary_components": len([c for c in components if not c.persistence]),
-            "critical_risk_count": len([c for c in components if c.risk_level == "critical"]),
-            "medium_high_risk_count": len([c for c in components if c.risk_level in ["medium", "high"]])
+        return design
+    
+    def _generate_tree(self, strategy: StorageStrategy) -> str:
+        """Generate directory tree for strategy."""
+        trees = {
+            StorageStrategy.FLAT: ".claude/\n├── config.json\n├── api_key.enc\n├── preferences.json\n└── conversations/\n    ├── conv_001.json\n    └── conv_002.json",
+            StorageStrategy.HIERARCHICAL: ".claude/\n├── config/\n│   ├── api.json\n│   ├── preferences.json\n│   └── plugins.json\n├── keys/\n│   ├── prod.enc\n│   └── dev.enc\n├── conversations/\n│   └── 2024/\n│       ├── 01/\n│       │   ├── conv_001.json\n│       │   └── conv_002.json\n│       └── 02/\n│           └── conv_003.json\n└── artifacts/\n    └── projects/\n        ├── project_1/\n        └── project_2/",
+            StorageStrategy.HYBRID: ".claude/\n├── config.json\n├── api_keys.enc\n├── preferences.json\n└── data/\n    ├── conversations/\n    │   └── 2024/\n    │       └── 01/\n    │           └── conv_001.json\n    ├── artifacts/\n    │   └── projects/\n    │       └── project_1/\n    └── cache/\n        ├── embeddings/\n        └── models/",
         }
-
-        security_considerations = [
-            "Implement file-level encryption for sensitive components (credentials, state)",
-            "Use OS-native keychain/credential manager integration",
-            "Sanitize and validate all input from configuration files",
-            "Implement proper file permissions (600 for sensitive files)",
-            "Regular security audits of stored data",
-            "Implement secure deletion for temporary files",
-            "Monitor and log access to credential stores"
-        ]
-
-        optimization_opportunities = [
-            "Implement intelligent cache invalidation based on file modification times",
-            "Use lazy loading for state and config to reduce startup time",
-            "Implement compression for large cache and log files",
-            "Create symlink-based distribution of common config across instances",
-            "Implement streaming for large log files instead of loading entirely",
-            "Use memory-mapped files for frequently accessed state",
-            "Implement background cleanup processes for expired files"
-        ]
-
-        architecture = FolderArchitecture(
-            timestamp=datetime.now().isoformat(),
-            components=components,
-            total_risk_score=total_risk_score,
-            storage_efficiency=storage_efficiency,
-            security_considerations=security_considerations,
-            optimization_opportunities=optimization_opportunities
-        )
-
-        if self.verbose:
-            self._log_analysis(architecture)
-
-        return architecture
-
-    def _log_analysis(self, architecture: FolderArchitecture) -> None:
-        """Log analysis results."""
-        print(f"\n[Analysis Timestamp] {architecture.timestamp}")
-        print(f"[Total Risk Score] {architecture.total_risk_score:.2f}/5.0")
-        print(f"[Components Analyzed] {len(architecture.components)}")
-        print(f"[Persistent Components] {architecture.storage_efficiency['persistent_components']}")
-        print(f"[Critical Risk Items] {architecture.storage_efficiency['critical_risk_count']}")
-
-    def export_analysis(self, architecture: FolderArchitecture, output_path: str) -> None:
-        """Export analysis to JSON file."""
-        export_data = {
-            "timestamp": architecture.timestamp,
-            "total_risk_score": architecture.total_risk_score,
-            "storage_efficiency": architecture.storage_efficiency,
-            "security_considerations": architecture.security_considerations,
-            "optimization_opportunities": architecture.optimization_opportunities,
-            "components": [asdict(c) for c in architecture.components]
+        return trees.get(strategy, "")
+    
+    def _generate_file_specs(self, strategy: StorageStrategy) -> Dict:
+        """Generate file specifications for strategy."""
+        base_specs = {
+            "config.json": {
+                "purpose": "API configuration and settings",
+                "size_estimate": "1-10 KB",
+                "update_frequency": "rarely",
+                "access_pattern": "on_startup",
+                "format": "JSON",
+            },
+            "api_key.enc": {
+                "purpose": "Encrypted API credentials",
+                "size_estimate": "0.5-2 KB",
+                "update_frequency": "on_rotation",
+                "access_pattern": "on_api_call",
+                "format": "Binary (encrypted)",
+                "encryption": "AES-256-GCM recommended",
+            },
+            "preferences.json": {
+                "purpose": "User preferences and settings",
+                "size_estimate": "5-50 KB",
+                "update_frequency": "on_change",
+                "access_pattern": "on_demand",
+                "format": "JSON",
+            },
+            "conversations/*.json": {
+                "purpose": "Conversation history and context",
+                "size_estimate": "10 KB - 1 MB per file",
+                "update_frequency": "per_interaction",
+                "access_pattern": "sequential_read",
+                "format": "JSON with metadata",
+            },
         }
-
-        with open(output_path, 'w') as f:
-            json.dump(export_data, f, indent=2)
-
-        if self.verbose:
-            print(f"Analysis exported to {output_path}")
-
-    def generate_report(self, architecture: FolderArchitecture) -> str:
-        """Generate a human-readable report."""
-        report = []
-        report.append("=" * 80)
-        report.append(".CLAUDE/ FOLDER ARCHITECTURE ANALYSIS REPORT")
-        report.append("=" * 80)
-        report.append(f"\nAnalysis Date: {architecture.timestamp}")
-        report.append(f"Total Risk Score: {architecture.total_risk_score:.2f}/5.0")
-        report.append(f"\n{'COMPONENT SUMMARY':-^80}")
-
-        for component in architecture.components:
-            report.append(f"\n[{component.name.upper()}]")
-            report.append(f"  Type: {component.component_type}")
-            report.append(f"  Risk Level: {component.risk_level}")
-            report.append(f"  Purpose: {component.purpose}")
-            report.append(f"  Persistent: {component.persistence}")
-
-        report.append(f"\n\n{'SECURITY CONSIDERATIONS':-^80}")
-        for i, consideration in enumerate(architecture.security_considerations, 1):
-            report.append(f"{i}. {consideration}")
-
-        report.append(f"\n\n{'OPTIMIZATION OPPORTUNITIES':-^80}")
-        for i, opportunity in enumerate(architecture.optimization_opportunities, 1):
-            report.append(f"{i}. {opportunity}")
-
-        report.append("\n" + "=" * 80)
-
-        return "\n".join(report)
-
-
-def main():
-    """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Design and analyze the .claude/ folder architecture"
-    )
-    parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Enable verbose output"
-    )
-    parser.add_argument(
-        "-e", "--export",
-        type=str,
-        metavar="PATH",
-        help="Export analysis to JSON file"
-    )
-    parser.add_argument(
-        "-r", "--report",
-        action="store_true",
-        help="Generate and print text report"
-    )
-
-    args = parser.parse_args()
-
-    analyzer = ClaudeFolderAnalyzer(verbose=args.verbose)
-    architecture = analyzer.analyze_architecture()
-
-    if args.export:
-        analyzer.export_analysis(architecture, args.export)
-
-    if args.report:
-        report = analyzer.generate_report(architecture)
-        print(report)
-    elif not args.export:
-        print(analyzer.generate_report(architecture))
-
-
-if __name__ == "__main__":
-    main()
+        return base_specs
+    
+    def _generate_access_patterns(self, strategy: StorageStrategy) -> Dict:
+        """Generate access pattern analysis."""
+        patterns = {
+            "hot_data": [
+                "Current API configuration",
+                "Active conversation history",
+                "Recent preferences",
+            ],
+            "warm_data": [
+                "Archived conversations (last 30 days)",
+                "Cache and indexes",
+                "Plugin configurations",
+            ],
+            "cold_data": [
+                "Old conversation archives (> 90 days)",
+                "Historical artifacts",
+                "Backup metadata",
+            ],
+            "recommendations": {
+                StorageStrategy.FLAT.value: "Keep all in memory, use simple file locking",
+                StorageStrategy.HIERARCHICAL.value: "Use database for hot/warm, file system for cold",
+                StorageStrategy.HYBRID.value: "Cache config in memory, stream conversations from disk",
+            }
+        }
+        return patterns.get(strategy.value, patterns)
+    
+    def generate_implementation_guide(self, strategy: StorageStrategy) -> Dict:
+        """Generate implementation guide with code patterns."""
+        guide = {
+            "initialization": self._init_patterns(strategy),
+            "crud_operations": self._crud_patterns(strategy),
+            "security_measures": self._security_patterns(strategy),
+            "performance_optimization": self._performance_patterns(strategy),
+        }
+        return guide
+    
+    def _init_patterns(self, strategy: StorageStrategy) -> Dict:
+        """Initialization patterns."""
+        return {
+            "steps": [
+                "1. Create base directory with appropriate permissions (700)",
+                "2. Initialize directory structure based on strategy",
+                "3. Generate or import encryption keys",
+                "4. Create config file with defaults",
+                "5. Set up logging and monitoring",
+                "6. Verify all directories are writable",
+            ],
+            "permission_model": "User-only read/write (600 for files, 700 for dirs)",
+            "initialization_checklist": [
+                "Directory existence verified",
+                "Directory permissions validated (user-only)",
+                "Encryption keys initialized",
+                "Config file created with defaults",
+                "Lock mechanism established",
+            ]
+        }
+    
+    def _crud_patterns(self, strategy: StorageStrategy) -> Dict:
+        """CRUD operation patterns."""
+        return {
+            "create": {
+                "approach": "Atomic write with temporary file + rename",
+                "pseudocode": "write to .tmp -> validate -> rename to final",
+                "concurrency": "File locking or atomic operations",
+            },
+            "read": {
+                "approach": "Memory mapping for large files, direct read for small",
+                "caching": "LRU cache for frequently accessed files",
+                "validation": "Integrity check on read",
+            },
+            "update": {
+                "approach": "Copy-on-write or in-place with backup",
+                "versioning": "Keep backups if versioning enabled",
+                "conflict_resolution": "Last-write-wins or timestamp-based",
+            },
+            "delete": {
+                "approach": "Soft delete with archival or hard delete",
+                "retention": "Configurable retention period",
+                "cleanup": "Periodic cleanup of old files",
+            }
+        }
+    
+    def _security_patterns(self, strategy: StorageStrategy) -> Dict:
+        """Security patterns."""
+        return {
+            "encryption": {
+                "algorithm": "AES-256-GCM",
+                "key_derivation": "PBKDF2 or Argon2",
+                "scope": "Sensitive data (keys, credentials)",
+                "implementation": "Use cryptography library",
+            },
+            "access_control": {
+                "file_permissions": "600 (user read/write only)",
+                "directory_permissions": "700 (user full, others none)",
+                "validation": "Check permissions on startup",
+            },
+            "audit_logging": {
+                "log_events": ["file_access", "modifications", "failures"],
+                "log_location": ".claude/logs/audit.log",
+                "log_format": "JSON with timestamps",
+            }
+        }
+    
+    def _performance_patterns(self, strategy: StorageStrategy) -> Dict:
+        """Performance optimization patterns."""
+        return {
+            "caching": {
+                "strategy": "LRU cache for hot data",
+                "ttl": "5 minutes for config, 30 minutes for conversations",
+                "max_cache_size": "100 MB",
+            },
+            "indexing": {
+                "primary": "Conversation ID for lookup",
+                "secondary": "Timestamp for range queries",
+                "implementation": "In-memory hash maps for flat, B-tree for hierarchical",
+            },
+            "batch_operations": {
+                "reading": "Batch read conversations by date range",
+                "writing": "Batch write with transaction semantics",
+                "cleanup": "Scheduled batch cleanup of old files",
+            },
+            "disk_optimization": {
+                "compression": "Optional gzip for archived conversations",
+                "deduplication": "Content-addressed storage for common data",
+                "alignment": "4KB alignment for OS page size",
+            }
+        }
+    
+    def document_migration_path(self, from_strategy: StorageStrategy, 
+                               to_strategy: StorageStrategy) -> Dict:
+        """Document migration from one strategy to another."""
+        if from_strategy == to_strategy:
+            return {"migration_needed": False, "reason": "Same strategy"}
+        
+        migration = {
+            "from_strategy": from_strategy.value,
+            "to_strategy": to_strategy.value,
+            "complexity": "high" if to_strategy == StorageStrategy.HIERARCHICAL else "medium",
+            "estimated_time": "High" if from_strategy == StorageStrategy.FLAT else "Medium",
+            "steps": [
+                "1. Backup existing .claude folder",
+                "2. Create new directory structure",
+                "3. Copy and transform files according to mapping",
+                "4. Validate data integrity",
+                "5. Update all paths in configuration",
+                "6. Test all access patterns",
+                "7. Update documentation",
+                "8. Remove old structure (keep backup for safety)",
+            ],
+            "rollback_plan": [
+                "1. Stop all Claude processes",
+                "2. Remove new structure",
+                "3. Restore from backup",
+                "4. Verify all services operational",
+            ],
+            "testing_checklist": [
+                "All files present in new location",
+                "Permissions set correctly",
+                "API can read configuration",
+                "Conversations load properly",
+                "No data corruption",
+                "Performance meets requirements",
+            ]
+        }
+        return migration
+    
+    def generate_summary_report(self, strategy: StorageStrategy) -> Dict:
+        """Generate comprehensive summary report."""
+        architecture = self.design_architecture(strategy)
+        strategies = self.analyze_storage_strategies()
+        
+        report = {
+            "report_generated": datetime.now().isoformat(),
+            "selected_strategy": strategy.value,
+            "architecture_design": architecture,
+            "all_strategies_comparison": {
+                s: strategies[s]["trade_
