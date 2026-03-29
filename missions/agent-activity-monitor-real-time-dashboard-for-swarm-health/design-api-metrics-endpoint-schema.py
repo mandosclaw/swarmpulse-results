@@ -186,4 +186,198 @@ class MetricsCollector:
             throughput = self.task_counter / 60.0 if self.task_counter > 0 else 0.0
             
             # Determine health status
-            if avg_error_rate > 10 or error >
+            if avg_error_rate > 10 or error > len(self.agents) * 0.3:
+                health_status = "critical"
+            elif avg_error_rate > 5 or error > len(self.agents) * 0.1:
+                health_status = "degraded"
+            else:
+                health_status = "healthy"
+            
+            return SwarmMetrics(
+                timestamp=datetime.utcnow().isoformat(),
+                total_agents=len(self.agents),
+                active_agents=active,
+                idle_agents=idle,
+                error_agents=error,
+                offline_agents=offline,
+                total_tasks_completed=total_completed,
+                total_tasks_failed=total_failed,
+                total_tasks_in_progress=total_in_progress,
+                swarm_throughput_tasks_per_second=throughput,
+                average_error_rate_percent=avg_error_rate,
+                average_cpu_usage_percent=avg_cpu,
+                average_memory_usage_mb=avg_memory,
+                healthcheck_status=health_status
+            )
+    
+    def get_schema(self) -> MetricsEndpointSchema:
+        """Return complete metrics schema"""
+        with self.lock:
+            agent_list = list(self.agents.values())
+            swarm_metrics = self.get_swarm_metrics()
+            
+            # Record history
+            for agent in agent_list:
+                self.performance_history[agent.agent_id].append(agent.cpu_usage_percent)
+                if len(self.performance_history[agent.agent_id]) > self.max_history_points:
+                    self.performance_history[agent.agent_id].pop(0)
+            
+            return MetricsEndpointSchema(
+                version="1.0.0",
+                swarm_metrics=swarm_metrics,
+                agent_metrics=agent_list,
+                performance_history=dict(self.performance_history),
+                alerts=self.alerts
+            )
+    
+    def add_alert(self, alert_type: str, message: str, severity: str = "warning"):
+        """Add an alert to the metrics"""
+        with self.lock:
+            self.alerts.append({
+                "timestamp": datetime.utcnow().isoformat(),
+                "type": alert_type,
+                "message": message,
+                "severity": severity
+            })
+            # Keep only last 50 alerts
+            if len(self.alerts) > 50:
+                self.alerts.pop(0)
+    
+    def simulate_activity(self):
+        """Simulate agent activity for testing"""
+        agent_id = f"agent-{random.randint(1, 5)}"
+        self.register_agent(agent_id)
+        
+        # Simulate task completion
+        duration = random.uniform(50, 500)
+        failed = random.random() < 0.1  # 10% failure rate
+        self.record_task_completion(agent_id, duration, failed)
+        
+        # Update resource usage
+        self.update_agent_metrics(
+            agent_id,
+            cpu_usage_percent=random.uniform(10, 80),
+            memory_usage_mb=random.uniform(100, 800),
+            status=random.choice(["active", "idle", "active"])
+        )
+
+
+class MetricsHTTPHandler(BaseHTTPRequestHandler):
+    """HTTP request handler for metrics endpoints"""
+    
+    metrics_collector: MetricsCollector = None
+    
+    def do_GET(self):
+        """Handle GET requests"""
+        parsed_path = urlparse(self.path)
+        
+        if parsed_path.path == "/metrics":
+            self.handle_metrics()
+        elif parsed_path.path == "/health":
+            self.handle_health()
+        elif parsed_path.path == "/agents":
+            self.handle_agents()
+        else:
+            self.send_error(404, "Not Found")
+    
+    def handle_metrics(self):
+        """Return complete metrics schema"""
+        schema = self.metrics_collector.get_schema()
+        self.send_json_response(asdict(schema))
+    
+    def handle_health(self):
+        """Return swarm health status"""
+        swarm_metrics = self.metrics_collector.get_swarm_metrics()
+        health_data = {
+            "status": swarm_metrics.healthcheck_status,
+            "timestamp": swarm_metrics.timestamp,
+            "active_agents": swarm_metrics.active_agents,
+            "total_agents": swarm_metrics.total_agents,
+            "error_rate": swarm_metrics.average_error_rate_percent
+        }
+        self.send_json_response(health_data)
+    
+    def handle_agents(self):
+        """Return list of all agents"""
+        schema = self.metrics_collector.get_schema()
+        agents_data = {
+            "agents": [asdict(agent) for agent in schema.agent_metrics],
+            "count": len(schema.agent_metrics)
+        }
+        self.send_json_response(agents_data)
+    
+    def send_json_response(self, data: dict, status_code: int = 200):
+        """Send JSON response"""
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(json.dumps(data, indent=2).encode())
+    
+    def log_message(self, format, *args):
+        """Suppress default logging"""
+        pass
+
+
+def simulate_swarm(collector: MetricsCollector, duration: int = 30):
+    """Simulate swarm activity"""
+    print(f"[*] Simulating swarm activity for {duration} seconds...")
+    start_time = time.time()
+    
+    while time.time() - start_time < duration:
+        collector.simulate_activity()
+        time.sleep(0.5)
+    
+    print("[*] Simulation complete")
+
+
+def start_metrics_server(port: int = 8000, duration: int = 60):
+    """Start the metrics API server"""
+    collector = MetricsCollector()
+    MetricsHTTPHandler.metrics_collector = collector
+    
+    # Start simulation in background
+    sim_thread = threading.Thread(target=simulate_swarm, args=(collector, duration), daemon=True)
+    sim_thread.start()
+    
+    # Start HTTP server
+    server = HTTPServer(("localhost", port), MetricsHTTPHandler)
+    print(f"[+] Metrics server started on http://localhost:{port}")
+    print(f"[+] Available endpoints:")
+    print(f"    - http://localhost:{port}/metrics (full schema)")
+    print(f"    - http://localhost:{port}/health (health status)")
+    print(f"    - http://localhost:{port}/agents (agent list)")
+    print(f"[+] Server will run for {duration} seconds")
+    
+    try:
+        server.timeout = 1
+        end_time = time.time() + duration
+        while time.time() < end_time:
+            server.handle_request()
+    except KeyboardInterrupt:
+        print("\n[*] Shutting down server...")
+    finally:
+        server.server_close()
+        print("[+] Server stopped")
+
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(description="API Metrics Endpoint Schema")
+    parser.add_argument("--port", type=int, default=8000, help="Port to run server on")
+    parser.add_argument("--duration", type=int, default=60, help="Duration to run simulation")
+    parser.add_argument("--demo", action="store_true", help="Run demo mode")
+    
+    args = parser.parse_args()
+    
+    if args.demo:
+        # Run demo without server
+        collector = MetricsCollector()
+        
+        # Register some agents
+        for i in range(5):
+            collector.register_agent(f"agent-{i}")
+        
+        # Simulate some activity
+        for _ in range(20):
+            collector
