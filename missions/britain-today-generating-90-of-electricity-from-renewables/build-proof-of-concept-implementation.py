@@ -196,4 +196,169 @@ class RenewableEnergyMonitor:
         """Generate human-readable report."""
         report = []
         report.append("=" * 70)
-        report.append("UK
+        report.append("UK RENEWABLE ENERGY MONITORING REPORT")
+        report.append("=" * 70)
+        report.append("")
+        
+        report.append(f"Report Generated: {analysis['analysis_timestamp']}")
+        report.append(f"Data Points Analyzed: {analysis['data_points']}")
+        report.append(f"Time Span: {analysis['time_span']['start']} to {analysis['time_span']['end']}")
+        report.append("")
+        
+        report.append("CURRENT STATE")
+        report.append("-" * 70)
+        cs = analysis['current_state']
+        report.append(f"Renewable Percentage: {cs['renewable_percentage']}%")
+        report.append(f"Total Generation: {cs['total_generation_mw']} MW")
+        report.append(f"Renewable Generation: {cs['renewable_generation_mw']} MW")
+        report.append(f"Non-Renewable Generation: {cs['non_renewable_generation_mw']} MW")
+        report.append("")
+        
+        report.append("RENEWABLE SOURCES BREAKDOWN (MW)")
+        report.append("-" * 70)
+        for source, value in cs['breakdown']['renewable'].items():
+            report.append(f"  {source.capitalize():12s}: {value:8d} MW")
+        report.append("")
+        
+        report.append("NON-RENEWABLE SOURCES BREAKDOWN (MW)")
+        report.append("-" * 70)
+        for source, value in cs['breakdown']['non_renewable'].items():
+            report.append(f"  {source.capitalize():12s}: {value:8d} MW")
+        report.append("")
+        
+        report.append("STATISTICAL ANALYSIS")
+        report.append("-" * 70)
+        stats = analysis['statistics']['renewable_percentage']
+        report.append(f"Minimum Renewable %:  {stats['min']}%")
+        report.append(f"Maximum Renewable %:  {stats['max']}%")
+        report.append(f"Mean Renewable %:     {stats['mean']}%")
+        report.append(f"Median Renewable %:   {stats['median']}%")
+        report.append(f"Std. Deviation:       {stats['stdev']}%")
+        report.append("")
+        
+        report.append("TARGET ANALYSIS (90% RENEWABLE)")
+        report.append("-" * 70)
+        ta = analysis['target_analysis']
+        report.append(f"Target: {ta['target_percentage']}%")
+        report.append(f"Current vs Target: {ta['current_vs_target']:+.2f}%")
+        report.append(f"Target Currently Met: {'YES' if ta['target_met'] else 'NO'}")
+        report.append(f"Samples Meeting Target: {ta['samples_meeting_target']}/{analysis['data_points']}")
+        report.append(f"Time at Target: {ta['percentage_of_time_at_target']}%")
+        report.append("")
+        
+        if patterns:
+            report.append("HOURLY PATTERNS")
+            report.append("-" * 70)
+            report.append(f"Peak Renewable Hours: {', '.join(patterns['peak_renewable_hours'])}")
+            report.append(f"Low Renewable Hours: {', '.join(patterns['low_renewable_hours'])}")
+            report.append("")
+        
+        report.append("=" * 70)
+        
+        return "\n".join(report)
+    
+    def export_json(self, analysis: Dict, patterns: Dict, filepath: str) -> None:
+        """Export analysis results to JSON file."""
+        output = {
+            'analysis': analysis,
+            'patterns': patterns,
+            'export_timestamp': datetime.now().isoformat(),
+        }
+        
+        with open(filepath, 'w') as f:
+            json.dump(output, f, indent=2)
+        
+        print(f"Results exported to {filepath}")
+    
+    def monitor_continuous(self, duration_minutes: int = 10, check_interval_seconds: int = 60) -> None:
+        """Monitor renewable energy continuously."""
+        print(f"Starting continuous monitoring for {duration_minutes} minutes...")
+        print(f"Check interval: {check_interval_seconds} seconds")
+        print("")
+        
+        end_time = datetime.now() + timedelta(minutes=duration_minutes)
+        
+        while datetime.now() < end_time:
+            sample_data = self.generate_sample_data(num_samples=1)
+            if sample_data:
+                current = sample_data[0]
+                timestamp = datetime.fromisoformat(current['timestamp'])
+                renewable_pct = current['renewable_percentage']
+                status = "✓ TARGET MET" if renewable_pct >= self.target_renewable_percentage else "✗ BELOW TARGET"
+                
+                print(f"[{timestamp.strftime('%H:%M:%S')}] Renewable: {renewable_pct:.2f}% | {status}")
+            
+            if datetime.now() < end_time:
+                time.sleep(check_interval_seconds)
+        
+        print("\nContinuous monitoring completed.")
+
+
+def main():
+    """Main entry point for the renewable energy monitoring system."""
+    parser = argparse.ArgumentParser(
+        description="UK Renewable Energy Monitoring System - PoC Implementation"
+    )
+    parser.add_argument(
+        '--samples',
+        type=int,
+        default=24,
+        help='Number of sample data points to generate (default: 24)'
+    )
+    parser.add_argument(
+        '--target',
+        type=float,
+        default=90.0,
+        help='Target renewable energy percentage (default: 90.0)'
+    )
+    parser.add_argument(
+        '--export',
+        type=str,
+        help='Export results to JSON file (provide filepath)'
+    )
+    parser.add_argument(
+        '--monitor',
+        type=int,
+        help='Run continuous monitoring for specified minutes'
+    )
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Print detailed output including historical data'
+    )
+    
+    args = parser.parse_args()
+    
+    monitor = RenewableEnergyMonitor(target_renewable_percentage=args.target)
+    
+    if args.monitor:
+        monitor.monitor_continuous(duration_minutes=args.monitor)
+        return
+    
+    print("Generating sample data...")
+    data = monitor.generate_sample_data(num_samples=args.samples)
+    
+    print("Analyzing data...")
+    analysis = monitor.analyze_data(data)
+    
+    print("Identifying patterns...")
+    patterns = monitor.identify_patterns(data)
+    
+    report = monitor.generate_report(analysis, patterns)
+    print("\n" + report)
+    
+    if args.verbose:
+        print("\nDETAILED HISTORICAL DATA")
+        print("=" * 70)
+        for i, entry in enumerate(data, 1):
+            print(f"\n[Sample {i}] {entry['timestamp']}")
+            print(f"  Renewable: {entry['renewable_percentage']:.2f}%")
+            print(f"  Wind: {entry['wind']} MW, Solar: {entry['solar']} MW, Hydro: {entry['hydro']} MW")
+            print(f"  Gas: {entry['gas']} MW, Coal: {entry['coal']} MW, Nuclear: {entry['nuclear']} MW")
+    
+    if args.export:
+        monitor.export_json(analysis, patterns, args.export)
+
+
+if __name__ == "__main__":
+    main()
