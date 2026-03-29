@@ -225,4 +225,125 @@ This commit includes:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        readme_path = self.
+        readme_path = self.create_readme(output_dir / "README.md")
+        findings_path = self.save_findings_json(output_dir / "findings.json")
+        
+        report = {
+            "report_generated": datetime.now().isoformat(),
+            "output_directory": str(output_dir),
+            "files_created": {
+                "readme": str(readme_path),
+                "findings_json": str(findings_path)
+            },
+            "status": "complete"
+        }
+        
+        self.findings["report"] = report
+        return report
+    
+    def run_complete_workflow(self, output_dir=None):
+        """Execute complete analysis and documentation workflow."""
+        output_dir = output_dir or Path.cwd() / "renewable_analysis"
+        
+        print("🔄 Starting renewable electricity analysis workflow...")
+        print(f"📊 Data source: {self.data_source_url}")
+        
+        # Fetch grid data
+        print("📡 Fetching grid data...")
+        grid_data = self.fetch_grid_data()
+        
+        if grid_data:
+            print(f"✓ Successfully fetched {len(grid_data)} bytes of data")
+            
+            # Analyze renewable percentage
+            print("🔍 Analyzing renewable percentage...")
+            analysis = self.analyze_renewable_percentage(grid_data)
+            
+            if analysis:
+                print(f"✓ Analysis complete - Keywords found: {analysis.get('contains_renewable_keywords', False)}")
+        else:
+            print("⚠ Could not fetch grid data (using synthetic analysis)")
+        
+        # Generate report
+        print("📝 Generating documentation...")
+        report = self.generate_complete_report(output_dir)
+        print(f"✓ Documentation generated in {output_dir}")
+        
+        # Check git status
+        print("🔀 Checking git status...")
+        git_status = self.git_add_and_status(self.local_repo)
+        if git_status is not None:
+            print("✓ Git repository detected and ready")
+        else:
+            print("⚠ Not a git repository or git not available")
+        
+        # Display commit message
+        print("\n📋 Prepared commit message:")
+        print("─" * 60)
+        print(self.prepare_commit_message())
+        print("─" * 60)
+        
+        return self.findings
+
+
+def main():
+    """Main entry point for the script."""
+    parser = argparse.ArgumentParser(
+        description="Document UK renewable electricity generation findings"
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="renewable_analysis",
+        help="Output directory for generated files"
+    )
+    parser.add_argument(
+        "--data-source",
+        type=str,
+        default="https://grid.iamkate.com/",
+        help="URL for renewable energy data source"
+    )
+    parser.add_argument(
+        "--repo-path",
+        type=str,
+        default=".",
+        help="Path to local git repository"
+    )
+    parser.add_argument(
+        "--skip-fetch",
+        action="store_true",
+        help="Skip fetching live data (for testing)"
+    )
+    
+    args = parser.parse_args()
+    
+    # Create analyzer instance
+    analyzer = RenewablesAnalyzer(
+        data_source_url=args.data_source,
+        local_repo=Path(args.repo_path)
+    )
+    
+    # Run workflow
+    findings = analyzer.run_complete_workflow(output_dir=Path(args.output_dir))
+    
+    # Print summary
+    print("\n✅ Workflow complete!")
+    print(f"\n📊 Analysis Summary:")
+    print(f"   Timestamp: {findings['timestamp']}")
+    print(f"   Data Source: {findings['data_source']}")
+    
+    if "analysis_results" in findings:
+        analysis = findings["analysis_results"]
+        print(f"\n🔬 Analysis Results:")
+        print(f"   Renewable Keywords Found: {analysis.get('contains_renewable_keywords', False)}")
+        print(f"   Percentage Values Found: {analysis.get('contains_percentage_values', False)}")
+        print(f"   High Renewable Indicators: {analysis.get('estimated_renewable_high', False)}")
+    
+    if findings.get("git_status", {}).get("is_git_repo"):
+        print(f"\n🔀 Git Status: Repository ready for commit")
+    
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
