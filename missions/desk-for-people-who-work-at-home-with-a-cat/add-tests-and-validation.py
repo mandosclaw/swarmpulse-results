@@ -217,3 +217,206 @@ class CatBehaviorAnalyzer:
                 f"High scratching activity detected ({len(scratch_events)} events) - "
                 "check desk surface for damage"
             )
+
+        jump_events = [e for e in self.events if e.behavior == CatBehavior.JUMPING]
+        if len(jump_events) > 3:
+            self.alerts.append(
+                f"Multiple jumping events detected ({len(jump_events)} events) - "
+                "ensure desk is stable"
+            )
+
+    def _calculate_average_duration(self) -> float:
+        """Calculate average session duration."""
+        if not self.events:
+            return 0.0
+        total_duration = sum(e.duration_seconds for e in self.events)
+        return total_duration / len(self.events)
+
+    def get_dangerous_position_summary(self) -> List[Tuple[float, float, str]]:
+        """Get summary of dangerous behaviors by position."""
+        dangerous = []
+        for event in self.events:
+            if event.behavior in self.DANGEROUS_BEHAVIORS:
+                dangerous.append((event.position_x, event.position_y, event.behavior.value))
+        return dangerous
+
+
+class TestDeskValidator(unittest.TestCase):
+    """Unit tests for DeskValidator class."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.valid_config = DeskConfiguration(
+            height_cm=75.0,
+            width_cm=120.0,
+            depth_cm=70.0,
+            has_cable_protection=True,
+            has_scratching_pad=True,
+            has_cat_bed=True,
+            max_cat_weight_kg=6.0,
+            temperature_sensor=True,
+            motion_sensor=True
+        )
+
+    def test_valid_configuration(self):
+        """Test that valid configuration passes validation."""
+        validator = DeskValidator(self.valid_config)
+        self.assertTrue(validator.validate_all())
+        self.assertEqual(len(validator.validation_errors), 0)
+
+    def test_invalid_height_too_low(self):
+        """Test detection of height below ergonomic minimum."""
+        config = DeskConfiguration(
+            height_cm=50.0,
+            width_cm=120.0,
+            depth_cm=70.0,
+            has_cable_protection=True,
+            has_scratching_pad=True,
+            has_cat_bed=True,
+            max_cat_weight_kg=6.0,
+            temperature_sensor=True,
+            motion_sensor=True
+        )
+        validator = DeskValidator(config)
+        self.assertFalse(validator.validate_all())
+        self.assertGreater(len(validator.validation_errors), 0)
+
+    def test_invalid_height_too_high(self):
+        """Test detection of height above ergonomic maximum."""
+        config = DeskConfiguration(
+            height_cm=150.0,
+            width_cm=120.0,
+            depth_cm=70.0,
+            has_cable_protection=True,
+            has_scratching_pad=True,
+            has_cat_bed=True,
+            max_cat_weight_kg=6.0,
+            temperature_sensor=True,
+            motion_sensor=True
+        )
+        validator = DeskValidator(config)
+        self.assertFalse(validator.validate_all())
+        self.assertGreater(len(validator.validation_errors), 0)
+
+    def test_invalid_width_too_small(self):
+        """Test detection of width below minimum."""
+        config = DeskConfiguration(
+            height_cm=75.0,
+            width_cm=80.0,
+            depth_cm=70.0,
+            has_cable_protection=True,
+            has_scratching_pad=True,
+            has_cat_bed=True,
+            max_cat_weight_kg=6.0,
+            temperature_sensor=True,
+            motion_sensor=True
+        )
+        validator = DeskValidator(config)
+        self.assertFalse(validator.validate_all())
+        self.assertGreater(len(validator.validation_errors), 0)
+
+    def test_invalid_depth_too_small(self):
+        """Test detection of depth below minimum."""
+        config = DeskConfiguration(
+            height_cm=75.0,
+            width_cm=120.0,
+            depth_cm=40.0,
+            has_cable_protection=True,
+            has_scratching_pad=True,
+            has_cat_bed=True,
+            max_cat_weight_kg=6.0,
+            temperature_sensor=True,
+            motion_sensor=True
+        )
+        validator = DeskValidator(config)
+        self.assertFalse(validator.validate_all())
+        self.assertGreater(len(validator.validation_errors), 0)
+
+    def test_cat_weight_too_low(self):
+        """Test detection of cat weight capacity too low."""
+        config = DeskConfiguration(
+            height_cm=75.0,
+            width_cm=120.0,
+            depth_cm=70.0,
+            has_cable_protection=True,
+            has_scratching_pad=True,
+            has_cat_bed=True,
+            max_cat_weight_kg=2.0,
+            temperature_sensor=True,
+            motion_sensor=True
+        )
+        validator = DeskValidator(config)
+        self.assertFalse(validator.validate_all())
+        self.assertGreater(len(validator.validation_errors), 0)
+
+    def test_missing_cable_protection_warning(self):
+        """Test warning for missing cable protection."""
+        config = DeskConfiguration(
+            height_cm=75.0,
+            width_cm=120.0,
+            depth_cm=70.0,
+            has_cable_protection=False,
+            has_scratching_pad=True,
+            has_cat_bed=True,
+            max_cat_weight_kg=6.0,
+            temperature_sensor=True,
+            motion_sensor=True
+        )
+        validator = DeskValidator(config)
+        validator.validate_all()
+        self.assertGreater(len(validator.validation_warnings), 0)
+
+    def test_missing_scratching_pad_warning(self):
+        """Test warning for missing scratching pad."""
+        config = DeskConfiguration(
+            height_cm=75.0,
+            width_cm=120.0,
+            depth_cm=70.0,
+            has_cable_protection=True,
+            has_scratching_pad=False,
+            has_cat_bed=True,
+            max_cat_weight_kg=6.0,
+            temperature_sensor=True,
+            motion_sensor=True
+        )
+        validator = DeskValidator(config)
+        validator.validate_all()
+        self.assertGreater(len(validator.validation_warnings), 0)
+
+    def test_missing_motion_sensor_warning(self):
+        """Test warning for missing motion sensor."""
+        config = DeskConfiguration(
+            height_cm=75.0,
+            width_cm=120.0,
+            depth_cm=70.0,
+            has_cable_protection=True,
+            has_scratching_pad=True,
+            has_cat_bed=True,
+            max_cat_weight_kg=6.0,
+            temperature_sensor=True,
+            motion_sensor=False
+        )
+        validator = DeskValidator(config)
+        validator.validate_all()
+        self.assertGreater(len(validator.validation_warnings), 0)
+
+    def test_missing_temperature_sensor_warning(self):
+        """Test warning for missing temperature sensor."""
+        config = DeskConfiguration(
+            height_cm=75.0,
+            width_cm=120.0,
+            depth_cm=70.0,
+            has_cable_protection=True,
+            has_scratching_pad=True,
+            has_cat_bed=True,
+            max_cat_weight_kg=6.0,
+            temperature_sensor=False,
+            motion_sensor=True
+        )
+        validator = DeskValidator(config)
+        validator.validate_all()
+        self.assertGreater(len(validator.validation_warnings), 0)
+
+    def test_get_report(self):
+        """Test validation report generation."""
+        validator = DeskValidator(self.valid_
