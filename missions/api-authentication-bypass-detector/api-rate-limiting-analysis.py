@@ -206,3 +206,189 @@ class APIRateLimitAnalyzer:
             evidence.append(f"Rate: {rps:.2f} requests/second")
         
         # Check response codes
+        response_codes = [str(req[1].get('response_code', 'unknown')) for req in requests]
+        status_summary = {code: response_codes.count(code) for code in set(response_codes)}
+        evidence.append(f"Response codes: {status_summary}")
+        
+        # Check for similar patterns across requests
+        methods = [req[1].get('method', 'unknown') for req in requests]
+        if len(set(methods)) == 1:
+            evidence.append(f"All requests use same HTTP method: {methods[0]}")
+        
+        # Check target patterns
+        targets = [req[1].get('target', 'unknown') for req in requests]
+        unique_targets = len(set(targets))
+        evidence.append(f"Targeting {unique_targets} unique resources out of {len(targets)} requests")
+        
+        return evidence
+    
+    def _calculate_severity(self, requests_made: int, limit: int) -> str:
+        """Calculate severity level of violation"""
+        ratio = requests_made / limit if limit > 0 else 1.0
+        
+        if ratio >= 10:
+            return "CRITICAL"
+        elif ratio >= 5:
+            return "HIGH"
+        elif ratio >= 2:
+            return "MEDIUM"
+        else:
+            return "LOW"
+    
+    def get_violations_summary(self) -> Dict:
+        """Get summary of detected violations"""
+        if not self.violations:
+            return {
+                'total_violations': 0,
+                'by_endpoint': {},
+                'by_type': {},
+                'by_severity': {}
+            }
+        
+        summary = {
+            'total_violations': len(self.violations),
+            'by_endpoint': defaultdict(int),
+            'by_type': defaultdict(int),
+            'by_severity': defaultdict(int),
+            'violations': []
+        }
+        
+        for violation in self.violations:
+            summary['by_endpoint'][violation.endpoint] += 1
+            summary['by_type'][violation.violation_type] += 1
+            summary['by_severity'][violation.severity] += 1
+            summary['violations'].append(asdict(violation))
+        
+        return summary
+    
+    def get_bypass_indicators_summary(self) -> Dict:
+        """Get summary of detected bypass indicators"""
+        return {
+            'ip_rotation': len(self.bypass_indicators['ip_rotation']),
+            'header_manipulation': len(self.bypass_indicators['header_manipulation']),
+            'parameter_obfuscation': len(self.bypass_indicators['parameter_obfuscation']),
+            'timing_patterns': len(self.bypass_indicators['timing_patterns']),
+            'token_refresh_abuse': len(self.bypass_indicators['token_refresh_abuse']),
+            'details': self.bypass_indicators
+        }
+    
+    def export_report(self, filename: Optional[str] = None) -> str:
+        """Export analysis report as JSON"""
+        report = {
+            'timestamp': datetime.now().isoformat(),
+            'violations_summary': self.get_violations_summary(),
+            'bypass_indicators': self.get_bypass_indicators_summary(),
+            'endpoints_monitored': list(self.rate_limit_configs.keys()),
+            'total_requests_analyzed': sum(
+                len(reqs) for reqs in self.request_history.values()
+            )
+        }
+        
+        json_report = json.dumps(report, indent=2, default=str)
+        
+        if filename:
+            with open(filename, 'w') as f:
+                f.write(json_report)
+            if self.verbose:
+                print(f"[*] Report exported to {filename}")
+        
+        return json_report
+    
+    def print_report(self):
+        """Print formatted analysis report"""
+        summary = self.get_violations_summary()
+        bypass = self.get_bypass_indicators_summary()
+        
+        print("\n" + "="*70)
+        print("API RATE LIMITING ANALYSIS REPORT")
+        print("="*70)
+        
+        print(f"\n[+] Total Violations Detected: {summary['total_violations']}")
+        
+        if summary['total_violations'] > 0:
+            print("\n[+] Violations by Endpoint:")
+            for endpoint, count in summary['by_endpoint'].items():
+                print(f"    - {endpoint}: {count}")
+            
+            print("\n[+] Violations by Type:")
+            for vtype, count in summary['by_type'].items():
+                print(f"    - {vtype}: {count}")
+            
+            print("\n[+] Violations by Severity:")
+            for severity, count in summary['by_severity'].items():
+                print(f"    - {severity}: {count}")
+        
+        print("\n[+] Bypass Indicators Detected:")
+        print(f"    - IP Rotation: {bypass['ip_rotation']}")
+        print(f"    - Header Manipulation: {bypass['header_manipulation']}")
+        print(f"    - Parameter Obfuscation: {bypass['parameter_obfuscation']}")
+        print(f"    - Timing Patterns: {bypass['timing_patterns']}")
+        print(f"    - Token Refresh Abuse: {bypass['token_refresh_abuse']}")
+        
+        print("\n" + "="*70)
+
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description='API Rate Limiting Analysis - Detect rate limit bypass vulnerabilities'
+    )
+    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
+    parser.add_argument('-o', '--output', type=str, help='Output report to file')
+    parser.add_argument('--demo', action='store_true', help='Run demonstration mode')
+    
+    args = parser.parse_args()
+    
+    # Create analyzer instance
+    analyzer = APIRateLimitAnalyzer(verbose=args.verbose)
+    
+    # Configure endpoints
+    analyzer.add_rate_limit_config(RateLimitConfig(
+        endpoint='/api/login',
+        requests_per_window=5,
+        window_seconds=60,
+        detection_enabled=True,
+        bypass_patterns=['ip_rotation', 'header_manipulation']
+    ))
+    
+    analyzer.add_rate_limit_config(RateLimitConfig(
+        endpoint='/api/search',
+        requests_per_window=100,
+        window_seconds=60,
+        detection_enabled=True,
+        bypass_patterns=['parameter_obfuscation', 'timing_manipulation']
+    ))
+    
+    analyzer.add_rate_limit_config(RateLimitConfig(
+        endpoint='/api/user/profile',
+        requests_per_window=20,
+        window_seconds=60,
+        detection_enabled=True,
+        bypass_patterns=['token_refresh_abuse']
+    ))
+    
+    if args.demo:
+        # Simulate suspicious API traffic
+        print("[*] Running demonstration mode...")
+        
+        # Simulate brute force attack on login endpoint
+        print("\n[*] Simulating brute force attack on /api/login...")
+        for i in range(8):
+            analyzer.analyze_request('/api/login', {
+                'client_id': 'attacker_001',
+                'source_ip': f'192.168.1.{100 + i}',
+                'user_agent': f'Mozilla/5.0 variant {i}',
+                'api_key': f'key_{i}',
+                'method': 'POST',
+                'target': '/api/login',
+                'response_code': 401 if i < 7 else 200,
+                'auth_token': f'token_{i}'
+            })
+            time.sleep(0.01)
+        
+        # Simulate distributed attack with parameter obfuscation
+        print("[*] Simulating distributed attack on /api/search...")
+        for i in range(120):
+            analyzer.analyze_request('/api/search', {
+                'client_id': 'attacker_002',
+                'source_ip': f'10.0.0.{i % 50}
