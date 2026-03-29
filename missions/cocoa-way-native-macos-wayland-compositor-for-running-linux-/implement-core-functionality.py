@@ -3,17 +3,20 @@
 # Task:    Implement core functionality
 # Mission: Cocoa-Way – Native macOS Wayland compositor for running Linux apps seamlessly
 # Agent:   @aria
-# Date:    2026-03-28T22:10:26.444Z
+# Date:    2026-03-29T20:41:25.788Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Cocoa-Way – Native macOS Wayland compositor for running Linux apps seamlessly
-Mission: Engineering - Core functionality implementation
-Agent: @aria
-Date: 2024
-Description: Implementation of core Wayland display server functionality
-for bridging macOS and Linux application environments.
+TASK: Implement core functionality for Cocoa-Way - Native macOS Wayland compositor
+MISSION: Cocoa-Way – Native macOS Wayland compositor for running Linux apps seamlessly
+AGENT: @aria
+DATE: 2025-01-21
+CATEGORY: Engineering
+
+This module implements core Wayland compositor functionality for running Linux applications
+on macOS through a Wayland protocol bridge. Includes window management, protocol handling,
+and application lifecycle management.
 """
 
 import argparse
@@ -26,423 +29,422 @@ from collections import defaultdict
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
-import struct
-import socket
+from queue import Queue
 
 
-class WaylandEventType(Enum):
-    """Wayland protocol event types"""
-    SURFACE_CREATED = "surface_created"
-    SURFACE_DESTROYED = "surface_destroyed"
-    BUFFER_COMMITTED = "buffer_committed"
-    POINTER_MOTION = "pointer_motion"
-    POINTER_BUTTON = "pointer_button"
-    KEYBOARD_KEY = "keyboard_key"
-    TOUCH_DOWN = "touch_down"
-    TOUCH_UP = "touch_up"
-    TOUCH_MOTION = "touch_motion"
-    FRAME = "frame"
-    OUTPUT_GEOMETRY = "output_geometry"
-    SEAT_CAPABILITIES = "seat_capabilities"
+class WindowState(Enum):
+    """Enumeration of window states in the compositor."""
+    CREATED = "created"
+    MAPPED = "mapped"
+    VISIBLE = "visible"
+    FOCUSED = "focused"
+    MINIMIZED = "minimized"
+    DESTROYED = "destroyed"
 
 
-class BufferFormat(Enum):
-    """Supported buffer formats"""
-    ARGB8888 = "argb8888"
-    XRGB8888 = "xrgb8888"
-    RGB565 = "rgb565"
+class AppType(Enum):
+    """Types of applications that can run."""
+    X11 = "x11"
+    WAYLAND = "wayland"
+    XWAYLAND = "xwayland"
+    NATIVE = "native"
 
 
 @dataclass
-class WaylandSurface:
-    """Represents a Wayland surface"""
-    surface_id: int
+class WindowGeometry:
+    """Represents window dimensions and position."""
+    x: int
+    y: int
     width: int
     height: int
-    format: BufferFormat
-    role: Optional[str] = None
-    parent_id: Optional[int] = None
-    committed: bool = False
-    buffer_data: Optional[bytes] = None
-    frame_callbacks: List[int] = None
-    transform: int = 0
-    scale: int = 1
 
-    def __post_init__(self):
-        if self.frame_callbacks is None:
-            self.frame_callbacks = []
+    def to_dict(self) -> Dict[str, int]:
+        return {"x": self.x, "y": self.y, "width": self.width, "height": self.height}
+
+
+@dataclass
+class ApplicationInfo:
+    """Information about a running application."""
+    app_id: str
+    pid: int
+    app_type: AppType
+    name: str
+    created_at: float
+    state: WindowState = WindowState.CREATED
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "app_id": self.app_id,
+            "pid": self.pid,
+            "app_type": self.app_type.value,
+            "name": self.name,
+            "created_at": self.created_at,
+            "state": self.state.value,
+        }
 
 
 @dataclass
 class WaylandEvent:
-    """Represents a Wayland protocol event"""
-    event_type: WaylandEventType
+    """Represents a Wayland protocol event."""
+    event_type: str
     timestamp: float
-    surface_id: Optional[int] = None
-    data: Optional[Dict[str, Any]] = None
+    app_id: str
+    data: Dict[str, Any]
 
-
-@dataclass
-class WaylandOutput:
-    """Represents a Wayland output (display)"""
-    output_id: int
-    name: str
-    width: int
-    height: int
-    refresh_rate: int
-    scale: int = 1
-    make: str = "Apple"
-    model: str = "Retina Display"
-
-
-@dataclass
-class WaylandSeat:
-    """Represents a Wayland seat (input device)"""
-    seat_id: int
-    name: str
-    capabilities: int
-    pointer_id: Optional[int] = None
-    keyboard_id: Optional[int] = None
-    touch_id: Optional[int] = None
-
-
-class WaylandCompositor:
-    """Core Wayland compositor implementation"""
-
-    def __init__(self, socket_path: str = "/tmp/wayland-0", 
-                 width: int = 1920, height: int = 1080,
-                 refresh_rate: int = 60):
-        self.socket_path = socket_path
-        self.display_width = width
-        self.display_height = height
-        self.refresh_rate = refresh_rate
-        
-        self.surfaces: Dict[int, WaylandSurface] = {}
-        self.outputs: Dict[int, WaylandOutput] = {}
-        self.seats: Dict[int, WaylandSeat] = {}
-        self.events: List[WaylandEvent] = []
-        self.next_surface_id = 1
-        self.next_output_id = 1
-        self.next_seat_id = 1
-        self.frame_counter = 0
-        self.is_running = False
-        self.render_thread: Optional[threading.Thread] = None
-        self.input_thread: Optional[threading.Thread] = None
-        
-        self.logger = logging.getLogger("WaylandCompositor")
-        self.stats = {
-            "surfaces_created": 0,
-            "surfaces_destroyed": 0,
-            "buffers_committed": 0,
-            "frames_rendered": 0,
-            "input_events": 0,
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event_type": self.event_type,
+            "timestamp": self.timestamp,
+            "app_id": self.app_id,
+            "data": self.data,
         }
 
+
+class WaylandProtocolHandler:
+    """Handles Wayland protocol communication and events."""
+
+    def __init__(self, log_level: str = "INFO"):
+        self.logger = logging.getLogger("WaylandProtocolHandler")
+        self.logger.setLevel(log_level)
+        self.events: Queue = Queue()
+        self.protocol_version = "1.20"
+        self.supported_interfaces = [
+            "wl_compositor",
+            "wl_shm",
+            "wl_output",
+            "wl_seat",
+            "xdg_wm_base",
+            "xdg_shell",
+            "wl_data_device_manager",
+        ]
+
+    def parse_wayland_message(self, message: str) -> Tuple[str, Dict[str, Any]]:
+        """Parse Wayland protocol message."""
+        parts = message.split(":", 1)
+        if len(parts) != 2:
+            raise ValueError(f"Invalid Wayland message format: {message}")
+
+        message_type = parts[0].strip()
+        try:
+            data = json.loads(parts[1])
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in Wayland message: {e}")
+
+        return message_type, data
+
+    def emit_event(
+        self, event_type: str, app_id: str, data: Dict[str, Any]
+    ) -> WaylandEvent:
+        """Emit a Wayland event."""
+        event = WaylandEvent(
+            event_type=event_type, timestamp=time.time(), app_id=app_id, data=data
+        )
+        self.events.put(event)
+        self.logger.debug(f"Event emitted: {event_type} for app {app_id}")
+        return event
+
+    def get_next_event(self, timeout: float = 1.0) -> Optional[WaylandEvent]:
+        """Retrieve next event from queue."""
+        try:
+            return self.events.get(timeout=timeout)
+        except:
+            return None
+
+    def validate_interface(self, interface: str) -> bool:
+        """Validate if interface is supported."""
+        return interface in self.supported_interfaces
+
+
+class WindowManager:
+    """Manages window lifecycle and properties in the compositor."""
+
+    def __init__(self, log_level: str = "INFO"):
+        self.logger = logging.getLogger("WindowManager")
+        self.logger.setLevel(log_level)
+        self.windows: Dict[str, Dict[str, Any]] = {}
+        self.window_counter = 0
+        self.geometry_cache: Dict[str, WindowGeometry] = {}
+        self.focus_stack: List[str] = []
+
+    def create_window(
+        self, app_id: str, width: int = 800, height: int = 600
+    ) -> str:
+        """Create a new window."""
+        window_id = f"window_{self.window_counter}"
+        self.window_counter += 1
+
+        self.windows[window_id] = {
+            "app_id": app_id,
+            "state": WindowState.CREATED,
+            "geometry": WindowGeometry(x=0, y=0, width=width, height=height),
+            "created_at": time.time(),
+            "properties": {},
+        }
+
+        self.geometry_cache[window_id] = self.windows[window_id]["geometry"]
+        self.logger.info(f"Window created: {window_id} for app {app_id}")
+        return window_id
+
+    def map_window(self, window_id: str) -> bool:
+        """Map window to display."""
+        if window_id not in self.windows:
+            self.logger.warning(f"Window not found: {window_id}")
+            return False
+
+        self.windows[window_id]["state"] = WindowState.MAPPED
+        self.logger.info(f"Window mapped: {window_id}")
+        return True
+
+    def show_window(self, window_id: str) -> bool:
+        """Show window (make visible)."""
+        if window_id not in self.windows:
+            self.logger.warning(f"Window not found: {window_id}")
+            return False
+
+        if self.windows[window_id]["state"] != WindowState.MAPPED:
+            self.logger.warning(f"Window not mapped: {window_id}")
+            return False
+
+        self.windows[window_id]["state"] = WindowState.VISIBLE
+        self.logger.info(f"Window shown: {window_id}")
+        return True
+
+    def focus_window(self, window_id: str) -> bool:
+        """Focus window."""
+        if window_id not in self.windows:
+            self.logger.warning(f"Window not found: {window_id}")
+            return False
+
+        if window_id in self.focus_stack:
+            self.focus_stack.remove(window_id)
+        self.focus_stack.insert(0, window_id)
+        self.windows[window_id]["state"] = WindowState.FOCUSED
+        self.logger.info(f"Window focused: {window_id}")
+        return True
+
+    def minimize_window(self, window_id: str) -> bool:
+        """Minimize window."""
+        if window_id not in self.windows:
+            self.logger.warning(f"Window not found: {window_id}")
+            return False
+
+        self.windows[window_id]["state"] = WindowState.MINIMIZED
+        if window_id in self.focus_stack:
+            self.focus_stack.remove(window_id)
+        self.logger.info(f"Window minimized: {window_id}")
+        return True
+
+    def destroy_window(self, window_id: str) -> bool:
+        """Destroy window."""
+        if window_id not in self.windows:
+            self.logger.warning(f"Window not found: {window_id}")
+            return False
+
+        self.windows[window_id]["state"] = WindowState.DESTROYED
+        if window_id in self.focus_stack:
+            self.focus_stack.remove(window_id)
+        del self.windows[window_id]
+        self.logger.info(f"Window destroyed: {window_id}")
+        return True
+
+    def set_window_geometry(
+        self, window_id: str, geometry: WindowGeometry
+    ) -> bool:
+        """Set window geometry."""
+        if window_id not in self.windows:
+            self.logger.warning(f"Window not found: {window_id}")
+            return False
+
+        self.windows[window_id]["geometry"] = geometry
+        self.geometry_cache[window_id] = geometry
+        self.logger.debug(f"Geometry set for {window_id}: {geometry}")
+        return True
+
+    def get_window(self, window_id: str) -> Optional[Dict[str, Any]]:
+        """Get window information."""
+        return self.windows.get(window_id)
+
+    def get_focused_window(self) -> Optional[str]:
+        """Get currently focused window ID."""
+        return self.focus_stack[0] if self.focus_stack else None
+
+    def list_windows(self) -> List[Dict[str, Any]]:
+        """List all windows with their states."""
+        result = []
+        for window_id, window_data in self.windows.items():
+            window_info = {
+                "window_id": window_id,
+                "app_id": window_data["app_id"],
+                "state": window_data["state"].value,
+                "geometry": window_data["geometry"].to_dict(),
+                "created_at": window_data["created_at"],
+            }
+            result.append(window_info)
+        return result
+
+
+class ApplicationManager:
+    """Manages application lifecycle and state."""
+
+    def __init__(self, log_level: str = "INFO"):
+        self.logger = logging.getLogger("ApplicationManager")
+        self.logger.setLevel(log_level)
+        self.applications: Dict[str, ApplicationInfo] = {}
+        self.app_counter = 0
+        self.app_history: List[ApplicationInfo] = []
+
+    def launch_application(
+        self, name: str, app_type: AppType, pid: int
+    ) -> str:
+        """Launch an application."""
+        app_id = f"app_{self.app_counter}"
+        self.app_counter += 1
+
+        app_info = ApplicationInfo(
+            app_id=app_id,
+            pid=pid,
+            app_type=app_type,
+            name=name,
+            created_at=time.time(),
+            state=WindowState.CREATED,
+        )
+
+        self.applications[app_id] = app_info
+        self.app_history.append(app_info)
+        self.logger.info(
+            f"Application launched: {app_id} ({name}, type={app_type.value})"
+        )
+        return app_id
+
+    def terminate_application(self, app_id: str) -> bool:
+        """Terminate an application."""
+        if app_id not in self.applications:
+            self.logger.warning(f"Application not found: {app_id}")
+            return False
+
+        self.applications[app_id].state = WindowState.DESTROYED
+        del self.applications[app_id]
+        self.logger.info(f"Application terminated: {app_id}")
+        return True
+
+    def get_application(self, app_id: str) -> Optional[ApplicationInfo]:
+        """Get application info."""
+        return self.applications.get(app_id)
+
+    def list_applications(self) -> List[Dict[str, Any]]:
+        """List all running applications."""
+        return [app.to_dict() for app in self.applications.values()]
+
+    def get_app_history(self) -> List[Dict[str, Any]]:
+        """Get application history."""
+        return [app.to_dict() for app in self.app_history]
+
+
+class CompositorCore:
+    """Core Wayland compositor implementation."""
+
+    def __init__(self, log_level: str = "INFO"):
+        self.logger = logging.getLogger("CompositorCore")
+        self.logger.setLevel(log_level)
+
+        self.protocol_handler = WaylandProtocolHandler(log_level)
+        self.window_manager = WindowManager(log_level)
+        self.app_manager = ApplicationManager(log_level)
+
+        self.running = False
+        self.event_loop_thread = None
+        self.metrics = {
+            "events_processed": 0,
+            "windows_created": 0,
+            "apps_launched": 0,
+            "uptime_seconds": 0.0,
+        }
+        self.start_time = None
+
     def initialize(self) -> bool:
-        """Initialize the Wayland compositor"""
+        """Initialize the compositor."""
         try:
-            self.logger.info(f"Initializing Wayland compositor on {self.socket_path}")
-            
-            primary_output = WaylandOutput(
-                output_id=self.next_output_id,
-                name="HDMI-1",
-                width=self.display_width,
-                height=self.display_height,
-                refresh_rate=self.refresh_rate,
+            self.logger.info("Initializing Wayland compositor...")
+            self.start_time = time.time()
+
+            self.logger.info(
+                f"Wayland protocol version: {self.protocol_handler.protocol_version}"
             )
-            self.outputs[self.next_output_id] = primary_output
-            self.next_output_id += 1
-            
-            default_seat = WaylandSeat(
-                seat_id=self.next_seat_id,
-                name="default",
-                capabilities=7,
+            self.logger.info(
+                f"Supported interfaces: {len(self.protocol_handler.supported_interfaces)}"
             )
-            self.seats[self.next_seat_id] = default_seat
-            self.next_seat_id += 1
-            
-            self.logger.info("Compositor initialized successfully")
+
+            self.running = True
+            self.logger.info("Compositor initialization complete")
             return True
         except Exception as e:
-            self.logger.error(f"Failed to initialize compositor: {e}")
+            self.logger.error(f"Initialization failed: {e}")
             return False
 
-    def create_surface(self, width: int, height: int,
-                      format: BufferFormat = BufferFormat.ARGB8888,
-                      role: Optional[str] = None) -> int:
-        """Create a new Wayland surface"""
+    def launch_app(self, name: str, app_type: str, pid: int) -> str:
+        """Launch an application."""
         try:
-            surface_id = self.next_surface_id
-            self.next_surface_id += 1
-            
-            surface = WaylandSurface(
-                surface_id=surface_id,
-                width=width,
-                height=height,
-                format=format,
-                role=role,
-            )
-            self.surfaces[surface_id] = surface
-            
-            event = WaylandEvent(
-                event_type=WaylandEventType.SURFACE_CREATED,
-                timestamp=time.time(),
-                surface_id=surface_id,
-                data={
-                    "width": width,
-                    "height": height,
-                    "format": format.value,
-                    "role": role,
-                }
-            )
-            self.events.append(event)
-            self.stats["surfaces_created"] += 1
-            
-            self.logger.debug(f"Created surface {surface_id} ({width}x{height})")
-            return surface_id
-        except Exception as e:
-            self.logger.error(f"Failed to create surface: {e}")
-            return -1
+            app_type_enum = AppType[app_type.upper()]
+        except KeyError:
+            self.logger.error(f"Invalid app type: {app_type}")
+            raise ValueError(f"Invalid app type: {app_type}")
 
-    def destroy_surface(self, surface_id: int) -> bool:
-        """Destroy a Wayland surface"""
-        try:
-            if surface_id not in self.surfaces:
-                self.logger.warning(f"Surface {surface_id} not found")
+        app_id = self.app_manager.launch_application(name, app_type_enum, pid)
+        self.metrics["apps_launched"] += 1
+
+        window_id = self.window_manager.create_window(app_id)
+        self.metrics["windows_created"] += 1
+
+        self.protocol_handler.emit_event(
+            "app_launched",
+            app_id,
+            {
+                "name": name,
+                "app_type": app_type,
+                "pid": pid,
+                "window_id": window_id,
+            },
+        )
+
+        return app_id
+
+    def process_window_command(
+        self, app_id: str, command: str, window_id: Optional[str] = None
+    ) -> bool:
+        """Process a window management command."""
+        if window_id is None:
+            app = self.app_manager.get_application(app_id)
+            if app is None:
+                self.logger.error(f"Application not found: {app_id}")
                 return False
-            
-            surface = self.surfaces.pop(surface_id)
-            
-            event = WaylandEvent(
-                event_type=WaylandEventType.SURFACE_DESTROYED,
-                timestamp=time.time(),
-                surface_id=surface_id,
-            )
-            self.events.append(event)
-            self.stats["surfaces_destroyed"] += 1
-            
-            self.logger.debug(f"Destroyed surface {surface_id}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to destroy surface {surface_id}: {e}")
-            return False
-
-    def commit_buffer(self, surface_id: int, buffer_data: bytes) -> bool:
-        """Commit a buffer to a surface"""
-        try:
-            if surface_id not in self.surfaces:
-                self.logger.warning(f"Surface {surface_id} not found")
+            windows = [
+                w["window_id"]
+                for w in self.window_manager.list_windows()
+                if w["app_id"] == app_id
+            ]
+            if not windows:
+                self.logger.error(f"No windows found for app: {app_id}")
                 return False
-            
-            surface = self.surfaces[surface_id]
-            surface.buffer_data = buffer_data
-            surface.committed = True
-            
-            event = WaylandEvent(
-                event_type=WaylandEventType.BUFFER_COMMITTED,
-                timestamp=time.time(),
-                surface_id=surface_id,
-                data={
-                    "buffer_size": len(buffer_data),
-                    "width": surface.width,
-                    "height": surface.height,
-                }
-            )
-            self.events.append(event)
-            self.stats["buffers_committed"] += 1
-            
-            self.logger.debug(f"Committed buffer to surface {surface_id}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to commit buffer to surface {surface_id}: {e}")
+            window_id = windows[0]
+
+        success = False
+        if command == "map":
+            success = self.window_manager.map_window(window_id)
+        elif command == "show":
+            self.window_manager.map_window(window_id)
+            success = self.window_manager.show_window(window_id)
+        elif command == "focus":
+            success = self.window_manager.focus_window(window_id)
+        elif command == "minimize":
+            success = self.window_manager.minimize_window(window_id)
+        elif command == "destroy":
+            success = self.window_manager.destroy_window(window_id)
+        else:
+            self.logger.error(f"Unknown window command: {command}")
             return False
 
-    def handle_pointer_motion(self, surface_id: int, x: int, y: int) -> bool:
-        """Handle pointer motion event"""
-        try:
-            event = WaylandEvent(
-                event_type=WaylandEventType.POINTER_MOTION,
-                timestamp=time.time(),
-                surface_id=surface_id,
-                data={"x": x, "y": y}
-            )
-            self.events.append(event)
-            self.stats["input_events"] += 1
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to handle pointer motion: {e}")
-            return False
-
-    def handle_pointer_button(self, surface_id: int, button: int, pressed: bool) -> bool:
-        """Handle pointer button event"""
-        try:
-            event = WaylandEvent(
-                event_type=WaylandEventType.POINTER_BUTTON,
-                timestamp=time.time(),
-                surface_id=surface_id,
-                data={"button": button, "pressed": pressed}
-            )
-            self.events.append(event)
-            self.stats["input_events"] += 1
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to handle pointer button: {e}")
-            return False
-
-    def handle_keyboard_key(self, surface_id: int, key: int, pressed: bool) -> bool:
-        """Handle keyboard key event"""
-        try:
-            event = WaylandEvent(
-                event_type=WaylandEventType.KEYBOARD_KEY,
-                timestamp=time.time(),
-                surface_id=surface_id,
-                data={"key": key, "pressed": pressed}
-            )
-            self.events.append(event)
-            self.stats["input_events"] += 1
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to handle keyboard key: {e}")
-            return False
-
-    def handle_touch_down(self, surface_id: int, touch_id: int, x: int, y: int) -> bool:
-        """Handle touch down event"""
-        try:
-            event = WaylandEvent(
-                event_type=WaylandEventType.TOUCH_DOWN,
-                timestamp=time.time(),
-                surface_id=surface_id,
-                data={"touch_id": touch_id, "x": x, "y": y}
-            )
-            self.events.append(event)
-            self.stats["input_events"] += 1
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to handle touch down: {e}")
-            return False
-
-    def handle_touch_up(self, surface_id: int, touch_id: int) -> bool:
-        """Handle touch up event"""
-        try:
-            event = WaylandEvent(
-                event_type=WaylandEventType.TOUCH_UP,
-                timestamp=time.time(),
-                surface_id=surface_id,
-                data={"touch_id": touch_id}
-            )
-            self.events.append(event)
-            self.stats["input_events"] += 1
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to handle touch up: {e}")
-            return False
-
-    def handle_touch_motion(self, surface_id: int, touch_id: int, x: int, y: int) -> bool:
-        """Handle touch motion event"""
-        try:
-            event = WaylandEvent(
-                event_type=WaylandEventType.TOUCH_MOTION,
-                timestamp=time.time(),
-                surface_id=surface_id,
-                data={"touch_id": touch_id, "x": x, "y": y}
-            )
-            self.events.append(event)
-            self.stats["input_events"] += 1
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to handle touch motion: {e}")
-            return False
-
-    def render_frame(self) -> bool:
-        """Render a compositor frame"""
-        try:
-            self.frame_counter += 1
-            
-            event = WaylandEvent(
-                event_type=WaylandEventType.FRAME,
-                timestamp=time.time(),
-                data={"frame_number": self.frame_counter}
-            )
-            self.events.append(event)
-            self.stats["frames_rendered"] += 1
-            
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to render frame: {e}")
-            return False
-
-    def start_rendering(self) -> bool:
-        """Start the rendering loop"""
-        try:
-            if self.is_running:
-                self.logger.warning("Compositor is already running")
-                return False
-            
-            self.is_running = True
-            self.render_thread = threading.Thread(target=self._rendering_loop, daemon=True)
-            self.render_thread.start()
-            
-            self.logger.info("Rendering loop started")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to start rendering: {e}")
-            self.is_running = False
-            return False
-
-    def _rendering_loop(self) -> None:
-        """Internal rendering loop"""
-        frame_time = 1.0 / self.refresh_rate
-        
-        while self.is_running:
-            try:
-                self.render_frame()
-                time.sleep(frame_time)
-            except Exception as e:
-                self.logger.error(f"Error in rendering loop: {e}")
-                break
-
-    def stop_rendering(self) -> bool:
-        """Stop the rendering loop"""
-        try:
-            if not self.is_running:
-                self.logger.warning("Compositor is not running")
-                return False
-            
-            self.is_running = False
-            
-            if self.render_thread:
-                self.render_thread.join(timeout=2)
-            
-            self.logger.info("Rendering loop stopped")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to stop rendering: {e}")
-            return False
-
-    def get_surface(self, surface_id: int) -> Optional[WaylandSurface]:
-        """Get a surface by ID"""
-        return self.surfaces.get(surface_id)
-
-    def get_output(self, output_id: int) -> Optional[WaylandOutput]:
-        """Get an output by ID"""
-        return self.outputs.get(output_id)
-
-    def get_seat(self, seat_id: int) -> Optional[WaylandSeat]:
-        """Get a seat by ID"""
-        return self.seats.get(seat_id)
-
-    def list_surfaces(self) -> List[WaylandSurface]:
-        """Get all surfaces"""
-        return list(self.surfaces.values())
-
-    def list_outputs(self) -> List[WaylandOutput]:
-        """Get all outputs"""
-        return list(self.outputs.values())
-
-    def list_seats(self) -> List[WaylandSeat]:
-        """Get all seats"""
-        return list(self.seats.values())
-
-    def get_events(self, limit: Optional[int] = None) -> List[WaylandEvent]:
-        """Get recent events"""
+        if success:
+            self.protocol_handler.emit_event(
+                f"window
