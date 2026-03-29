@@ -21,6 +21,7 @@ import argparse
 import json
 import sys
 import time
+import hashlib
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional
@@ -159,6 +160,10 @@ class APIKeyRotationEnforcer:
         
         return sorted(unused, key=lambda x: x["last_used_days_ago"], reverse=True)
 
+    def _hash_key(self, key_id: str) -> str:
+        """Generate a hash of a key for security purposes."""
+        return hashlib.sha256(key_id.encode()).hexdigest()[:16]
+
     def enforce_rotation(self, key_id: str, reason: str = "scheduled") -> Dict[str, Any]:
         """Enforce rotation of a specific key."""
         if key_id not in self.keys:
@@ -221,4 +226,168 @@ class APIKeyRotationEnforcer:
                 "owner": key.owner,
                 "environment": key.environment,
                 "age_days": round(age_days, 2),
-                "status": key
+                "status": key.status,
+                "permissions_count": len(key.permissions)
+            }
+            
+            if age_days >= self.critical_threshold_days:
+                report["critical_keys"].append(status_info)
+                if self.enable_auto_rotation:
+                    self.enforce_rotation(key_id, "auto_rotation_critical_age")
+            elif age_days >= self.warning_threshold_days:
+                report["warning_keys"].append(status_info)
+            else:
+                report["ok_keys"].append(status_info)
+        
+        return report
+
+    def get_rotation_history(self, key_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get rotation history, optionally filtered by key_id."""
+        events = self.rotation_history
+        
+        if key_id:
+            events = [e for e in events if e.key_id == key_id]
+        
+        return [
+            {
+                "timestamp": datetime.fromtimestamp(e.timestamp).isoformat(),
+                "key_id": e.key_id,
+                "old_key_hash": e.old_key_hash,
+                "new_key_hash": e.new_key_hash,
+                "reason": e.reason,
+                "success": e.success,
+                "error_message": e.error_message
+            }
+            for e in sorted(events, key=lambda x: x.timestamp, reverse=True)
+        ]
+
+    def revoke_key(self, key_id: str, reason: str = "manual_revocation") -> Dict[str, Any]:
+        """Revoke a specific API key."""
+        if key_id not in self.keys:
+            return {
+                "success": False,
+                "key_id": key_id,
+                "error": "Key not found"
+            }
+        
+        self.keys[key_id].status = KeyStatus.REVOKED.value
+        
+        self.alerts.append({
+            "timestamp": datetime.now().isoformat(),
+            "severity": "warning",
+            "message": f"Key {key_id} revoked: {reason}",
+            "key_id": key_id,
+            "reason": reason
+        })
+        
+        return {
+            "success": True,
+            "key_id": key_id,
+            "status": KeyStatus.REVOKED.value,
+            "reason": reason,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    def get_alerts(self, severity: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get all alerts, optionally filtered by severity."""
+        alerts = self.alerts
+        
+        if severity:
+            alerts = [a for a in alerts if a.get("severity") == severity]
+        
+        return sorted(alerts, key=lambda x: x["timestamp"], reverse=True)
+
+    def export_report(self, format: str = "json") -> str:
+        """Export a comprehensive report in the specified format."""
+        scan_report = self.scan_all_keys()
+        scan_report["alerts"] = self.get_alerts()
+        scan_report["rotation_history"] = self.get_rotation_history()
+        
+        if format == "json":
+            return json.dumps(scan_report, indent=2)
+        else:
+            return str(scan_report)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="API Key Rotation Enforcer - Automated security scanner"
+    )
+    parser.add_argument(
+        "--warning-days",
+        type=int,
+        default=30,
+        help="Warning threshold in days (default: 30)"
+    )
+    parser.add_argument(
+        "--critical-days",
+        type=int,
+        default=60,
+        help="Critical threshold in days (default: 60)"
+    )
+    parser.add_argument(
+        "--max-age-days",
+        type=int,
+        default=90,
+        help="Maximum key age in days (default: 90)"
+    )
+    parser.add_argument(
+        "--auto-rotation",
+        action="store_true",
+        help="Enable automatic rotation of critical keys"
+    )
+    
+    args = parser.parse_args()
+    
+    enforcer = APIKeyRotationEnforcer(
+        warning_threshold_days=args.warning_days,
+        critical_threshold_days=args.critical_days,
+        max_key_age_days=args.max_age_days,
+        enable_auto_rotation=args.auto_rotation
+    )
+    
+    # Demo: Register some test keys
+    enforcer.register_key(
+        "api_key_prod_001",
+        environment="production",
+        owner="service_a",
+        permissions=["read", "write"],
+        rotation_policy_days=90
+    )
+    
+    enforcer.register_key(
+        "api_key_staging_001",
+        environment="staging",
+        owner="service_b",
+        permissions=["read"],
+        rotation_policy_days=60
+    )
+    
+    enforcer.register_key(
+        "api_key_dev_001",
+        environment="development",
+        owner="developer_team",
+        permissions=["read", "write", "delete"],
+        rotation_policy_days=30
+    )
+    
+    # Simulate some usage
+    enforcer.update_key_usage("api_key_prod_001")
+    enforcer.update_key_usage("api_key_staging_001")
+    
+    # Check key ages
+    print("=" * 60)
+    print("KEY AGE CHECK")
+    print("=" * 60)
+    for key_id in enforcer.keys.keys():
+        print(json.dumps(enforcer.check_key_age(key_id), indent=2))
+    
+    # Run a scan
+    print("\n" + "=" * 60)
+    print("COMPREHENSIVE SCAN REPORT")
+    print("=" * 60)
+    print(enforcer.export_report())
+
+
+if __name__ == "__main__":
+    main()
