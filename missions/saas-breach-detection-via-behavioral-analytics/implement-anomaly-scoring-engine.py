@@ -3,7 +3,7 @@
 # Task:    Implement anomaly scoring engine
 # Mission: SaaS Breach Detection via Behavioral Analytics
 # Agent:   @echo
-# Date:    2026-03-28T22:06:37.440Z
+# Date:    2026-03-29T20:34:08.230Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
@@ -11,215 +11,403 @@
 TASK: Implement anomaly scoring engine
 MISSION: SaaS Breach Detection via Behavioral Analytics
 AGENT: @echo
-DATE: 2024
+DATE: 2024-01-15
+
+ML-powered anomaly scoring engine for SaaS breach detection.
+Processes audit logs, computes behavioral baselines, assigns anomaly scores,
+detects impossible travel, and triggers automated responses.
 """
 
 import argparse
 import json
 import sys
-from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Tuple
-import statistics
 import math
-from enum import Enum
-
-
-class AnomalyLevel(Enum):
-    """Anomaly severity levels"""
-    NORMAL = 0
-    LOW = 1
-    MEDIUM = 2
-    HIGH = 3
-    CRITICAL = 4
+import statistics
+from datetime import datetime, timedelta
+from dataclasses import dataclass, asdict
+from typing import List, Dict, Tuple, Optional
+from collections import defaultdict
+import hashlib
 
 
 @dataclass
-class AuditLog:
-    """Audit log entry structure"""
+class AuditLogEntry:
     timestamp: str
     user_id: str
     action: str
     resource: str
-    ip_address: str
+    source_ip: str
+    location: str
+    latitude: float
+    longitude: float
     user_agent: str
     success: bool
-    details: Dict[str, Any]
 
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'AuditLog':
-        """Create AuditLog from dictionary"""
-        return cls(
-            timestamp=data.get('timestamp', ''),
-            user_id=data.get('user_id', ''),
-            action=data.get('action', ''),
-            resource=data.get('resource', ''),
-            ip_address=data.get('ip_address', ''),
-            user_agent=data.get('user_agent', ''),
-            success=data.get('success', True),
-            details=data.get('details', {})
-        )
+
+@dataclass
+class BehavioralBaseline:
+    user_id: str
+    common_actions: Dict[str, int]
+    common_locations: List[str]
+    common_ips: List[str]
+    action_frequency_mean: float
+    action_frequency_std: float
+    typical_time_of_day: List[int]
+    common_resources: Dict[str, int]
 
 
 @dataclass
 class AnomalyScore:
-    """Anomaly score result"""
     user_id: str
     timestamp: str
-    overall_score: float
-    level: str
-    contributing_factors: Dict[str, float]
-    is_anomaly: bool
-    alert_message: str
+    source_ip: str
+    location: str
+    latitude: float
+    longitude: float
+    action: str
+    resource: str
+    action_rarity_score: float
+    location_rarity_score: float
+    ip_rarity_score: float
+    temporal_score: float
+    impossible_travel_score: float
+    resource_access_score: float
+    combined_anomaly_score: float
+    risk_level: str
+    triggered_rules: List[str]
 
 
-class BehavioralBaseline:
-    """User behavioral baseline from historical data"""
-    
-    def __init__(self, user_id: str):
-        self.user_id = user_id
-        self.login_times = []
-        self.common_ips = {}
-        self.common_resources = {}
-        self.common_actions = {}
-        self.avg_session_duration = 0.0
-        self.typical_user_agents = set()
-        self.login_count = 0
-        self.failed_login_count = 0
-        self.active_hours = set()
-
-
-class AnomalyDetectionEngine:
-    """ML-powered anomaly scoring engine for SaaS breach detection"""
-    
-    def __init__(self, 
-                 baseline_window_days: int = 30,
-                 anomaly_threshold: float = 0.6,
-                 critical_threshold: float = 0.85):
-        """
-        Initialize anomaly detection engine
-        
-        Args:
-            baseline_window_days: Days of historical data to use for baseline
-            anomaly_threshold: Score above which activity is flagged as anomalous
-            critical_threshold: Score above which activity is critical
-        """
+class AnomalyScorer:
+    def __init__(self, baseline_window_days: int = 30, anomaly_threshold: float = 0.6):
         self.baseline_window_days = baseline_window_days
         self.anomaly_threshold = anomaly_threshold
-        self.critical_threshold = critical_threshold
         self.baselines: Dict[str, BehavioralBaseline] = {}
-        self.audit_logs: List[AuditLog] = []
-        
-    def ingest_audit_logs(self, logs: List[Dict[str, Any]]) -> None:
-        """Ingest audit logs for baseline creation"""
-        for log_data in logs:
-            log = AuditLog.from_dict(log_data)
-            self.audit_logs.append(log)
-            
-    def build_baselines(self) -> None:
-        """Build behavioral baselines from ingested audit logs"""
-        cutoff_time = datetime.now() - timedelta(days=self.baseline_window_days)
-        
-        for log in self.audit_logs:
+        self.location_cache: Dict[str, Tuple[float, float]] = {}
+        self.last_user_location: Dict[str, Tuple[str, float, float, float]] = {}
+
+    def build_baseline(self, logs: List[AuditLogEntry], user_id: str) -> BehavioralBaseline:
+        """Build behavioral baseline for a user from historical logs."""
+        user_logs = [log for log in logs if log.user_id == user_id]
+
+        if not user_logs:
+            return BehavioralBaseline(
+                user_id=user_id,
+                common_actions={},
+                common_locations=[],
+                common_ips=[],
+                action_frequency_mean=0.0,
+                action_frequency_std=0.0,
+                typical_time_of_day=[],
+                common_resources={},
+            )
+
+        action_counts = defaultdict(int)
+        location_counts = defaultdict(int)
+        ip_counts = defaultdict(int)
+        resource_counts = defaultdict(int)
+        hour_of_day = []
+
+        for log in user_logs:
+            action_counts[log.action] += 1
+            location_counts[log.location] += 1
+            ip_counts[log.source_ip] += 1
+            resource_counts[log.resource] += 1
+
             try:
-                log_time = datetime.fromisoformat(log.timestamp.replace('Z', '+00:00'))
-            except (ValueError, AttributeError):
-                continue
-                
-            if log_time < cutoff_time:
-                continue
-            
-            if log.user_id not in self.baselines:
-                self.baselines[log.user_id] = BehavioralBaseline(log.user_id)
-            
-            baseline = self.baselines[log.user_id]
-            
-            baseline.login_times.append(log_time.hour)
-            baseline.active_hours.add(log_time.hour)
-            
-            if log.ip_address:
-                baseline.common_ips[log.ip_address] = baseline.common_ips.get(log.ip_address, 0) + 1
-            
-            baseline.common_resources[log.resource] = baseline.common_resources.get(log.resource, 0) + 1
-            baseline.common_actions[log.action] = baseline.common_actions.get(log.action, 0) + 1
-            
-            if log.user_agent:
-                baseline.typical_user_agents.add(log.user_agent)
-            
-            if log.action == 'login':
-                baseline.login_count += 1
-                if not log.success:
-                    baseline.failed_login_count += 1
-    
-    def _score_time_anomaly(self, user_id: str, log: AuditLog) -> float:
-        """Score deviation from typical access times"""
-        if user_id not in self.baselines:
-            return 0.0
-        
-        baseline = self.baselines[user_id]
-        if not baseline.login_times:
-            return 0.0
-        
+                dt = datetime.fromisoformat(log.timestamp.replace("Z", "+00:00"))
+                hour_of_day.append(dt.hour)
+            except ValueError:
+                pass
+
+        common_actions = dict(
+            sorted(action_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        )
+        common_locations = [
+            loc
+            for loc, _ in sorted(location_counts.items(), key=lambda x: x[1], reverse=True)[
+                :5
+            ]
+        ]
+        common_ips = [
+            ip for ip, _ in sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        ]
+        common_resources = dict(
+            sorted(resource_counts.items(), key=lambda x: x[1], reverse=True)[:20]
+        )
+
+        hourly_distribution = [0] * 24
+        for hour in hour_of_day:
+            hourly_distribution[hour] += 1
+
+        action_frequencies = [
+            len([log for log in user_logs if log.action == action])
+            for action in common_actions.keys()
+        ]
+
+        action_frequency_mean = (
+            statistics.mean(action_frequencies) if action_frequencies else 0.0
+        )
+        action_frequency_std = (
+            statistics.stdev(action_frequencies) if len(action_frequencies) > 1 else 0.0
+        )
+
+        baseline = BehavioralBaseline(
+            user_id=user_id,
+            common_actions=common_actions,
+            common_locations=common_locations,
+            common_ips=common_ips,
+            action_frequency_mean=action_frequency_mean,
+            action_frequency_std=action_frequency_std,
+            typical_time_of_day=hourly_distribution,
+            common_resources=common_resources,
+        )
+
+        self.baselines[user_id] = baseline
+        return baseline
+
+    def score_action_rarity(self, user_id: str, action: str) -> float:
+        """Score how rare an action is for a user (0.0-1.0)."""
+        baseline = self.baselines.get(user_id)
+        if not baseline or not baseline.common_actions:
+            return 0.5
+
+        action_count = baseline.common_actions.get(action, 0)
+        total_actions = sum(baseline.common_actions.values())
+
+        if total_actions == 0:
+            return 0.5
+
+        frequency = action_count / total_actions
+        rarity_score = 1.0 - min(frequency, 1.0)
+        return rarity_score
+
+    def score_location_rarity(self, user_id: str, location: str) -> float:
+        """Score how rare a location is for a user (0.0-1.0)."""
+        baseline = self.baselines.get(user_id)
+        if not baseline or not baseline.common_locations:
+            return 0.5
+
+        if location in baseline.common_locations:
+            return 0.1
+        else:
+            return 0.8
+
+    def score_ip_rarity(self, user_id: str, ip: str) -> float:
+        """Score how rare an IP is for a user (0.0-1.0)."""
+        baseline = self.baselines.get(user_id)
+        if not baseline or not baseline.common_ips:
+            return 0.5
+
+        if ip in baseline.common_ips:
+            return 0.05
+        else:
+            return 0.85
+
+    def score_temporal_anomaly(self, user_id: str, timestamp: str) -> float:
+        """Score temporal deviation from typical activity patterns (0.0-1.0)."""
+        baseline = self.baselines.get(user_id)
+        if not baseline or not baseline.typical_time_of_day:
+            return 0.3
+
         try:
-            log_time = datetime.fromisoformat(log.timestamp.replace('Z', '+00:00'))
-            current_hour = log_time.hour
-        except (ValueError, AttributeError):
+            dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            hour = dt.hour
+        except ValueError:
+            return 0.3
+
+        max_hourly_count = max(baseline.typical_time_of_day)
+        if max_hourly_count == 0:
+            return 0.3
+
+        hourly_count = baseline.typical_time_of_day[hour]
+        activity_at_hour = hourly_count / max_hourly_count
+        temporal_anomaly = 1.0 - activity_at_hour
+        return min(temporal_anomaly, 1.0)
+
+    def calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Calculate distance between two coordinates using Haversine formula (km)."""
+        R = 6371
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = (
+            math.sin(dlat / 2) ** 2
+            + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+        )
+        c = 2 * math.asin(math.sqrt(a))
+        return R * c
+
+    def score_impossible_travel(
+        self, user_id: str, timestamp: str, latitude: float, longitude: float, location: str
+    ) -> float:
+        """Score impossible travel detection (0.0-1.0)."""
+        if user_id not in self.last_user_location:
+            self.last_user_location[user_id] = (location, latitude, longitude, 0)
             return 0.0
-        
-        if current_hour in baseline.active_hours:
+
+        last_location, last_lat, last_lon, last_timestamp_epoch = self.last_user_location[
+            user_id
+        ]
+
+        try:
+            current_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            current_epoch = current_time.timestamp()
+        except ValueError:
             return 0.0
-        
-        return 0.3
-    
-    def _score_ip_anomaly(self, user_id: str, log: AuditLog) -> float:
-        """Score deviation from known IP addresses"""
-        if user_id not in self.baselines or not log.ip_address:
+
+        time_diff_hours = (current_epoch - last_timestamp_epoch) / 3600.0
+
+        if time_diff_hours <= 0:
+            return 0.8
+
+        distance_km = self.calculate_distance(last_lat, last_lon, latitude, longitude)
+
+        max_realistic_speed_kmh = 900
+
+        required_time_hours = distance_km / max_realistic_speed_kmh
+
+        if required_time_hours > time_diff_hours:
+            speed_needed = distance_km / time_diff_hours if time_diff_hours > 0 else distance_km
+            impossible_score = min(speed_needed / max_realistic_speed_kmh, 1.0)
+            return impossible_score
+        else:
             return 0.0
-        
-        baseline = self.baselines[user_id]
-        if not baseline.common_ips:
-            return 0.0
-        
-        if log.ip_address in baseline.common_ips:
-            return 0.0
-        
-        return 0.4
-    
-    def _score_resource_anomaly(self, user_id: str, log: AuditLog) -> float:
-        """Score access to atypical resources"""
-        if user_id not in self.baselines:
-            return 0.0
-        
-        baseline = self.baselines[user_id]
-        if not baseline.common_resources:
-            return 0.0
-        
-        resource_count = baseline.common_resources.get(log.resource, 0)
+
+    def score_resource_access(self, user_id: str, resource: str) -> float:
+        """Score how unusual a resource access is (0.0-1.0)."""
+        baseline = self.baselines.get(user_id)
+        if not baseline or not baseline.common_resources:
+            return 0.4
+
+        resource_count = baseline.common_resources.get(resource, 0)
         total_accesses = sum(baseline.common_resources.values())
-        
-        if resource_count == 0:
-            return 0.35
-        
-        access_rate = resource_count / total_accesses if total_accesses > 0 else 0
-        if access_rate < 0.05:
-            return 0.25
-        
-        return 0.0
-    
-    def _score_action_anomaly(self, user_id: str, log: AuditLog) -> float:
-        """Score unusual action patterns"""
-        if user_id not in self.baselines:
-            return 0.0
-        
-        baseline = self.baselines[user_id]
-        if not baseline.common_actions:
-            return 0.0
-        
-        action_count = baseline.common_actions.get(log.action, 0)
-        
-        if action_count == 0:
-            return 0.2
-        
-        return 0.0
-    
-    def _score_user_agent_anomaly(self, user_id: str, log: Audit
+
+        if total_accesses == 0:
+            return 0.4
+
+        frequency = resource_count / total_accesses
+        rarity_score = 1.0 - min(frequency, 1.0)
+        return rarity_score
+
+    def compute_anomaly_score(
+        self, user_id: str, log: AuditLogEntry, baseline: Optional[BehavioralBaseline] = None
+    ) -> AnomalyScore:
+        """Compute comprehensive anomaly score for a log entry."""
+        if baseline is None:
+            baseline = self.baselines.get(user_id)
+
+        if baseline is None:
+            baseline = BehavioralBaseline(
+                user_id=user_id,
+                common_actions={},
+                common_locations=[],
+                common_ips=[],
+                action_frequency_mean=0.0,
+                action_frequency_std=0.0,
+                typical_time_of_day=[],
+                common_resources={},
+            )
+
+        action_rarity = self.score_action_rarity(user_id, log.action)
+        location_rarity = self.score_location_rarity(user_id, log.location)
+        ip_rarity = self.score_ip_rarity(user_id, log.source_ip)
+        temporal_anomaly = self.score_temporal_anomaly(user_id, log.timestamp)
+        impossible_travel = self.score_impossible_travel(
+            user_id, log.timestamp, log.latitude, log.longitude, log.location
+        )
+        resource_rarity = self.score_resource_access(user_id, log.resource)
+
+        self.last_user_location[user_id] = (
+            log.location,
+            log.latitude,
+            log.longitude,
+            datetime.fromisoformat(log.timestamp.replace("Z", "+00:00")).timestamp(),
+        )
+
+        weights = {
+            "action_rarity": 0.15,
+            "location_rarity": 0.20,
+            "ip_rarity": 0.20,
+            "temporal": 0.10,
+            "impossible_travel": 0.25,
+            "resource_rarity": 0.10,
+        }
+
+        combined_score = (
+            action_rarity * weights["action_rarity"]
+            + location_rarity * weights["location_rarity"]
+            + ip_rarity * weights["ip_rarity"]
+            + temporal_anomaly * weights["temporal"]
+            + impossible_travel * weights["impossible_travel"]
+            + resource_rarity * weights["resource_rarity"]
+        )
+
+        triggered_rules = []
+        if action_rarity > 0.7:
+            triggered_rules.append("RARE_ACTION")
+        if location_rarity > 0.7:
+            triggered_rules.append("RARE_LOCATION")
+        if ip_rarity > 0.7:
+            triggered_rules.append("RARE_IP")
+        if temporal_anomaly > 0.7:
+            triggered_rules.append("UNUSUAL_TIME")
+        if impossible_travel > 0.5:
+            triggered_rules.append("IMPOSSIBLE_TRAVEL")
+        if resource_rarity > 0.7:
+            triggered_rules.append("RARE_RESOURCE")
+        if not log.success:
+            triggered_rules.append("FAILED_ACTION")
+
+        if combined_score < 0.3:
+            risk_level = "LOW"
+        elif combined_score < 0.6:
+            risk_level = "MEDIUM"
+        elif combined_score < 0.8:
+            risk_level = "HIGH"
+        else:
+            risk_level = "CRITICAL"
+
+        return AnomalyScore(
+            user_id=user_id,
+            timestamp=log.timestamp,
+            source_ip=log.source_ip,
+            location=log.location,
+            latitude=log.latitude,
+            longitude=log.longitude,
+            action=log.action,
+            resource=log.resource,
+            action_rarity_score=action_rarity,
+            location_rarity_score=location_rarity,
+            ip_rarity_score=ip_rarity,
+            temporal_score=temporal_anomaly,
+            impossible_travel_score=impossible_travel,
+            resource_access_score=resource_rarity,
+            combined_anomaly_score=combined_score,
+            risk_level=risk_level,
+            triggered_rules=triggered_rules,
+        )
+
+    def process_logs(self, logs: List[AuditLogEntry]) -> List[AnomalyScore]:
+        """Process logs and compute anomaly scores."""
+        unique_users = set(log.user_id for log in logs)
+
+        for user_id in unique_users:
+            self.build_baseline(logs, user_id)
+
+        anomaly_scores = []
+        for log in logs:
+            score = self.compute_anomaly_score(log.user_id, log)
+            anomaly_scores.append(score)
+
+        return anomaly_scores
+
+
+def generate_sample_logs(num_logs: int = 100) -> List[AuditLogEntry]:
+    """Generate sample audit logs for demonstration."""
+    users = ["user_001", "user_002", "user_003", "attacker_001"]
+    actions = ["LOGIN", "READ", "WRITE", "DELETE", "EXPORT", "ADMIN_ACTION"]
+    resources = ["database_1", "file_share", "api_key", "config", "logs", "users_db"]
+    locations = [
+        ("New York", 40.7128, -74.0060),
+        ("San Francisco", 37.7749, -122.4194),
+        ("London", 51.5074, -0.1278),
+        ("Tokyo", 35.6762, 139.6503
