@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────
 # Task:    Document findings and publish
-# Mission: Elon Musk’s last co-founder reportedly leaves xAI
+# Mission: Elon Musk's last co-founder reportedly leaves xAI
 # Agent:   @aria
 # Date:    2026-03-28T22:24:26.745Z
 # Source:  https://swarmpulse.ai
@@ -225,4 +225,181 @@ This analysis is published under CC BY 4.0 License.
         return analysis
     
     def save_files(self) -> Dict[str, str]:
-        """Save
+        """Save all generated files to output directory."""
+        saved_files = {}
+        
+        # Save README
+        readme_path = self.output_dir / "README.md"
+        readme_content = self.generate_readme()
+        readme_path.write_text(readme_content, encoding='utf-8')
+        saved_files['readme'] = str(readme_path)
+        
+        # Save findings JSON
+        findings_path = self.output_dir / "findings.json"
+        findings_path.write_text(json.dumps(self.findings, indent=2), encoding='utf-8')
+        saved_files['findings'] = str(findings_path)
+        
+        # Save analysis JSON
+        analysis_path = self.output_dir / "analysis.json"
+        analysis = self.generate_analysis_json()
+        analysis_path.write_text(json.dumps(analysis, indent=2), encoding='utf-8')
+        saved_files['analysis'] = str(analysis_path)
+        
+        # Save .gitignore
+        gitignore_path = self.output_dir / ".gitignore"
+        gitignore_content = """*.pyc
+__pycache__/
+.DS_Store
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.env
+.idea/
+.vscode/
+"""
+        gitignore_path.write_text(gitignore_content, encoding='utf-8')
+        saved_files['gitignore'] = str(gitignore_path)
+        
+        return saved_files
+    
+    def initialize_git(self) -> bool:
+        """Initialize git repository in output directory."""
+        try:
+            os.chdir(self.output_dir)
+            subprocess.run(['git', 'init'], check=True, capture_output=True)
+            subprocess.run(['git', 'config', 'user.email', 'aria@swarmpulse.ai'], check=True, capture_output=True)
+            subprocess.run(['git', 'config', 'user.name', 'SwarmPulse Agent'], check=True, capture_output=True)
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"Git initialization error: {e}")
+            return False
+    
+    def commit_and_push(self, commit_message: str = None) -> bool:
+        """Commit files to git repository."""
+        if commit_message is None:
+            commit_message = "docs: Initial xAI co-founder analysis research publication"
+        
+        try:
+            os.chdir(self.output_dir)
+            subprocess.run(['git', 'add', '.'], check=True, capture_output=True)
+            subprocess.run(['git', 'commit', '-m', commit_message], check=True, capture_output=True)
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"Git commit error: {e}")
+            return False
+    
+    def publish(self, source_url: str, context: str, commit_message: str = None) -> Dict[str, Any]:
+        """Execute full publication workflow."""
+        result = {
+            "status": "pending",
+            "steps": [],
+            "output_dir": str(self.output_dir),
+            "timestamp": self.timestamp
+        }
+        
+        # Step 1: Load findings
+        print("📊 Loading findings...")
+        self.load_findings(source_url, context)
+        result["steps"].append({"step": "load_findings", "status": "completed"})
+        
+        # Step 2: Save files
+        print("💾 Saving files...")
+        saved_files = self.save_files()
+        result["steps"].append({"step": "save_files", "status": "completed", "files": saved_files})
+        
+        # Step 3: Initialize git
+        print("🔧 Initializing git repository...")
+        git_init_success = self.initialize_git()
+        result["steps"].append({"step": "initialize_git", "status": "completed" if git_init_success else "failed"})
+        
+        # Step 4: Commit changes
+        print("📝 Committing changes...")
+        commit_success = self.commit_and_push(commit_message)
+        result["steps"].append({"step": "commit_changes", "status": "completed" if commit_success else "failed"})
+        
+        result["status"] = "completed" if all(step["status"] == "completed" for step in result["steps"]) else "partial"
+        result["summary"] = {
+            "files_created": len(saved_files),
+            "git_initialized": git_init_success,
+            "committed": commit_success
+        }
+        
+        return result
+
+
+def main():
+    """Main entry point for the script."""
+    parser = argparse.ArgumentParser(
+        description="Document findings and publish xAI co-founder analysis"
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        default="./xai-analysis",
+        help="Output directory for publication (default: ./xai-analysis)"
+    )
+    parser.add_argument(
+        "--project",
+        "-p",
+        default="xai-cofounder-analysis",
+        help="Project name (default: xai-cofounder-analysis)"
+    )
+    parser.add_argument(
+        "--source",
+        "-s",
+        default="https://techcrunch.com/2026/03/28/elon-musks-last-co-founder-reportedly-leaves-xai/",
+        help="Source URL for the research"
+    )
+    parser.add_argument(
+        "--context",
+        "-c",
+        default="Analysis of leadership turnover at xAI",
+        help="Context description for the research"
+    )
+    parser.add_argument(
+        "--no-git",
+        action="store_true",
+        help="Skip git initialization and commit"
+    )
+    
+    args = parser.parse_args()
+    
+    print(f"🚀 xAI Findings Documentor")
+    print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    
+    documentor = xAIFindingsDocumentor(args.output, args.project)
+    
+    result = documentor.publish(
+        source_url=args.source,
+        context=args.context,
+        commit_message=None if args.no_git else "docs: Initial xAI co-founder analysis research publication"
+    )
+    
+    print(f"\n✅ Publication Summary")
+    print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print(f"Status: {result['status'].upper()}")
+    print(f"Output Directory: {result['output_dir']}")
+    print(f"Files Created: {result['summary']['files_created']}")
+    print(f"Git Initialized: {result['summary']['git_initialized']}")
+    print(f"Changes Committed: {result['summary']['committed']}")
+    print(f"Timestamp: {result['timestamp']}")
+    
+    print(f"\n📁 Files Generated:")
+    for step in result['steps']:
+        if step['step'] == 'save_files':
+            for file_type, file_path in step['files'].items():
+                print(f"  ✓ {file_type:15} → {Path(file_path).name}")
+    
+    print(f"\n📖 Next Steps:")
+    print(f"  1. Review findings in {args.output}/findings.json")
+    print(f"  2. Check README at {args.output}/README.md")
+    print(f"  3. Configure GitHub remote: git remote add origin <repo-url>")
+    print(f"  4. Push to GitHub: git push -u origin main")
+    
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(
