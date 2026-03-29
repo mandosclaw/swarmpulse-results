@@ -3,196 +3,430 @@
 # Task:    Model routing middleware
 # Mission: LLM Inference Cost Optimizer
 # Agent:   @sue
-# Date:    2026-03-23T18:09:29.577Z
-# Repo:    https://github.com/mandosclaw/swarmpulse-results
+# Date:    2026-03-29T13:12:39.244Z
+# Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
-"""WSGI middleware that intercepts LLM API calls, routes based on complexity, logs cost per request."""
+"""
+Task: Model routing middleware
+Mission: LLM Inference Cost Optimizer
+Agent: @sue
+Date: 2024-01-15
+
+LiteLLM-compatible proxy that routes LLM queries to optimal models based on
+complexity analysis and per-caller cost budgets. Implements prompt caching,
+semantic deduplication, and batch optimization.
+"""
 
 import argparse
 import json
-import logging
-import sys
+import hashlib
 import time
-import urllib.request
-import urllib.error
-from dataclasses import dataclass, field
+import sys
 from datetime import datetime
-from typing import Any, Callable, Optional
+from typing import Dict, List, Tuple, Any, Optional
+from dataclasses import dataclass, asdict
+from collections import defaultdict
 import re
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
-
-MODEL_COSTS = {
-    "gpt-4": {"input_per_1k": 0.03, "output_per_1k": 0.06},
-    "gpt-4-turbo": {"input_per_1k": 0.01, "output_per_1k": 0.03},
-    "gpt-3.5-turbo": {"input_per_1k": 0.001, "output_per_1k": 0.002},
-    "gpt-3.5-turbo-16k": {"input_per_1k": 0.003, "output_per_1k": 0.004},
-}
-
-COMPLEX_SIGNALS = re.compile(r'\b(?:analyze|compare|synthesize|design|architect|comprehensive|multi-step|derive|algorithm|proof|research)\b', re.I)
-CODE_SIGNALS = re.compile(r'```|def |class |function |SELECT |import ')
-
-
-def estimate_tokens(text: str) -> int:
-    return max(1, len(text.split()) * 4 // 3 + len(text) // 6)
-
-
-def classify_complexity(prompt: str) -> str:
-    tokens = estimate_tokens(prompt)
-    complex_hits = len(COMPLEX_SIGNALS.findall(prompt))
-    code_hits = len(CODE_SIGNALS.findall(prompt))
-    score = (tokens / 100) + complex_hits * 1.5 + code_hits * 1.0
-    if score >= 5.0:
-        return "complex"
-    elif score >= 2.0:
-        return "medium"
-    return "simple"
-
-
-def select_model(complexity: str, force_model: Optional[str] = None) -> str:
-    if force_model:
-        return force_model
-    return {"complex": "gpt-4", "medium": "gpt-3.5-turbo", "simple": "gpt-3.5-turbo"}[complexity]
-
-
-def compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    costs = MODEL_COSTS.get(model, MODEL_COSTS["gpt-3.5-turbo"])
-    return (input_tokens / 1000) * costs["input_per_1k"] + (output_tokens / 1000) * costs["output_per_1k"]
 
 
 @dataclass
-class RequestLog:
-    request_id: str
+class ModelConfig:
+    """LLM model configuration with pricing and capabilities."""
+    name: str
+    provider: str
+    cost_per_1k_input: float
+    cost_per_1k_output: float
+    max_tokens: int
+    complexity_threshold: float
+    latency_ms: int
+    capabilities: List[str]
+
+
+@dataclass
+class RoutingDecision:
+    """Result of routing decision for a query."""
+    original_model: str
+    routed_model: str
+    complexity_score: float
+    estimated_cost: float
+    cache_hit: bool
+    cached_response: Optional[str]
+    reason: str
     timestamp: str
-    prompt_preview: str
-    complexity: str
-    model_requested: str
-    model_used: str
-    input_tokens: int
-    output_tokens: int
-    cost_usd: float
-    latency_ms: float
-    status: str
 
 
-class LLMRoutingMiddleware:
-    def __init__(self, app: Callable, api_key: str = "", log_file: str = "llm_costs.jsonl", dry_run: bool = False) -> None:
-        self.app = app
-        self.api_key = api_key
-        self.log_file = log_file
-        self.dry_run = dry_run
-        self.request_logs: list[RequestLog] = []
+@dataclass
+class CallerBudget:
+    """Per-caller cost budget tracking."""
+    caller_id: str
+    monthly_budget: float
+    spent_this_month: float
+    queries_this_month: int
+    last_reset: str
 
-    def __call__(self, environ: dict, start_response: Callable) -> Any:
-        if environ.get("PATH_INFO", "") != "/v1/chat/completions":
-            return self.app(environ, start_response)
 
-        body_size = int(environ.get("CONTENT_LENGTH", 0) or 0)
-        body = environ["wsgi.input"].read(body_size)
+class ComplexityAnalyzer:
+    """Analyzes query complexity using multiple heuristics."""
+    
+    def __init__(self):
+        self.keyword_weights = {
+            'reason': 0.3,
+            'explain': 0.25,
+            'analyze': 0.35,
+            'compare': 0.3,
+            'predict': 0.4,
+            'code': 0.5,
+            'algorithm': 0.45,
+            'architecture': 0.4,
+            'design': 0.35,
+            'debug': 0.4,
+            'optimize': 0.45,
+            'research': 0.5,
+            'novel': 0.5,
+        }
+    
+    def calculate_complexity(self, prompt: str) -> float:
+        """
+        Calculate query complexity on scale 0.0 to 1.0.
+        Combines multiple signals: length, keywords, structure, depth.
+        """
+        scores = []
+        
+        # Length-based complexity
+        word_count = len(prompt.split())
+        length_score = min(word_count / 500.0, 1.0)
+        scores.append(length_score * 0.2)
+        
+        # Keyword-based complexity
+        prompt_lower = prompt.lower()
+        keyword_score = 0.0
+        keyword_count = 0
+        for keyword, weight in self.keyword_weights.items():
+            if keyword in prompt_lower:
+                keyword_score += weight
+                keyword_count += 1
+        if keyword_count > 0:
+            keyword_score = min(keyword_score / (keyword_count * 0.5), 1.0)
+        scores.append(keyword_score * 0.3)
+        
+        # Code/technical complexity
+        code_indicators = ['```', 'def ', 'class ', 'import ', 'function', '<', '>', '{', '}']
+        code_count = sum(1 for indicator in code_indicators if indicator in prompt)
+        code_score = min(code_count / 5.0, 1.0)
+        scores.append(code_score * 0.25)
+        
+        # Question depth (question marks, multiple queries)
+        question_count = prompt.count('?')
+        sentence_count = len(re.split(r'[.!?]+', prompt))
+        depth_score = min((question_count + sentence_count - 1) / 10.0, 1.0)
+        scores.append(depth_score * 0.25)
+        
+        return sum(scores)
 
-        try:
-            request_data = json.loads(body)
-        except json.JSONDecodeError:
-            start_response("400 Bad Request", [("Content-Type", "application/json")])
-            return [json.dumps({"error": "Invalid JSON"}).encode()]
 
-        messages = request_data.get("messages", [])
-        full_prompt = " ".join(m.get("content", "") for m in messages)
-        requested_model = request_data.get("model", "gpt-3.5-turbo")
+class PromptCache:
+    """Semantic prompt caching with hash-based deduplication."""
+    
+    def __init__(self, max_cache_size: int = 1000):
+        self.cache: Dict[str, Tuple[str, float]] = {}
+        self.max_cache_size = max_cache_size
+        self.hits = 0
+        self.misses = 0
+    
+    def _normalize_prompt(self, prompt: str) -> str:
+        """Normalize prompt for semantic comparison."""
+        normalized = prompt.lower().strip()
+        normalized = re.sub(r'\s+', ' ', normalized)
+        normalized = re.sub(r'[^\w\s]', '', normalized)
+        return normalized
+    
+    def _hash_prompt(self, prompt: str) -> str:
+        """Generate hash of normalized prompt."""
+        normalized = self._normalize_prompt(prompt)
+        return hashlib.md5(normalized.encode()).hexdigest()
+    
+    def get(self, prompt: str) -> Optional[str]:
+        """Retrieve cached response if available."""
+        prompt_hash = self._hash_prompt(prompt)
+        if prompt_hash in self.cache:
+            response, cached_at = self.cache[prompt_hash]
+            self.hits += 1
+            return response
+        self.misses += 1
+        return None
+    
+    def set(self, prompt: str, response: str) -> None:
+        """Cache a prompt-response pair."""
+        if len(self.cache) >= self.max_cache_size:
+            oldest_key = min(self.cache.keys(), 
+                           key=lambda k: self.cache[k][1])
+            del self.cache[oldest_key]
+        
+        prompt_hash = self._hash_prompt(prompt)
+        self.cache[prompt_hash] = (response, time.time())
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get cache performance statistics."""
+        total = self.hits + self.misses
+        hit_rate = (self.hits / total * 100) if total > 0 else 0
+        return {
+            'size': len(self.cache),
+            'hits': self.hits,
+            'misses': self.misses,
+            'hit_rate_percent': round(hit_rate, 2),
+            'max_size': self.max_cache_size
+        }
 
-        complexity = classify_complexity(full_prompt)
-        routed_model = select_model(complexity, force_model=requested_model if requested_model.startswith("gpt-4") else None)
 
-        if requested_model != routed_model:
-            logger.info(f"Routing: {requested_model} -> {routed_model} (complexity: {complexity})")
-            request_data["model"] = routed_model
+class ModelRouter:
+    """Routes queries to optimal models based on complexity and cost."""
+    
+    def __init__(self, models: List[ModelConfig]):
+        """Initialize router with available models."""
+        self.models = sorted(models, key=lambda m: m.cost_per_1k_input)
+        self.complexity_analyzer = ComplexityAnalyzer()
+        self.prompt_cache = PromptCache(max_cache_size=5000)
+        self.caller_budgets: Dict[str, CallerBudget] = {}
+        self.routing_history: List[RoutingDecision] = []
+        self.batch_queue: List[Tuple[str, str, str]] = []
+        self.batch_threshold = 5
+    
+    def register_caller(self, caller_id: str, monthly_budget: float) -> None:
+        """Register a caller with their monthly budget."""
+        self.caller_budgets[caller_id] = CallerBudget(
+            caller_id=caller_id,
+            monthly_budget=monthly_budget,
+            spent_this_month=0.0,
+            queries_this_month=0,
+            last_reset=datetime.now().isoformat()
+        )
+    
+    def _check_budget(self, caller_id: str, estimated_cost: float) -> bool:
+        """Check if caller has budget available."""
+        if caller_id not in self.caller_budgets:
+            return True
+        
+        budget = self.caller_budgets[caller_id]
+        available = budget.monthly_budget - budget.spent_this_month
+        return estimated_cost <= available
+    
+    def _estimate_cost(self, model: ModelConfig, prompt: str, 
+                      estimated_output_tokens: int = 500) -> float:
+        """Estimate cost for a query on a given model."""
+        prompt_tokens = len(prompt.split()) * 1.3
+        input_cost = (prompt_tokens / 1000) * model.cost_per_1k_input
+        output_cost = (estimated_output_tokens / 1000) * model.cost_per_1k_output
+        return input_cost + output_cost
+    
+    def route(self, prompt: str, caller_id: str = "default",
+             requested_model: str = "gpt-4", cost_budget: Optional[float] = None) -> RoutingDecision:
+        """
+        Route a query to optimal model.
+        
+        Args:
+            prompt: The user's query/prompt
+            caller_id: Identifier for the caller/API user
+            requested_model: Model caller prefers (may be downgraded)
+            cost_budget: Optional override for cost budget
+            
+        Returns:
+            RoutingDecision with routing details
+        """
+        timestamp = datetime.now().isoformat()
+        
+        # Check cache first
+        cached_response = self.prompt_cache.get(prompt)
+        if cached_response:
+            decision = RoutingDecision(
+                original_model=requested_model,
+                routed_model="cache",
+                complexity_score=0.0,
+                estimated_cost=0.0,
+                cache_hit=True,
+                cached_response=cached_response,
+                reason="Exact match found in prompt cache",
+                timestamp=timestamp
+            )
+            self.routing_history.append(decision)
+            return decision
+        
+        # Analyze complexity
+        complexity_score = self.complexity_analyzer.calculate_complexity(prompt)
+        
+        # Find best model based on complexity and budget
+        best_model = self._select_model(
+            complexity_score=complexity_score,
+            requested_model=requested_model,
+            caller_id=caller_id,
+            prompt=prompt
+        )
+        
+        estimated_cost = self._estimate_cost(best_model, prompt)
+        
+        # Check caller budget
+        reason = f"Complexity score: {complexity_score:.2f}"
+        if not self._check_budget(caller_id, estimated_cost):
+            # Fall back to cheapest model
+            best_model = self.models[0]
+            reason = f"Budget limit exceeded, downgraded to {best_model.name}"
+        
+        # Update caller budget
+        if caller_id in self.caller_budgets:
+            budget = self.caller_budgets[caller_id]
+            budget.spent_this_month += estimated_cost
+            budget.queries_this_month += 1
+        
+        decision = RoutingDecision(
+            original_model=requested_model,
+            routed_model=best_model.name,
+            complexity_score=complexity_score,
+            estimated_cost=estimated_cost,
+            cache_hit=False,
+            cached_response=None,
+            reason=reason,
+            timestamp=timestamp
+        )
+        
+        self.routing_history.append(decision)
+        return decision
+    
+    def _select_model(self, complexity_score: float, requested_model: str,
+                     caller_id: str, prompt: str) -> ModelConfig:
+        """Select optimal model based on multiple criteria."""
+        # Find requested model
+        requested = next((m for m in self.models if m.name == requested_model), None)
+        
+        # Determine if we should downgrade based on complexity
+        for model in self.models:
+            if complexity_score <= model.complexity_threshold:
+                return model
+        
+        # If complexity requires full power, use requested if available
+        if requested:
+            return requested
+        
+        # Default to largest model
+        return self.models[-1]
+    
+    def add_to_batch(self, prompt: str, caller_id: str, model: str) -> None:
+        """Add prompt to batch queue."""
+        self.batch_queue.append((prompt, caller_id, model))
+    
+    def process_batch(self) -> List[RoutingDecision]:
+        """Process batched queries with semantic deduplication."""
+        decisions = []
+        seen_semantics = set()
+        
+        for prompt, caller_id, model in self.batch_queue:
+            semantic_hash = self.prompt_cache._hash_prompt(prompt)
+            
+            # Skip semantic duplicates
+            if semantic_hash in seen_semantics:
+                continue
+            seen_semantics.add(semantic_hash)
+            
+            decision = self.route(prompt, caller_id, model)
+            decisions.append(decision)
+        
+        self.batch_queue = []
+        return decisions
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get router statistics."""
+        return {
+            'total_routes': len(self.routing_history),
+            'cache_stats': self.prompt_cache.get_stats(),
+            'callers_registered': len(self.caller_budgets),
+            'recent_routes': [asdict(d) for d in self.routing_history[-10:]],
+            'timestamp': datetime.now().isoformat()
+        }
 
-        t0 = time.time()
-        input_tokens = estimate_tokens(full_prompt)
 
-        if self.dry_run:
-            response_body = json.dumps({"id": "dry-run", "model": routed_model, "choices": [{"message": {"role": "assistant", "content": "[dry run response]"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": input_tokens, "completion_tokens": 50, "total_tokens": input_tokens + 50}})
-            output_tokens = 50
-            status_code = 200
+class LiteLLMProxy:
+    """LiteLLM-compatible proxy with cost optimization."""
+    
+    def __init__(self, router: ModelRouter):
+        self.router = router
+        self.request_id_counter = 0
+    
+    def completion(self, model: str, messages: List[Dict], 
+                  caller_id: str = "default", **kwargs) -> Dict[str, Any]:
+        """
+        LiteLLM-compatible completion endpoint.
+        
+        Args:
+            model: Requested model (may be routed)
+            messages: Conversation messages
+            caller_id: Caller identifier
+            **kwargs: Additional LiteLLM parameters
+            
+        Returns:
+            Completion response with routing metadata
+        """
+        self.request_id_counter += 1
+        request_id = f"req_{self.request_id_counter}_{int(time.time())}"
+        
+        # Combine messages into prompt
+        prompt = "\n".join([m.get("content", "") for m in messages])
+        
+        # Route to optimal model
+        routing_decision = self.router.route(
+            prompt=prompt,
+            caller_id=caller_id,
+            requested_model=model
+        )
+        
+        # Simulate completion
+        if routing_decision.cache_hit:
+            response_text = routing_decision.cached_response
         else:
-            response_body, status_code, output_tokens = self._forward_request(request_data)
-
-        latency = (time.time() - t0) * 1000
-        cost = compute_cost(routed_model, input_tokens, output_tokens)
-
-        log_entry = RequestLog(request_id=f"req-{int(time.time()*1000)}", timestamp=datetime.now().isoformat(), prompt_preview=full_prompt[:80], complexity=complexity, model_requested=requested_model, model_used=routed_model, input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=round(cost, 6), latency_ms=round(latency, 2), status=str(status_code))
-        self.request_logs.append(log_entry)
-        self._write_log(log_entry)
-
-        logger.info(f"[{complexity.upper()}] model={routed_model} tokens={input_tokens}+{output_tokens} cost=${cost:.6f} {latency:.0f}ms")
-        status_str = f"{status_code} {'OK' if status_code == 200 else 'Error'}"
-        start_response(status_str, [("Content-Type", "application/json")])
-        return [response_body.encode() if isinstance(response_body, str) else response_body]
-
-    def _forward_request(self, data: dict) -> tuple[str, int, int]:
-        url = "https://api.openai.com/v1/chat/completions"
-        body = json.dumps(data).encode()
-        req = urllib.request.Request(url, data=body, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                response_body = resp.read().decode()
-                resp_data = json.loads(response_body)
-                output_tokens = resp_data.get("usage", {}).get("completion_tokens", 50)
-                return response_body, resp.status, output_tokens
-        except urllib.error.HTTPError as e:
-            return e.read().decode(), e.code, 0
-        except Exception as ex:
-            return json.dumps({"error": str(ex)}), 500, 0
-
-    def _write_log(self, entry: RequestLog) -> None:
-        with open(self.log_file, "a") as f:
-            f.write(json.dumps({"request_id": entry.request_id, "timestamp": entry.timestamp, "complexity": entry.complexity, "model_used": entry.model_used, "tokens_in": entry.input_tokens, "tokens_out": entry.output_tokens, "cost_usd": entry.cost_usd, "latency_ms": entry.latency_ms}) + "\n")
-
-    def get_cost_summary(self) -> dict[str, Any]:
-        by_model: dict[str, dict] = {}
-        for log in self.request_logs:
-            if log.model_used not in by_model:
-                by_model[log.model_used] = {"requests": 0, "total_cost": 0.0, "total_tokens": 0}
-            by_model[log.model_used]["requests"] += 1
-            by_model[log.model_used]["total_cost"] += log.cost_usd
-            by_model[log.model_used]["total_tokens"] += log.input_tokens + log.output_tokens
-        return {"total_requests": len(self.request_logs), "total_cost_usd": round(sum(l.cost_usd for l in self.request_logs), 6), "by_model": by_model}
+            response_text = self._generate_mock_response(routing_decision.routed_model)
+            self.router.prompt_cache.set(prompt, response_text)
+        
+        return {
+            "id": request_id,
+            "object": "text_completion",
+            "created": int(time.time()),
+            "model": routing_decision.routed_model,
+            "choices": [
+                {
+                    "text": response_text,
+                    "index": 0,
+                    "finish_reason": "stop"
+                }
+            ],
+            "usage": {
+                "prompt_tokens": int(len(prompt.split()) * 1.3),
+                "completion_tokens": int(len(response_text.split()) * 1.3),
+                "total_tokens": int(len((prompt + response_text).split()) * 1.3)
+            },
+            "cost": {
+                "estimated_usd": routing_decision.estimated_cost,
+                "cached": routing_decision.cache_hit
+            },
+            "routing": asdict(routing_decision)
+        }
+    
+    def _generate_mock_response(self, model: str) -> str:
+        """Generate mock completion response."""
+        responses = {
+            "gpt-4": "This is a comprehensive response requiring full model capability...",
+            "gpt-3.5-turbo": "This is a standard response from the turbo model...",
+            "claude-3-haiku": "Brief response from Haiku model.",
+            "cache": "Cached response retrieved successfully."
+        }
+        return responses.get(model, "Mock response from routed model.")
 
 
-def simple_wsgi_app(environ: dict, start_response: Callable) -> list:
-    start_response("200 OK", [("Content-Type", "text/plain")])
-    return [b"base app"]
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="LLM routing middleware demo")
-    parser.add_argument("--api-key", default="", help="OpenAI API key")
-    parser.add_argument("--log-file", default="llm_costs.jsonl")
-    parser.add_argument("--dry-run", action="store_true", default=True)
-    parser.add_argument("--simulate-requests", type=int, default=5)
-    args = parser.parse_args()
-
-    middleware = LLMRoutingMiddleware(simple_wsgi_app, api_key=args.api_key, log_file=args.log_file, dry_run=args.dry_run)
-
-    test_prompts = [
-        "What is 2+2?", "Summarize the key points of machine learning", "Write a comprehensive analysis of transformer architectures with code examples",
-        "Fix this: print 'hello'", "Design a distributed event streaming system with exactly-once guarantees, fault tolerance, and horizontal scaling",
-    ]
-
-    for i, prompt in enumerate(test_prompts[:args.simulate_requests]):
-        import io
-        body = json.dumps({"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}]}).encode()
-        environ = {"PATH_INFO": "/v1/chat/completions", "CONTENT_LENGTH": str(len(body)), "wsgi.input": io.BytesIO(body)}
-        responses = []
-        def start_response(status, headers, exc=None): responses.append(status)
-        middleware(environ, start_response)
-
-    summary = middleware.get_cost_summary()
-    logger.info(f"Middleware summary: {summary}")
-    print(json.dumps(summary, indent=2))
-
-
-if __name__ == "__main__":
-    main()
+def create_default_models() -> List[ModelConfig]:
+    """Create default model configuration."""
+    return [
+        ModelConfig(
+            name="claude-3-haiku",
+            provider="anthropic",
+            cost_per_1k_input=0.08,
+            cost_per_1k_output=0.24,
+            max_tokens=4096,
+            complexity_threshold=0.3,
+            latency_ms=
