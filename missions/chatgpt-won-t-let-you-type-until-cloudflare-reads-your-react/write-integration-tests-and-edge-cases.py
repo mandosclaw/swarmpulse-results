@@ -3,12 +3,12 @@
 # Task:    Write integration tests and edge cases
 # Mission: ChatGPT won't let you type until Cloudflare reads your React state
 # Agent:   @aria
-# Date:    2026-03-30T10:11:58.231Z
+# Date:    2026-03-30T10:12:16.988Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Write integration tests and edge cases for ChatGPT/Cloudflare React state interaction
+TASK: Write integration tests and edge cases for Cloudflare React state interception
 MISSION: ChatGPT won't let you type until Cloudflare reads your React state
 AGENT: @aria (SwarmPulse)
 DATE: 2024
@@ -18,411 +18,465 @@ import argparse
 import json
 import sys
 import time
-import uuid
-from dataclasses import dataclass, asdict
-from datetime import datetime
-from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
 import hashlib
 import hmac
-import base64
+import random
+import string
+from dataclasses import dataclass, asdict
+from typing import List, Dict, Any, Optional, Tuple
+from enum import Enum
+from abc import ABC, abstractmethod
+import re
 
 
-class StateValidationStatus(Enum):
-    """React state validation status"""
-    VALID = "valid"
-    INVALID = "invalid"
-    PARTIAL = "partial"
-    CORRUPTED = "corrupted"
-    TIMEOUT = "timeout"
-    UNVERIFIED = "unverified"
+class StateInterceptionType(Enum):
+    """Types of state interception mechanisms"""
+    FORM_SUBMISSION = "form_submission"
+    INPUT_VALIDATION = "input_validation"
+    KEYSTROKE_MONITORING = "keystroke_monitoring"
+    CONTEXT_EXTRACTION = "context_extraction"
+    TOKEN_VERIFICATION = "token_verification"
 
 
-class CloudflareCheckStatus(Enum):
-    """Cloudflare verification status"""
-    VERIFIED = "verified"
-    UNVERIFIED = "unverified"
-    FAILED = "failed"
+class TestResult(Enum):
+    """Test result status"""
+    PASS = "pass"
+    FAIL = "fail"
     TIMEOUT = "timeout"
     BLOCKED = "blocked"
+    EDGE_CASE = "edge_case"
 
 
 @dataclass
-class ReactStateSnapshot:
-    """React component state snapshot"""
-    state_id: str
+class ReactState:
+    """Simulated React component state"""
+    message: str
+    user_id: str
+    session_token: str
+    input_enabled: bool
     timestamp: float
     component_id: str
-    state_data: Dict[str, Any]
-    checksum: str
-    is_valid: bool
-    
+    version: int = 1
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+    def serialize(self) -> str:
+        return json.dumps(self.to_dict())
+
+    @staticmethod
+    def deserialize(data: str) -> 'ReactState':
+        d = json.loads(data)
+        return ReactState(**d)
+
 
 @dataclass
-class CloudflareVerificationResult:
-    """Cloudflare verification result"""
-    verification_id: str
-    state_id: str
-    status: CloudflareCheckStatus
+class InterceptionEvent:
+    """Cloudflare interception event"""
     timestamp: float
-    verified_checksum: Optional[str]
-    error_message: Optional[str]
+    interception_type: StateInterceptionType
+    state_hash: str
+    allowed: bool
+    reason: str
     latency_ms: float
+    payload_size: int
+
+
+@dataclass
+class TestCase:
+    """Individual test case"""
+    name: str
+    description: str
+    state: ReactState
+    expected_blocked: bool
+    edge_case_type: Optional[str] = None
+    timeout_seconds: float = 5.0
+
+
+class StateValidator(ABC):
+    """Abstract state validator"""
     
-    def to_dict(self) -> Dict[str, Any]:
+    @abstractmethod
+    def validate(self, state: ReactState) -> Tuple[bool, str]:
+        pass
+
+
+class CloudflareStateValidator(StateValidator):
+    """Simulates Cloudflare's state validation logic"""
+    
+    def __init__(self, strict_mode: bool = False, max_message_length: int = 4000):
+        self.strict_mode = strict_mode
+        self.max_message_length = max_message_length
+        self.blocked_patterns = [
+            r'<script[^>]*>.*?</script>',
+            r'javascript:',
+            r'onerror\s*=',
+            r'onclick\s*=',
+            r'eval\(',
+        ]
+    
+    def validate(self, state: ReactState) -> Tuple[bool, str]:
+        """Validate React state against Cloudflare rules"""
+        
+        # Check message length
+        if len(state.message) > self.max_message_length:
+            return False, f"Message exceeds max length: {len(state.message)} > {self.max_message_length}"
+        
+        # Check for empty message
+        if not state.message or not state.message.strip():
+            return False, "Message is empty"
+        
+        # Check for malicious patterns
+        for pattern in self.blocked_patterns:
+            if re.search(pattern, state.message, re.IGNORECASE):
+                return False, f"Blocked pattern detected: {pattern}"
+        
+        # Check session validity
+        if not self._validate_session(state.session_token):
+            return False, "Invalid or expired session token"
+        
+        # Check user ID format
+        if not self._validate_user_id(state.user_id):
+            return False, "Invalid user ID format"
+        
+        # Strict mode checks
+        if self.strict_mode:
+            if not state.input_enabled:
+                return False, "Input explicitly disabled in state"
+        
+        return True, "Validation passed"
+    
+    @staticmethod
+    def _validate_session(token: str) -> bool:
+        """Validate session token format and expiry"""
+        if not token or len(token) < 16:
+            return False
+        # Simulate token validation (in real scenario, verify against server)
+        return True
+    
+    @staticmethod
+    def _validate_user_id(user_id: str) -> bool:
+        """Validate user ID format"""
+        return bool(re.match(r'^[a-zA-Z0-9_-]{3,32}$', user_id))
+
+
+class InterceptionSimulator:
+    """Simulates Cloudflare interception behavior"""
+    
+    def __init__(self, validator: StateValidator, simulate_latency: bool = False):
+        self.validator = validator
+        self.simulate_latency = simulate_latency
+        self.events: List[InterceptionEvent] = []
+        self.state_hashes: Dict[str, int] = {}
+    
+    def intercept(self, state: ReactState) -> Tuple[bool, InterceptionEvent]:
+        """Intercept and validate state"""
+        start_time = time.time()
+        
+        # Simulate latency
+        if self.simulate_latency:
+            latency = random.uniform(10, 100)
+            time.sleep(latency / 1000)
+        
+        # Validate state
+        allowed, reason = self.validator.validate(state)
+        
+        # Compute state hash
+        state_hash = self._compute_state_hash(state)
+        
+        # Track state access patterns
+        if state_hash not in self.state_hashes:
+            self.state_hashes[state_hash] = 0
+        self.state_hashes[state_hash] += 1
+        
+        # Detect potential replay attacks
+        if self.state_hashes[state_hash] > 10:
+            allowed = False
+            reason = "Potential replay attack detected"
+        
+        latency_ms = (time.time() - start_time) * 1000
+        payload_size = len(state.serialize())
+        
+        event = InterceptionEvent(
+            timestamp=time.time(),
+            interception_type=StateInterceptionType.FORM_SUBMISSION,
+            state_hash=state_hash,
+            allowed=allowed,
+            reason=reason,
+            latency_ms=latency_ms,
+            payload_size=payload_size
+        )
+        
+        self.events.append(event)
+        return allowed, event
+    
+    @staticmethod
+    def _compute_state_hash(state: ReactState) -> str:
+        """Compute cryptographic hash of state"""
+        data = state.serialize().encode()
+        return hashlib.sha256(data).hexdigest()
+
+
+class IntegrationTestRunner:
+    """Runs integration tests"""
+    
+    def __init__(self, simulator: InterceptionSimulator, verbose: bool = False):
+        self.simulator = simulator
+        self.verbose = verbose
+        self.results: List[Dict[str, Any]] = []
+    
+    def run_test(self, test_case: TestCase) -> Dict[str, Any]:
+        """Run a single test case"""
+        start_time = time.time()
+        
+        allowed, event = self.simulator.intercept(test_case.state)
+        
+        duration_ms = (time.time() - start_time) * 1000
+        
+        # Determine result
+        if event.latency_ms > (test_case.timeout_seconds * 1000):
+            result_status = TestResult.TIMEOUT
+        elif not allowed and test_case.expected_blocked:
+            result_status = TestResult.PASS
+        elif allowed and not test_case.expected_blocked:
+            result_status = TestResult.PASS
+        elif not allowed and not test_case.expected_blocked:
+            result_status = TestResult.FAIL
+        else:
+            result_status = TestResult.FAIL
+        
+        test_result = {
+            "test_name": test_case.name,
+            "description": test_case.description,
+            "status": result_status.value,
+            "allowed": allowed,
+            "expected_blocked": test_case.expected_blocked,
+            "reason": event.reason,
+            "latency_ms": round(event.latency_ms, 2),
+            "payload_size": event.payload_size,
+            "state_hash": event.state_hash,
+            "duration_ms": round(duration_ms, 2),
+            "edge_case": test_case.edge_case_type
+        }
+        
+        self.results.append(test_result)
+        
+        if self.verbose:
+            print(f"[{result_status.value.upper()}] {test_case.name}: {event.reason}")
+        
+        return test_result
+    
+    def run_all_tests(self, test_cases: List[TestCase]) -> List[Dict[str, Any]]:
+        """Run all test cases"""
+        for test_case in test_cases:
+            self.run_test(test_case)
+        return self.results
+    
+    def get_summary(self) -> Dict[str, Any]:
+        """Get test summary statistics"""
+        total = len(self.results)
+        passed = sum(1 for r in self.results if r["status"] == TestResult.PASS.value)
+        failed = sum(1 for r in self.results if r["status"] == TestResult.FAIL.value)
+        timeouts = sum(1 for r in self.results if r["status"] == TestResult.TIMEOUT.value)
+        edge_cases = sum(1 for r in self.results if r["edge_case"] is not None)
+        
+        avg_latency = sum(r["latency_ms"] for r in self.results) / total if total > 0 else 0
+        max_latency = max((r["latency_ms"] for r in self.results), default=0)
+        
         return {
-            "verification_id": self.verification_id,
-            "state_id": self.state_id,
-            "status": self.status.value,
-            "timestamp": self.timestamp,
-            "verified_checksum": self.verified_checksum,
-            "error_message": self.error_message,
-            "latency_ms": self.latency_ms,
+            "total_tests": total,
+            "passed": passed,
+            "failed": failed,
+            "timeouts": timeouts,
+            "edge_cases_tested": edge_cases,
+            "pass_rate": round((passed / total * 100) if total > 0 else 0, 2),
+            "average_latency_ms": round(avg_latency, 2),
+            "max_latency_ms": round(max_latency, 2)
         }
 
 
-@dataclass
-class IntegrationTestResult:
-    """Test execution result"""
-    test_name: str
-    test_id: str
-    passed: bool
-    duration_ms: float
-    error_message: Optional[str]
-    assertions: int
-    edge_case: Optional[str]
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-
-class ReactStateValidator:
-    """Validates React state integrity and format"""
-    
-    def __init__(self, secret_key: str = "default-secret"):
-        self.secret_key = secret_key.encode()
-    
-    def compute_checksum(self, state_data: Dict[str, Any]) -> str:
-        """Compute HMAC checksum of state data"""
-        state_json = json.dumps(state_data, sort_keys=True)
-        checksum = hmac.new(
-            self.secret_key,
-            state_json.encode(),
-            hashlib.sha256
-        ).digest()
-        return base64.b64encode(checksum).decode()
-    
-    def validate_state_format(self, state: ReactStateSnapshot) -> Tuple[bool, str]:
-        """Validate state format and structure"""
-        if not state.state_id or not isinstance(state.state_id, str):
-            return False, "Invalid state_id format"
-        
-        if not isinstance(state.state_data, dict):
-            return False, "state_data must be a dictionary"
-        
-        if state.timestamp <= 0:
-            return False, "Invalid timestamp"
-        
-        if not state.component_id:
-            return False, "Missing component_id"
-        
-        return True, "Format valid"
-    
-    def validate_checksum(self, state: ReactStateSnapshot) -> Tuple[bool, str]:
-        """Verify state checksum integrity"""
-        expected = self.compute_checksum(state.state_data)
-        if state.checksum != expected:
-            return False, f"Checksum mismatch: {state.checksum} != {expected}"
-        return True, "Checksum verified"
-    
-    def validate_state_age(self, state: ReactStateSnapshot, max_age_seconds: int = 300) -> Tuple[bool, str]:
-        """Check if state is within acceptable age"""
-        current_time = time.time()
-        age = current_time - state.timestamp
-        if age > max_age_seconds:
-            return False, f"State too old: {age}s > {max_age_seconds}s"
-        return True, "State age acceptable"
-
-
-class CloudflareSimulator:
-    """Simulates Cloudflare verification service"""
-    
-    def __init__(self, failure_rate: float = 0.0, latency_ms: float = 100.0):
-        self.failure_rate = failure_rate
-        self.latency_ms = latency_ms
-        self.verified_states: Dict[str, str] = {}
-    
-    def verify_state(self, state: ReactStateSnapshot) -> CloudflareVerificationResult:
-        """Verify state through simulated Cloudflare service"""
-        verification_id = str(uuid.uuid4())
-        start_time = time.time()
-        
-        import random
-        time.sleep(self.latency_ms / 1000.0)
-        
-        # Simulate failures
-        if random.random() < self.failure_rate:
-            elapsed = (time.time() - start_time) * 1000
-            return CloudflareVerificationResult(
-                verification_id=verification_id,
-                state_id=state.state_id,
-                status=CloudflareCheckStatus.FAILED,
+def generate_test_cases(count: int = 20) -> List[TestCase]:
+    """Generate comprehensive test cases"""
+    test_cases = [
+        # Basic functionality
+        TestCase(
+            name="normal_message",
+            description="Normal valid message",
+            state=ReactState(
+                message="Hello, this is a test message",
+                user_id="user123",
+                session_token="session_abc123def456",
+                input_enabled=True,
                 timestamp=time.time(),
-                verified_checksum=None,
-                error_message="Cloudflare verification service error",
-                latency_ms=elapsed
-            )
+                component_id="chat_input_1"
+            ),
+            expected_blocked=False
+        ),
         
-        # Simulate timeout
-        if random.random() < 0.02:
-            elapsed = (time.time() - start_time) * 1000
-            return CloudflareVerificationResult(
-                verification_id=verification_id,
-                state_id=state.state_id,
-                status=CloudflareCheckStatus.TIMEOUT,
+        # XSS attempt
+        TestCase(
+            name="xss_script_injection",
+            description="Attempt to inject script tag",
+            state=ReactState(
+                message="<script>alert('xss')</script>",
+                user_id="user123",
+                session_token="session_abc123def456",
+                input_enabled=True,
                 timestamp=time.time(),
-                verified_checksum=None,
-                error_message="Verification timeout exceeded",
-                latency_ms=elapsed
-            )
+                component_id="chat_input_1"
+            ),
+            expected_blocked=True,
+            edge_case_type="xss"
+        ),
         
-        # Successful verification
-        self.verified_states[state.state_id] = state.checksum
-        elapsed = (time.time() - start_time) * 1000
-        return CloudflareVerificationResult(
-            verification_id=verification_id,
-            state_id=state.state_id,
-            status=CloudflareCheckStatus.VERIFIED,
-            timestamp=time.time(),
-            verified_checksum=state.checksum,
-            error_message=None,
-            latency_ms=elapsed
-        )
-    
-    def is_state_verified(self, state_id: str) -> bool:
-        """Check if state has been verified"""
-        return state_id in self.verified_states
-
-
-class ChatGPTInputGate:
-    """Controls input gate based on Cloudflare verification"""
-    
-    def __init__(self, validator: ReactStateValidator, cloudflare: CloudflareSimulator):
-        self.validator = validator
-        self.cloudflare = cloudflare
-        self.verification_cache: Dict[str, CloudflareVerificationResult] = {}
-    
-    def can_type(self, state: ReactStateSnapshot) -> Tuple[bool, str]:
-        """Determine if user can type based on state verification"""
-        # Check state format
-        is_valid, msg = self.validator.validate_state_format(state)
-        if not is_valid:
-            return False, f"State format invalid: {msg}"
+        # Empty message
+        TestCase(
+            name="empty_message",
+            description="Empty message submission",
+            state=ReactState(
+                message="",
+                user_id="user123",
+                session_token="session_abc123def456",
+                input_enabled=True,
+                timestamp=time.time(),
+                component_id="chat_input_1"
+            ),
+            expected_blocked=True,
+            edge_case_type="boundary"
+        ),
         
-        # Check state age
-        is_valid, msg = self.validator.validate_state_age(state)
-        if not is_valid:
-            return False, f"State age check failed: {msg}"
+        # Whitespace only
+        TestCase(
+            name="whitespace_only",
+            description="Message containing only whitespace",
+            state=ReactState(
+                message="   \t\n   ",
+                user_id="user123",
+                session_token="session_abc123def456",
+                input_enabled=True,
+                timestamp=time.time(),
+                component_id="chat_input_1"
+            ),
+            expected_blocked=True,
+            edge_case_type="boundary"
+        ),
         
-        # Check state checksum
-        is_valid, msg = self.validator.validate_checksum(state)
-        if not is_valid:
-            return False, f"Checksum validation failed: {msg}"
+        # Maximum length
+        TestCase(
+            name="max_length_message",
+            description="Message at maximum length",
+            state=ReactState(
+                message="a" * 4000,
+                user_id="user123",
+                session_token="session_abc123def456",
+                input_enabled=True,
+                timestamp=time.time(),
+                component_id="chat_input_1"
+            ),
+            expected_blocked=False,
+            edge_case_type="boundary"
+        ),
         
-        # Verify with Cloudflare
-        result = self.cloudflare.verify_state(state)
-        self.verification_cache[state.state_id] = result
+        # Exceeds maximum length
+        TestCase(
+            name="exceeds_max_length",
+            description="Message exceeding maximum length",
+            state=ReactState(
+                message="a" * 4001,
+                user_id="user123",
+                session_token="session_abc123def456",
+                input_enabled=True,
+                timestamp=time.time(),
+                component_id="chat_input_1"
+            ),
+            expected_blocked=True,
+            edge_case_type="boundary"
+        ),
         
-        if result.status == CloudflareCheckStatus.VERIFIED:
-            return True, "All checks passed - input allowed"
-        elif result.status == CloudflareCheckStatus.TIMEOUT:
-            return False, "Cloudflare verification timeout"
-        else:
-            return False, f"Cloudflare verification failed: {result.error_message}"
-
-
-class IntegrationTestSuite:
-    """Comprehensive integration test suite"""
-    
-    def __init__(self, verbose: bool = False):
-        self.verbose = verbose
-        self.results: List[IntegrationTestResult] = []
-        self.validator = ReactStateValidator(secret_key="test-secret-key")
-        self.cloudflare = CloudflareSimulator()
-        self.gate = ChatGPTInputGate(self.validator, self.cloudflare)
-    
-    def log(self, message: str):
-        """Log test message"""
-        if self.verbose:
-            print(f"[{datetime.now().isoformat()}] {message}")
-    
-    def run_test(self, test_func, test_name: str, edge_case: Optional[str] = None) -> IntegrationTestResult:
-        """Execute a single test"""
-        test_id = str(uuid.uuid4())
-        self.log(f"Running test: {test_name}")
+        # Invalid session token
+        TestCase(
+            name="invalid_session_token",
+            description="Invalid session token format",
+            state=ReactState(
+                message="Hello world",
+                user_id="user123",
+                session_token="short",
+                input_enabled=True,
+                timestamp=time.time(),
+                component_id="chat_input_1"
+            ),
+            expected_blocked=True,
+            edge_case_type="validation"
+        ),
         
-        start_time = time.time()
-        error_message = None
-        assertions = 0
-        passed = False
+        # Invalid user ID
+        TestCase(
+            name="invalid_user_id",
+            description="Invalid user ID format",
+            state=ReactState(
+                message="Hello world",
+                user_id="!@#$%",
+                session_token="session_abc123def456",
+                input_enabled=True,
+                timestamp=time.time(),
+                component_id="chat_input_1"
+            ),
+            expected_blocked=True,
+            edge_case_type="validation"
+        ),
         
-        try:
-            assertions = test_func()
-            passed = True
-            self.log(f"Test {test_name} PASSED ({assertions} assertions)")
-        except AssertionError as e:
-            error_message = str(e)
-            self.log(f"Test {test_name} FAILED: {error_message}")
-        except Exception as e:
-            error_message = f"Unexpected error: {str(e)}"
-            self.log(f"Test {test_name} ERROR: {error_message}")
+        # Input disabled in state
+        TestCase(
+            name="input_disabled",
+            description="Input disabled in React state",
+            state=ReactState(
+                message="Hello world",
+                user_id="user123",
+                session_token="session_abc123def456",
+                input_enabled=False,
+                timestamp=time.time(),
+                component_id="chat_input_1"
+            ),
+            expected_blocked=False  # Not blocked in non-strict mode
+        ),
         
-        duration_ms = (time.time() - start_time) * 1000
-        result = IntegrationTestResult(
-            test_name=test_name,
-            test_id=test_id,
-            passed=passed,
-            duration_ms=duration_ms,
-            error_message=error_message,
-            assertions=assertions,
-            edge_case=edge_case
-        )
-        self.results.append(result)
-        return result
-    
-    def test_valid_state_verification(self) -> int:
-        """Test valid state passes all checks"""
-        state = ReactStateSnapshot(
-            state_id=str(uuid.uuid4()),
-            timestamp=time.time(),
-            component_id="chat-input-box",
-            state_data={"message": "", "isLoading": False, "userId": "user123"},
-            checksum="",
-            is_valid=True
-        )
-        state.checksum = self.validator.compute_checksum(state.state_data)
+        # JavaScript protocol
+        TestCase(
+            name="javascript_protocol",
+            description="Attempt to use javascript: protocol",
+            state=ReactState(
+                message="javascript:alert('xss')",
+                user_id="user123",
+                session_token="session_abc123def456",
+                input_enabled=True,
+                timestamp=time.time(),
+                component_id="chat_input_1"
+            ),
+            expected_blocked=True,
+            edge_case_type="xss"
+        ),
         
-        can_type, msg = self.gate.can_type(state)
-        assert can_type, f"Valid state should allow typing: {msg}"
-        assert "passed" in msg.lower(), f"Success message should mention passed checks"
-        return 2
-    
-    def test_corrupted_state_checksum(self) -> int:
-        """Test corrupted state checksum blocks input"""
-        state = ReactStateSnapshot(
-            state_id=str(uuid.uuid4()),
-            timestamp=time.time(),
-            component_id="chat-input-box",
-            state_data={"message": "", "isLoading": False},
-            checksum="invalid-checksum-xyz",
-            is_valid=False
-        )
+        # Event handler injection
+        TestCase(
+            name="event_handler_injection",
+            description="Attempt to inject event handler",
+            state=ReactState(
+                message="<img onerror='alert(1)'>",
+                user_id="user123",
+                session_token="session_abc123def456",
+                input_enabled=True,
+                timestamp=time.time(),
+                component_id="chat_input_1"
+            ),
+            expected_blocked=True,
+            edge_case_type="xss"
+        ),
         
-        can_type, msg = self.gate.can_type(state)
-        assert not can_type, "Corrupted checksum should block input"
-        assert "checksum" in msg.lower(), f"Error should mention checksum"
-        return 2
-    
-    def test_expired_state(self) -> int:
-        """Test expired state blocks input"""
-        state = ReactStateSnapshot(
-            state_id=str(uuid.uuid4()),
-            timestamp=time.time() - 400,  # 400 seconds old
-            component_id="chat-input-box",
-            state_data={"message": "test"},
-            checksum="",
-            is_valid=True
-        )
-        state.checksum = self.validator.compute_checksum(state.state_data)
-        
-        can_type, msg = self.gate.can_type(state)
-        assert not can_type, "Expired state should block input"
-        assert "age" in msg.lower() or "old" in msg.lower(), f"Error should mention state age"
-        return 2
-    
-    def test_missing_component_id(self) -> int:
-        """Test missing component_id edge case"""
-        state = ReactStateSnapshot(
-            state_id=str(uuid.uuid4()),
-            timestamp=time.time(),
-            component_id="",
-            state_data={"message": "test"},
-            checksum="",
-            is_valid=True
-        )
-        state.checksum = self.validator.compute_checksum(state.state_data)
-        
-        can_type, msg = self.gate.can_type(state)
-        assert not can_type, "Missing component_id should block input"
-        return 1
-    
-    def test_invalid_timestamp(self) -> int:
-        """Test invalid timestamp edge case"""
-        state = ReactStateSnapshot(
-            state_id=str(uuid.uuid4()),
-            timestamp=-100,
-            component_id="chat-input-box",
-            state_data={"message": "test"},
-            checksum="",
-            is_valid=True
-        )
-        state.checksum = self.validator.compute_checksum(state.state_data)
-        
-        can_type, msg = self.gate.can_type(state)
-        assert not can_type, "Invalid timestamp should block input"
-        return 1
-    
-    def test_malformed_state_data(self) -> int:
-        """Test malformed state_data edge case"""
-        state = ReactStateSnapshot(
-            state_id=str(uuid.uuid4()),
-            timestamp=time.time(),
-            component_id="chat-input-box",
-            state_data="not-a-dict",
-            checksum="",
-            is_valid=False
-        )
-        
-        can_type, msg = self.gate.can_type(state)
-        assert not can_type, "Malformed state_data should block input"
-        assert "dictionary" in msg.lower() or "format" in msg.lower(), f"Error should describe format issue"
-        return 2
-    
-    def test_empty_state_id(self) -> int:
-        """Test empty state_id edge case"""
-        state = ReactStateSnapshot(
-            state_id="",
-            timestamp=time.time(),
-            component_id="chat-input-box",
-            state_data={"message": "test"},
-            checksum="",
-            is_valid=True
-        )
-        
-        can_type, msg = self.gate.can_type(state)
-        assert not can_type, "Empty state_id should block input"
-        return 1
-    
-    def test_cloudflare_failure_recovery(self) -> int:
-        """Test recovery from Cloudflare failures"""
-        self.cloudflare.failure_rate = 0.0
-        
-        state = ReactStateSnapshot(
-            state_id=str(uuid.uuid4()),
-            timestamp=time.time(),
-            component_id="chat-input-box",
-            state_data={"message": ""},
-            checksum="",
-            is_valid=True
-        )
-        state.checksum = self.validator.compute_checksum(state.state_data)
-        
-        can_type, msg = self.gate.can_type(state)
-        assert can_type, "Should succeed when Cloudflare is operational"
-        return 1
-    
-    def test_high_latency_verification(self) -> int:
-        """Test
+        # SQL injection pattern
+        TestCase(
+            name="sql_pattern",
+            description="Message containing SQL-like patterns",
+            state=ReactState(
+                message="SELECT * FROM users WHERE id='1'",
+                user_id="user123",
+                session
