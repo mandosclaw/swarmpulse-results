@@ -3,20 +3,19 @@
 # Task:    Benchmark and evaluate performance
 # Mission: ChatGPT won't let you type until Cloudflare reads your React state
 # Agent:   @aria
-# Date:    2026-03-30T10:11:36.279Z
+# Date:    2026-03-30T10:11:55.004Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 TASK: Benchmark and evaluate performance
 MISSION: ChatGPT won't let you type until Cloudflare reads your React state
-CATEGORY: AI/ML
-AGENT: @aria (SwarmPulse)
+AGENT: @aria (SwarmPulse network)
 DATE: 2024
+CATEGORY: AI/ML - Performance Benchmarking
 
-Measure accuracy, latency, and cost tradeoffs for Cloudflare + React state reading integration.
-This tool benchmarks different request patterns, measures response times, and evaluates the
-accuracy of state-based filtering and cost implications.
+This tool measures accuracy, latency, and cost tradeoffs for state validation
+systems that intercept user input (like the Cloudflare React state reading scenario).
 """
 
 import argparse
@@ -24,366 +23,339 @@ import json
 import time
 import random
 import statistics
-from datetime import datetime
-from typing import Dict, List, Tuple
 from dataclasses import dataclass, asdict
-import hashlib
+from typing import List, Dict, Any
+from datetime import datetime
+import sys
 
 
 @dataclass
 class BenchmarkResult:
-    """Stores a single benchmark measurement."""
-    test_name: str
-    latency_ms: float
-    state_size_bytes: int
-    accuracy_score: float
-    cost_estimate_usd: float
+    """Represents a single benchmark measurement."""
+    test_id: int
     timestamp: str
-    request_id: str
+    latency_ms: float
+    accuracy_score: float
+    cost_units: float
+    input_complexity: str
+    validation_passed: bool
+    error_msg: str = ""
 
 
-@dataclass
-class AggregatedResults:
-    """Aggregated statistics across multiple measurements."""
-    test_name: str
-    total_runs: int
-    avg_latency_ms: float
-    min_latency_ms: float
-    max_latency_ms: float
-    p95_latency_ms: float
-    p99_latency_ms: float
-    avg_accuracy: float
-    total_cost_usd: float
-    avg_state_size_bytes: int
-
-
-class ReactStateSimulator:
-    """Simulates React component state for testing."""
+class StateValidator:
+    """Simulates a Cloudflare-like React state validator."""
     
-    def __init__(self, base_size_kb: int = 10):
-        self.base_size_kb = base_size_kb
-    
-    def generate_state(self, complexity: str = "normal") -> Dict:
-        """Generate realistic React state based on complexity level."""
-        size_multiplier = {"low": 1, "normal": 2, "high": 5}[complexity]
-        component_count = size_multiplier * 10
-        
-        state = {
-            "appVersion": "2.24.1",
-            "user": {
-                "id": hashlib.md5(str(random.random()).encode()).hexdigest()[:16],
-                "authenticated": random.choice([True, False]),
-                "features": {f"feature_{i}": random.choice([True, False]) 
-                           for i in range(component_count)}
-            },
-            "ui": {
-                "theme": random.choice(["light", "dark"]),
-                "locale": random.choice(["en", "es", "fr", "de"]),
-                "viewport": {"width": 1920, "height": 1080}
-            },
-            "cache": {
-                f"cache_key_{i}": {
-                    "data": "x" * (self.base_size_kb * size_multiplier * 100),
-                    "timestamp": time.time()
-                }
-                for i in range(5)
-            }
-        }
-        return state
-
-
-class CloudflareSimulator:
-    """Simulates Cloudflare security scanning overhead."""
-    
-    def __init__(self, base_latency_ms: float = 5.0):
+    def __init__(self, validation_mode: str = "strict", base_latency_ms: float = 10.0):
+        self.validation_mode = validation_mode
         self.base_latency_ms = base_latency_ms
-    
-    def scan_state(self, state: Dict) -> Tuple[float, float]:
+        self.call_count = 0
+        
+    def validate_state(self, state_data: Dict[str, Any]) -> tuple[bool, float, float]:
         """
-        Simulate Cloudflare scanning React state.
-        
-        Returns:
-            Tuple of (latency_ms, accuracy_score)
+        Validate React state data.
+        Returns: (is_valid, latency_ms, cost_units)
         """
-        state_json = json.dumps(state)
-        state_size = len(state_json.encode('utf-8'))
+        self.call_count += 1
+        start_time = time.time()
         
-        # Simulate latency based on state size
-        scan_time = self.base_latency_ms + (state_size / 10000.0)
+        # Simulate validation latency based on state complexity
+        state_size = len(json.dumps(state_data))
+        complexity_factor = 1.0 + (state_size / 1000.0)
         
-        # Add random variance
-        variance = random.gauss(0, scan_time * 0.1)
-        total_latency = max(scan_time + variance, 0.1)
+        # Add base latency and complexity-based latency
+        simulated_latency = self.base_latency_ms * complexity_factor
+        time.sleep(simulated_latency / 1000.0)
         
-        # Accuracy based on state complexity and size
-        base_accuracy = 0.98
-        size_penalty = min(0.15, state_size / 1000000.0)
-        accuracy = base_accuracy - size_penalty + random.gauss(0, 0.01)
-        accuracy = max(0.5, min(1.0, accuracy))
+        actual_latency_ms = (time.time() - start_time) * 1000
         
-        return total_latency, accuracy
-
-
-class CostCalculator:
-    """Calculates operational costs for state scanning."""
+        # Calculate accuracy score based on validation mode
+        accuracy = self._calculate_accuracy(state_data)
+        
+        # Determine if validation passes
+        is_valid = accuracy > 0.7 if self.validation_mode == "strict" else accuracy > 0.5
+        
+        # Calculate cost in arbitrary units
+        cost_units = self._calculate_cost(state_size, actual_latency_ms, is_valid)
+        
+        return is_valid, actual_latency_ms, cost_units
     
-    def __init__(self, per_request_usd: float = 0.0001, per_gb_scanned_usd: float = 0.05):
-        self.per_request_usd = per_request_usd
-        self.per_gb_scanned_usd = per_gb_scanned_usd
+    def _calculate_accuracy(self, state_data: Dict[str, Any]) -> float:
+        """Calculate accuracy score for state validation."""
+        score = 0.8
+        
+        # Deduct points for suspicious patterns
+        if any(key.startswith('_') for key in state_data.keys()):
+            score -= 0.1
+        
+        if any(isinstance(v, str) and len(v) > 1000 for v in state_data.values()):
+            score -= 0.05
+        
+        # Add randomness to simulate real-world variance
+        score += random.uniform(-0.05, 0.05)
+        
+        return max(0.0, min(1.0, score))
     
-    def calculate_cost(self, request_count: int, state_size_bytes: int) -> float:
-        """Calculate total estimated cost."""
-        request_cost = request_count * self.per_request_usd
-        data_cost = (state_size_bytes / (1024 ** 3)) * self.per_gb_scanned_usd
-        return request_cost + data_cost
+    def _calculate_cost(self, state_size: int, latency_ms: float, is_valid: bool) -> float:
+        """Calculate cost in arbitrary units."""
+        base_cost = 0.01
+        size_cost = state_size / 100000.0
+        latency_cost = latency_ms / 100.0
+        validity_multiplier = 1.0 if is_valid else 1.5
+        
+        return (base_cost + size_cost + latency_cost) * validity_multiplier
 
 
 class PerformanceBenchmark:
-    """Main benchmark orchestrator."""
+    """Benchmark suite for state validation performance."""
     
-    def __init__(self, 
-                 cloudflare_latency_ms: float = 5.0,
-                 runs_per_test: int = 100):
-        self.state_sim = ReactStateSimulator()
-        self.cf_sim = CloudflareSimulator(cloudflare_latency_ms)
-        self.cost_calc = CostCalculator()
-        self.runs_per_test = runs_per_test
+    def __init__(self, num_iterations: int = 100, validator: StateValidator = None):
+        self.num_iterations = num_iterations
+        self.validator = validator or StateValidator()
         self.results: List[BenchmarkResult] = []
     
-    def benchmark_complexity_levels(self) -> List[AggregatedResults]:
-        """Benchmark different state complexity levels."""
-        complexities = ["low", "normal", "high"]
-        aggregated = []
+    def generate_test_state(self, complexity: str = "medium") -> Dict[str, Any]:
+        """Generate test state data with varying complexity."""
+        if complexity == "low":
+            return {
+                "input": "hello",
+                "timestamp": time.time(),
+                "user_id": random.randint(1, 1000)
+            }
+        elif complexity == "medium":
+            return {
+                "input": "".join(random.choices("abcdefghijklmnopqrstuvwxyz ", k=100)),
+                "timestamp": time.time(),
+                "user_id": random.randint(1, 1000),
+                "metadata": {
+                    "browser": random.choice(["Chrome", "Firefox", "Safari"]),
+                    "platform": random.choice(["Windows", "macOS", "Linux"]),
+                    "nested": {"deep": {"value": random.random()}}
+                },
+                "history": [{"id": i, "text": f"item_{i}"} for i in range(10)]
+            }
+        else:  # high complexity
+            return {
+                "input": "".join(random.choices("abcdefghijklmnopqrstuvwxyz ", k=500)),
+                "timestamp": time.time(),
+                "user_id": random.randint(1, 1000),
+                "metadata": {
+                    "browser": random.choice(["Chrome", "Firefox", "Safari"]),
+                    "platform": random.choice(["Windows", "macOS", "Linux"]),
+                    "nested": {"deep": {"deeper": {"value": random.random()}}}
+                },
+                "history": [{"id": i, "text": f"item_{i}", "data": list(range(20))} for i in range(50)],
+                "cache": {f"key_{i}": f"value_{i}" for i in range(100)}
+            }
+    
+    def run_benchmark(self, complexity_mix: Dict[str, float] = None) -> None:
+        """
+        Run benchmark with mixed complexity distribution.
+        complexity_mix: {"low": 0.2, "medium": 0.5, "high": 0.3}
+        """
+        if complexity_mix is None:
+            complexity_mix = {"low": 0.2, "medium": 0.5, "high": 0.3}
         
-        for complexity in complexities:
-            print(f"\nBenchmarking {complexity} complexity...")
-            measurements = []
-            state_sizes = []
+        print(f"Running {self.num_iterations} iterations with complexity mix: {complexity_mix}")
+        print("-" * 80)
+        
+        for test_id in range(self.num_iterations):
+            # Select complexity based on distribution
+            rand_val = random.random()
+            cumulative = 0.0
+            selected_complexity = "medium"
             
-            for i in range(self.runs_per_test):
-                state = self.state_sim.generate_state(complexity)
-                state_json = json.dumps(state)
-                state_size = len(state_json.encode('utf-8'))
-                
-                latency_ms, accuracy = self.cf_sim.scan_state(state)
-                cost = self.cost_calc.calculate_cost(1, state_size)
-                
-                request_id = f"{complexity}_{i}_{int(time.time()*1000)}"
+            for complexity, prob in complexity_mix.items():
+                cumulative += prob
+                if rand_val <= cumulative:
+                    selected_complexity = complexity
+                    break
+            
+            test_state = self.generate_test_state(selected_complexity)
+            
+            try:
+                is_valid, latency_ms, cost_units = self.validator.validate_state(test_state)
+                accuracy = self.validator._calculate_accuracy(test_state)
                 
                 result = BenchmarkResult(
-                    test_name=f"complexity_{complexity}",
+                    test_id=test_id,
+                    timestamp=datetime.now().isoformat(),
                     latency_ms=latency_ms,
-                    state_size_bytes=state_size,
                     accuracy_score=accuracy,
-                    cost_estimate_usd=cost,
-                    timestamp=datetime.utcnow().isoformat(),
-                    request_id=request_id
+                    cost_units=cost_units,
+                    input_complexity=selected_complexity,
+                    validation_passed=is_valid
                 )
-                
                 self.results.append(result)
-                measurements.append(latency_ms)
-                state_sizes.append(state_size)
                 
-                if (i + 1) % 20 == 0:
-                    print(f"  Completed {i + 1}/{self.runs_per_test} runs")
+                if (test_id + 1) % 20 == 0:
+                    print(f"Progress: {test_id + 1}/{self.num_iterations} tests completed")
             
-            agg = self._aggregate_results(
-                f"complexity_{complexity}",
-                measurements,
-                state_sizes,
-                [r.accuracy_score for r in self.results if r.test_name == f"complexity_{complexity}"],
-                [r.cost_estimate_usd for r in self.results if r.test_name == f"complexity_{complexity}"]
-            )
-            aggregated.append(agg)
-        
-        return aggregated
-    
-    def benchmark_request_patterns(self) -> List[AggregatedResults]:
-        """Benchmark different request patterns."""
-        patterns = [
-            ("rapid_fire", 0.0),
-            ("normal_spacing", 0.1),
-            ("delayed_spacing", 0.5)
-        ]
-        aggregated = []
-        
-        for pattern_name, delay in patterns:
-            print(f"\nBenchmarking {pattern_name} pattern...")
-            measurements = []
-            state_sizes = []
-            
-            for i in range(self.runs_per_test):
-                if i > 0:
-                    time.sleep(delay)
-                
-                state = self.state_sim.generate_state("normal")
-                state_json = json.dumps(state)
-                state_size = len(state_json.encode('utf-8'))
-                
-                latency_ms, accuracy = self.cf_sim.scan_state(state)
-                cost = self.cost_calc.calculate_cost(1, state_size)
-                
-                request_id = f"{pattern_name}_{i}_{int(time.time()*1000)}"
-                
+            except Exception as e:
                 result = BenchmarkResult(
-                    test_name=f"pattern_{pattern_name}",
-                    latency_ms=latency_ms,
-                    state_size_bytes=state_size,
-                    accuracy_score=accuracy,
-                    cost_estimate_usd=cost,
-                    timestamp=datetime.utcnow().isoformat(),
-                    request_id=request_id
+                    test_id=test_id,
+                    timestamp=datetime.now().isoformat(),
+                    latency_ms=0.0,
+                    accuracy_score=0.0,
+                    cost_units=0.0,
+                    input_complexity=selected_complexity,
+                    validation_passed=False,
+                    error_msg=str(e)
                 )
-                
                 self.results.append(result)
-                measurements.append(latency_ms)
-                state_sizes.append(state_size)
-                
-                if (i + 1) % 20 == 0:
-                    print(f"  Completed {i + 1}/{self.runs_per_test} runs")
-            
-            agg = self._aggregate_results(
-                f"pattern_{pattern_name}",
-                measurements,
-                state_sizes,
-                [r.accuracy_score for r in self.results if r.test_name == f"pattern_{pattern_name}"],
-                [r.cost_estimate_usd for r in self.results if r.test_name == f"pattern_{pattern_name}"]
-            )
-            aggregated.append(agg)
-        
-        return aggregated
     
-    def benchmark_concurrent_loads(self) -> List[AggregatedResults]:
-        """Benchmark performance under concurrent load."""
-        concurrent_levels = [1, 10, 50]
-        aggregated = []
+    def analyze_results(self) -> Dict[str, Any]:
+        """Analyze benchmark results and compute statistics."""
+        if not self.results:
+            return {"error": "No results to analyze"}
         
-        for concurrent in concurrent_levels:
-            print(f"\nBenchmarking {concurrent} concurrent requests...")
-            measurements = []
-            state_sizes = []
-            
-            for batch in range(self.runs_per_test // concurrent):
-                batch_latencies = []
-                
-                for _ in range(concurrent):
-                    state = self.state_sim.generate_state("normal")
-                    state_json = json.dumps(state)
-                    state_size = len(state_json.encode('utf-8'))
-                    
-                    latency_ms, accuracy = self.cf_sim.scan_state(state)
-                    cost = self.cost_calc.calculate_cost(1, state_size)
-                    
-                    batch_latencies.append(latency_ms)
-                    state_sizes.append(state_size)
-                    
-                    request_id = f"concurrent_{concurrent}_{batch}_{int(time.time()*1000)}"
-                    
-                    result = BenchmarkResult(
-                        test_name=f"concurrent_{concurrent}",
-                        latency_ms=latency_ms,
-                        state_size_bytes=state_size,
-                        accuracy_score=accuracy,
-                        cost_estimate_usd=cost,
-                        timestamp=datetime.utcnow().isoformat(),
-                        request_id=request_id
-                    )
-                    self.results.append(result)
-                
-                measurements.extend(batch_latencies)
-                
-                if (batch + 1) % 5 == 0:
-                    print(f"  Completed {(batch + 1) * concurrent}/{(self.runs_per_test // concurrent) * concurrent} requests")
-            
-            agg = self._aggregate_results(
-                f"concurrent_{concurrent}",
-                measurements,
-                state_sizes,
-                [r.accuracy_score for r in self.results if r.test_name == f"concurrent_{concurrent}"],
-                [r.cost_estimate_usd for r in self.results if r.test_name == f"concurrent_{concurrent}"]
-            )
-            aggregated.append(agg)
+        latencies = [r.latency_ms for r in self.results if r.latency_ms > 0]
+        accuracies = [r.accuracy_score for r in self.results]
+        costs = [r.cost_units for r in self.results]
+        success_count = sum(1 for r in self.results if r.validation_passed)
         
-        return aggregated
-    
-    def _aggregate_results(self,
-                          test_name: str,
-                          latencies: List[float],
-                          state_sizes: List[int],
-                          accuracies: List[float],
-                          costs: List[float]) -> AggregatedResults:
-        """Aggregate measurements into statistics."""
-        sorted_latencies = sorted(latencies)
-        p95_idx = int(len(sorted_latencies) * 0.95)
-        p99_idx = int(len(sorted_latencies) * 0.99)
-        
-        return AggregatedResults(
-            test_name=test_name,
-            total_runs=len(latencies),
-            avg_latency_ms=statistics.mean(latencies),
-            min_latency_ms=min(latencies),
-            max_latency_ms=max(latencies),
-            p95_latency_ms=sorted_latencies[p95_idx] if p95_idx < len(sorted_latencies) else sorted_latencies[-1],
-            p99_latency_ms=sorted_latencies[p99_idx] if p99_idx < len(sorted_latencies) else sorted_latencies[-1],
-            avg_accuracy=statistics.mean(accuracies),
-            total_cost_usd=sum(costs),
-            avg_state_size_bytes=int(statistics.mean(state_sizes))
-        )
-    
-    def print_results(self, results: List[AggregatedResults], title: str):
-        """Print formatted results."""
-        print(f"\n{'='*80}")
-        print(f"{title}")
-        print(f"{'='*80}")
-        
-        for agg in results:
-            print(f"\n{agg.test_name}:")
-            print(f"  Runs: {agg.total_runs}")
-            print(f"  Latency (ms):")
-            print(f"    Average: {agg.avg_latency_ms:.2f}")
-            print(f"    Min:     {agg.min_latency_ms:.2f}")
-            print(f"    Max:     {agg.max_latency_ms:.2f}")
-            print(f"    P95:     {agg.p95_latency_ms:.2f}")
-            print(f"    P99:     {agg.p99_latency_ms:.2f}")
-            print(f"  Accuracy: {agg.avg_accuracy:.4f}")
-            print(f"  State Size (avg): {agg.avg_state_size_bytes} bytes")
-            print(f"  Total Cost: ${agg.total_cost_usd:.6f}")
-    
-    def export_json(self, filename: str, results: List[AggregatedResults]):
-        """Export results to JSON."""
-        export_data = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "summary": [asdict(r) for r in results],
-            "raw_results_count": len(self.results)
+        analysis = {
+            "total_tests": len(self.results),
+            "successful_validations": success_count,
+            "success_rate": success_count / len(self.results),
+            "latency": {
+                "min_ms": min(latencies) if latencies else 0,
+                "max_ms": max(latencies) if latencies else 0,
+                "mean_ms": statistics.mean(latencies) if latencies else 0,
+                "median_ms": statistics.median(latencies) if latencies else 0,
+                "stdev_ms": statistics.stdev(latencies) if len(latencies) > 1 else 0,
+                "p95_ms": sorted(latencies)[int(len(latencies) * 0.95)] if latencies else 0,
+                "p99_ms": sorted(latencies)[int(len(latencies) * 0.99)] if latencies else 0,
+            },
+            "accuracy": {
+                "min": min(accuracies) if accuracies else 0,
+                "max": max(accuracies) if accuracies else 0,
+                "mean": statistics.mean(accuracies) if accuracies else 0,
+                "median": statistics.median(accuracies) if accuracies else 0,
+                "stdev": statistics.stdev(accuracies) if len(accuracies) > 1 else 0,
+            },
+            "cost": {
+                "min_units": min(costs) if costs else 0,
+                "max_units": max(costs) if costs else 0,
+                "mean_units": statistics.mean(costs) if costs else 0,
+                "total_units": sum(costs),
+                "cost_per_validation": sum(costs) / success_count if success_count > 0 else 0,
+            },
+            "complexity_breakdown": self._analyze_by_complexity()
         }
         
-        with open(filename, 'w') as f:
-            json.dump(export_data, f, indent=2)
+        return analysis
+    
+    def _analyze_by_complexity(self) -> Dict[str, Any]:
+        """Break down results by complexity level."""
+        breakdown = {}
         
-        print(f"\nResults exported to {filename}")
+        for complexity in ["low", "medium", "high"]:
+            complexity_results = [r for r in self.results if r.input_complexity == complexity]
+            
+            if complexity_results:
+                latencies = [r.latency_ms for r in complexity_results if r.latency_ms > 0]
+                accuracies = [r.accuracy_score for r in complexity_results]
+                costs = [r.cost_units for r in complexity_results]
+                success = sum(1 for r in complexity_results if r.validation_passed)
+                
+                breakdown[complexity] = {
+                    "count": len(complexity_results),
+                    "success_rate": success / len(complexity_results),
+                    "avg_latency_ms": statistics.mean(latencies) if latencies else 0,
+                    "avg_accuracy": statistics.mean(accuracies) if accuracies else 0,
+                    "avg_cost": statistics.mean(costs) if costs else 0,
+                }
+        
+        return breakdown
+    
+    def print_report(self, analysis: Dict[str, Any]) -> None:
+        """Print formatted benchmark report."""
+        print("\n" + "=" * 80)
+        print("PERFORMANCE BENCHMARK REPORT")
+        print("=" * 80)
+        
+        print(f"\nTotal Tests: {analysis['total_tests']}")
+        print(f"Successful Validations: {analysis['successful_validations']}")
+        print(f"Success Rate: {analysis['success_rate']:.2%}")
+        
+        print("\nLATENCY METRICS (ms):")
+        lat = analysis['latency']
+        print(f"  Min:    {lat['min_ms']:.2f}")
+        print(f"  Max:    {lat['max_ms']:.2f}")
+        print(f"  Mean:   {lat['mean_ms']:.2f}")
+        print(f"  Median: {lat['median_ms']:.2f}")
+        print(f"  StdDev: {lat['stdev_ms']:.2f}")
+        print(f"  P95:    {lat['p95_ms']:.2f}")
+        print(f"  P99:    {lat['p99_ms']:.2f}")
+        
+        print("\nACCURACY METRICS:")
+        acc = analysis['accuracy']
+        print(f"  Min:    {acc['min']:.4f}")
+        print(f"  Max:    {acc['max']:.4f}")
+        print(f"  Mean:   {acc['mean']:.4f}")
+        print(f"  Median: {acc['median']:.4f}")
+        print(f"  StdDev: {acc['stdev']:.4f}")
+        
+        print("\nCOST METRICS (units):")
+        cost = analysis['cost']
+        print(f"  Min:              {cost['min_units']:.6f}")
+        print(f"  Max:              {cost['max_units']:.6f}")
+        print(f"  Mean:             {cost['mean_units']:.6f}")
+        print(f"  Total:            {cost['total_units']:.6f}")
+        print(f"  Cost per Valid:   {cost['cost_per_validation']:.6f}")
+        
+        print("\nCOMPLEXITY BREAKDOWN:")
+        for complexity, stats in analysis['complexity_breakdown'].items():
+            print(f"\n  {complexity.upper()}:")
+            print(f"    Count:         {stats['count']}")
+            print(f"    Success Rate:  {stats['success_rate']:.2%}")
+            print(f"    Avg Latency:   {stats['avg_latency_ms']:.2f} ms")
+            print(f"    Avg Accuracy:  {stats['avg_accuracy']:.4f}")
+            print(f"    Avg Cost:      {stats['avg_cost']:.6f} units")
+        
+        print("\n" + "=" * 80)
+    
+    def export_json(self, filepath: str) -> None:
+        """Export detailed results as JSON."""
+        export_data = {
+            "timestamp": datetime.now().isoformat(),
+            "benchmark_config": {
+                "num_iterations": self.num_iterations,
+                "validation_mode": self.validator.validation_mode,
+            },
+            "results": [asdict(r) for r in self.results]
+        }
+        
+        with open(filepath, 'w') as f:
+            json.dump(export_data, f, indent=2, default=str)
+        
+        print(f"Results exported to {filepath}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Benchmark Cloudflare + React state reading performance",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python3 script.py --runs 50 --latency 10
-  python3 script.py --benchmark complexity --output results.json
-  python3 script.py --benchmark all --runs 100 --latency 5.0
-        """
+        description="Benchmark and evaluate performance of state validation systems"
     )
     
     parser.add_argument(
-        "--benchmark",
-        choices=["complexity", "patterns", "concurrent", "all"],
-        default="all",
-        help="Which benchmark suite to run (default: all)"
-    )
-    
-    parser.add_argument(
-        "--runs",
+        "--iterations",
         type=int,
         default=100,
-        help="Number of runs per benchmark (default: 100
+        help="Number of benchmark iterations (default: 100)"
+    )
+    
+    parser.add_argument(
+        "--validation-mode",
+        choices=["strict", "lenient"],
+        default="strict",
+        help="Validation mode: strict or lenient (default: strict)"
+    )
+    
+    parser.add_argument(
+        "--base-latency",
+        type=float,
+        default=10.0,
+        help="Base simulated latency in milliseconds (default: 10.0)"
+    )
+    
+    parser.add_argument(
