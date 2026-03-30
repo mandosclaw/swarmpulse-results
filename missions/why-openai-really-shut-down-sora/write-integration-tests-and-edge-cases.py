@@ -3,395 +3,417 @@
 # Task:    Write integration tests and edge cases
 # Mission: Why OpenAI really shut down Sora
 # Agent:   @aria
-# Date:    2026-03-30T09:41:43.271Z
+# Date:    2026-03-30T13:13:49.779Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Integration tests and edge cases for AI service resilience analysis
+TASK: Integration tests and edge cases for API/service failure modes
 MISSION: Why OpenAI really shut down Sora
-AGENT: @aria (SwarmPulse)
-DATE: 2026-03-29
 CATEGORY: AI/ML
+AGENT: @aria (SwarmPulse)
+DATE: 2024
 
-This script implements comprehensive integration tests and edge case handling
-for AI video generation service stability, failure modes, and boundary conditions.
+This module implements comprehensive integration tests and edge case coverage
+for a hypothetical video generation service (Sora-like), focusing on failure
+modes, boundary conditions, and resilience patterns.
 """
 
-import argparse
 import json
 import sys
+import argparse
+import unittest
 import time
 import random
 import hashlib
-import uuid
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
-from datetime import datetime, timedelta
-import unittest
 from io import StringIO
-import statistics
+from contextlib import contextmanager
 
 
-class ServiceState(Enum):
-    """Service operational states"""
-    HEALTHY = "healthy"
+class ServiceStatus(Enum):
+    """Service status states"""
+    OPERATIONAL = "operational"
     DEGRADED = "degraded"
-    UNHEALTHY = "unhealthy"
-    OFFLINE = "offline"
+    UNAVAILABLE = "unavailable"
+    MAINTENANCE = "maintenance"
 
 
-class FailureMode(Enum):
-    """Known failure modes for AI video services"""
-    RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"
-    MEMORY_EXHAUSTION = "memory_exhaustion"
-    TIMEOUT = "timeout"
-    INVALID_INPUT = "invalid_input"
-    OUTPUT_CORRUPTION = "output_corruption"
-    AUTHENTICATION_FAILURE = "authentication_failure"
-    RESOURCE_CONTENTION = "resource_contention"
-    INFERENCE_CRASH = "inference_crash"
-
-
-@dataclass
-class TestCase:
-    """Represents a single test case"""
-    test_id: str
-    name: str
-    description: str
-    input_data: Dict[str, Any]
-    expected_behavior: str
-    failure_mode: Optional[FailureMode]
-    boundary_condition: bool
-    severity: str
+class ErrorCode(Enum):
+    """Standard error codes"""
+    SUCCESS = 0
+    INVALID_INPUT = 1
+    AUTH_FAILED = 2
+    QUOTA_EXCEEDED = 3
+    RATE_LIMITED = 4
+    SERVICE_UNAVAILABLE = 5
+    TIMEOUT = 6
+    INVALID_FILE = 7
+    STORAGE_FULL = 8
+    PROCESSING_FAILED = 9
+    UNKNOWN = 255
 
 
 @dataclass
-class TestResult:
-    """Result of executing a test case"""
-    test_id: str
-    passed: bool
-    duration_ms: float
-    error_message: Optional[str]
-    failure_mode_triggered: Optional[FailureMode]
-    timestamp: str
+class ApiResponse:
+    """Structured API response"""
+    success: bool
+    error_code: ErrorCode
+    message: str
+    data: Optional[Dict[str, Any]] = None
+    timestamp: float = None
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = time.time()
+    
+    def to_json(self) -> str:
+        """Convert response to JSON"""
+        return json.dumps({
+            'success': self.success,
+            'error_code': self.error_code.name,
+            'message': self.message,
+            'data': self.data,
+            'timestamp': self.timestamp
+        })
 
 
-class EdgeCaseValidator:
-    """Validates edge cases and boundary conditions"""
-
-    def __init__(self, max_file_size_mb: int = 4096, max_duration_minutes: int = 120,
-                 max_resolution: Tuple[int, int] = (4096, 4096)):
-        self.max_file_size_mb = max_file_size_mb
-        self.max_duration_minutes = max_duration_minutes
-        self.max_resolution = max_resolution
-        self.validation_errors = []
-
-    def validate_video_file(self, file_size_mb: float, duration_seconds: float,
-                           width: int, height: int, fps: int) -> Tuple[bool, List[str]]:
-        """Validate video file parameters against boundary conditions"""
-        errors = []
-
-        # File size boundary
-        if file_size_mb <= 0:
-            errors.append("File size must be positive")
-        if file_size_mb > self.max_file_size_mb:
-            errors.append(f"File size {file_size_mb}MB exceeds limit {self.max_file_size_mb}MB")
-        if file_size_mb > 10000:
-            errors.append("File size unusually large, potential DoS vector")
-
-        # Duration boundary
-        if duration_seconds <= 0:
-            errors.append("Duration must be positive")
-        if duration_seconds > self.max_duration_minutes * 60:
-            errors.append(f"Duration exceeds {self.max_duration_minutes} minute limit")
-        if duration_seconds < 0.1:
-            errors.append("Duration too short for video processing")
-
-        # Resolution boundary
-        if width <= 0 or height <= 0:
-            errors.append("Resolution dimensions must be positive")
-        if width > self.max_resolution[0] or height > self.max_resolution[1]:
-            errors.append(f"Resolution {width}x{height} exceeds max {self.max_resolution}")
-        if width < 64 or height < 64:
-            errors.append("Resolution too low for meaningful processing")
-        if (width * height) > (8192 * 8192):
-            errors.append("Total pixels exceed maximum, potential memory exhaustion")
-
-        # FPS boundary
-        if fps <= 0:
-            errors.append("FPS must be positive")
-        if fps > 240:
-            errors.append("FPS exceeds reasonable maximum")
-        if fps < 1:
-            errors.append("FPS less than 1 is invalid")
-
-        # Aspect ratio sanity check
-        aspect_ratio = width / height
-        if aspect_ratio < 0.25 or aspect_ratio > 4.0:
-            errors.append(f"Aspect ratio {aspect_ratio:.2f} is extreme")
-
-        return len(errors) == 0, errors
-
-    def validate_prompt(self, prompt: str, max_length: int = 2000) -> Tuple[bool, List[str]]:
-        """Validate prompt input for edge cases"""
-        errors = []
-
-        if not prompt or len(prompt) == 0:
-            errors.append("Prompt cannot be empty")
-        if len(prompt) > max_length:
-            errors.append(f"Prompt length {len(prompt)} exceeds max {max_length}")
-
-        # Check for potential injection vectors
-        dangerous_patterns = ["<script>", "<?php", "exec(", "system(", "__import__"]
-        for pattern in dangerous_patterns:
-            if pattern.lower() in prompt.lower():
-                errors.append(f"Potentially dangerous pattern detected: {pattern}")
-
-        # Check for excessive special characters
-        special_char_count = sum(1 for c in prompt if not c.isalnum() and c != ' ')
-        if special_char_count / len(prompt) > 0.5:
-            errors.append("Excessive special characters in prompt")
-
-        # Check for repetition (token bomb attempt)
-        words = prompt.split()
-        if len(words) > 0:
-            word_freq = {}
-            for word in words:
-                word_freq[word] = word_freq.get(word, 0) + 1
-            max_freq = max(word_freq.values())
-            if max_freq / len(words) > 0.7:
-                errors.append("Excessive word repetition detected")
-
-        return len(errors) == 0, errors
-
-    def validate_batch_request(self, batch_size: int, total_tokens: int,
-                               max_batch: int = 100, max_tokens: int = 1000000) -> Tuple[bool, List[str]]:
-        """Validate batch processing parameters"""
-        errors = []
-
-        if batch_size <= 0:
-            errors.append("Batch size must be positive")
-        if batch_size > max_batch:
-            errors.append(f"Batch size {batch_size} exceeds maximum {max_batch}")
-
-        if total_tokens <= 0:
-            errors.append("Total tokens must be positive")
-        if total_tokens > max_tokens:
-            errors.append(f"Total tokens {total_tokens} exceeds maximum {max_tokens}")
-
-        if batch_size > 1000:
-            errors.append("Batch size suspiciously large, potential resource exhaustion")
-
-        avg_tokens_per_item = total_tokens / batch_size if batch_size > 0 else 0
-        if avg_tokens_per_item > 100000:
-            errors.append("Average tokens per item extremely high")
-
-        return len(errors) == 0, errors
+@dataclass
+class VideoGenerationRequest:
+    """Video generation request model"""
+    request_id: str
+    prompt: str
+    duration_seconds: int
+    width: int
+    height: int
+    user_id: str
+    priority: int = 5
 
 
-class FailureModeSimulator:
-    """Simulates various failure modes for testing"""
-
-    def __init__(self, seed: int = 42):
-        self.seed = seed
-        random.seed(seed)
-
-    def simulate_rate_limit(self, current_requests: int, rate_limit: int) -> Tuple[bool, str]:
-        """Simulate rate limit failure"""
-        if current_requests >= rate_limit:
-            return False, f"Rate limit exceeded: {current_requests}/{rate_limit}"
-        return True, "Within rate limit"
-
-    def simulate_memory_exhaustion(self, memory_usage_mb: float, max_memory_mb: float) -> Tuple[bool, str]:
-        """Simulate memory exhaustion failure"""
-        if memory_usage_mb >= max_memory_mb * 0.95:
-            return False, f"Memory nearly exhausted: {memory_usage_mb:.0f}/{max_memory_mb:.0f}MB"
-        if memory_usage_mb >= max_memory_mb * 0.8:
-            return False, f"Memory critically high: {memory_usage_mb:.0f}/{max_memory_mb:.0f}MB"
-        return True, f"Memory usage normal: {memory_usage_mb:.0f}/{max_memory_mb:.0f}MB"
-
-    def simulate_timeout(self, elapsed_seconds: float, timeout_seconds: float) -> Tuple[bool, str]:
-        """Simulate timeout failure"""
-        if elapsed_seconds >= timeout_seconds:
-            return False, f"Operation timeout after {elapsed_seconds:.1f}s (limit: {timeout_seconds}s)"
-        return True, f"Operation in progress ({elapsed_seconds:.1f}s of {timeout_seconds}s)"
-
-    def simulate_output_corruption(self, data: bytes, corruption_rate: float = 0.001) -> Tuple[bool, str]:
-        """Simulate output data corruption"""
-        if random.random() < corruption_rate:
-            corrupted = bytearray(data)
-            corruption_index = random.randint(0, len(corrupted) - 1)
-            corrupted[corruption_index] = (corrupted[corruption_index] + 1) % 256
-            return False, f"Output corrupted at byte {corruption_index}"
-        return True, "Output integrity verified"
-
-    def simulate_authentication_failure(self, token: str, valid_tokens: List[str]) -> Tuple[bool, str]:
-        """Simulate authentication failure"""
-        if token not in valid_tokens:
-            return False, "Invalid or expired authentication token"
-        if len(token) < 32:
-            return False, "Token format invalid"
-        return True, "Authentication successful"
-
-    def simulate_resource_contention(self, concurrent_jobs: int, max_concurrent: int) -> Tuple[bool, str]:
-        """Simulate resource contention failure"""
-        if concurrent_jobs >= max_concurrent:
-            return False, f"Resource saturation: {concurrent_jobs}/{max_concurrent} slots full"
-        contention_level = concurrent_jobs / max_concurrent
-        if contention_level > 0.85:
-            return False, f"High resource contention: {contention_level:.1%}"
-        return True, f"Resources available ({contention_level:.1%} utilized)"
-
-
-class IntegrationTestSuite(unittest.TestCase):
-    """Comprehensive integration test suite"""
-
-    @classmethod
-    def setUpClass(cls):
-        """Setup test fixtures"""
-        cls.validator = EdgeCaseValidator()
-        cls.simulator = FailureModeSimulator()
-
-    def test_valid_video_parameters(self):
-        """Test valid video parameter boundaries"""
-        success, errors = self.validator.validate_video_file(
-            file_size_mb=100.0,
-            duration_seconds=60.0,
-            width=1920,
-            height=1080,
-            fps=30
+class SoraServiceSimulator:
+    """Simulates Sora video generation service with failure modes"""
+    
+    def __init__(self, max_concurrent: int = 10, quota_per_hour: int = 100):
+        self.max_concurrent = max_concurrent
+        self.quota_per_hour = quota_per_hour
+        self.status = ServiceStatus.OPERATIONAL
+        self.active_requests: Dict[str, float] = {}
+        self.user_quotas: Dict[str, int] = {}
+        self.storage_used_mb = 0
+        self.max_storage_mb = 1000
+        self.failure_rate = 0.0
+        self.latency_ms = 100
+        
+    def set_status(self, status: ServiceStatus) -> None:
+        """Set service status"""
+        self.status = status
+    
+    def set_failure_rate(self, rate: float) -> None:
+        """Set simulated failure rate (0.0-1.0)"""
+        self.failure_rate = max(0.0, min(1.0, rate))
+    
+    def set_latency(self, latency_ms: int) -> None:
+        """Set simulated latency"""
+        self.latency_ms = max(0, latency_ms)
+    
+    def validate_request(self, request: VideoGenerationRequest) -> Tuple[bool, ErrorCode, str]:
+        """Validate incoming request"""
+        
+        if not request.prompt or len(request.prompt.strip()) == 0:
+            return False, ErrorCode.INVALID_INPUT, "Prompt cannot be empty"
+        
+        if len(request.prompt) > 10000:
+            return False, ErrorCode.INVALID_INPUT, "Prompt exceeds maximum length (10000 chars)"
+        
+        if request.duration_seconds < 1 or request.duration_seconds > 120:
+            return False, ErrorCode.INVALID_INPUT, "Duration must be between 1 and 120 seconds"
+        
+        if request.width < 256 or request.width > 2048 or request.width % 64 != 0:
+            return False, ErrorCode.INVALID_INPUT, "Width must be 256-2048 and divisible by 64"
+        
+        if request.height < 256 or request.height > 2048 or request.height % 64 != 0:
+            return False, ErrorCode.INVALID_INPUT, "Height must be 256-2048 and divisible by 64"
+        
+        if not request.user_id or len(request.user_id) == 0:
+            return False, ErrorCode.AUTH_FAILED, "User ID required"
+        
+        if request.priority < 1 or request.priority > 10:
+            return False, ErrorCode.INVALID_INPUT, "Priority must be 1-10"
+        
+        return True, ErrorCode.SUCCESS, "Validation passed"
+    
+    def check_quota(self, user_id: str) -> Tuple[bool, ErrorCode, str, int]:
+        """Check user quota"""
+        current_quota = self.user_quotas.get(user_id, 0)
+        
+        if current_quota >= self.quota_per_hour:
+            remaining = 0
+            return False, ErrorCode.QUOTA_EXCEEDED, f"Quota exceeded. Limit: {self.quota_per_hour}/hour", remaining
+        
+        remaining = self.quota_per_hour - current_quota - 1
+        return True, ErrorCode.SUCCESS, "Quota available", remaining
+    
+    def check_rate_limit(self, user_id: str) -> Tuple[bool, ErrorCode, str]:
+        """Check rate limits (max 5 concurrent per user)"""
+        user_requests = sum(1 for uid, _ in self.active_requests.items() if uid.startswith(user_id))
+        
+        if user_requests >= 3:
+            return False, ErrorCode.RATE_LIMITED, "Too many concurrent requests (max 3 per user)"
+        
+        return True, ErrorCode.SUCCESS, "Rate limit OK"
+    
+    def check_storage(self, estimated_size_mb: float) -> Tuple[bool, ErrorCode, str]:
+        """Check available storage"""
+        if self.storage_used_mb + estimated_size_mb > self.max_storage_mb:
+            return False, ErrorCode.STORAGE_FULL, "Insufficient storage available"
+        
+        return True, ErrorCode.SUCCESS, "Storage available"
+    
+    def simulate_processing(self, request: VideoGenerationRequest) -> ApiResponse:
+        """Simulate video generation processing"""
+        time.sleep(self.latency_ms / 1000.0)
+        
+        if random.random() < self.failure_rate:
+            return ApiResponse(
+                success=False,
+                error_code=ErrorCode.PROCESSING_FAILED,
+                message="Processing failed during generation"
+            )
+        
+        estimated_size = (request.duration_seconds * request.width * request.height) / (1024 * 1024)
+        self.storage_used_mb += estimated_size
+        
+        return ApiResponse(
+            success=True,
+            error_code=ErrorCode.SUCCESS,
+            message="Video generated successfully",
+            data={
+                'video_id': hashlib.md5(request.request_id.encode()).hexdigest(),
+                'size_mb': round(estimated_size, 2),
+                'duration': request.duration_seconds
+            }
         )
-        self.assertTrue(success)
-        self.assertEqual(len(errors), 0)
+    
+    def generate_video(self, request: VideoGenerationRequest) -> ApiResponse:
+        """Main video generation endpoint"""
+        
+        if self.status == ServiceStatus.UNAVAILABLE:
+            return ApiResponse(
+                success=False,
+                error_code=ErrorCode.SERVICE_UNAVAILABLE,
+                message="Service is currently unavailable"
+            )
+        
+        if self.status == ServiceStatus.MAINTENANCE:
+            return ApiResponse(
+                success=False,
+                error_code=ErrorCode.SERVICE_UNAVAILABLE,
+                message="Service is under maintenance"
+            )
+        
+        is_valid, error_code, message = self.validate_request(request)
+        if not is_valid:
+            return ApiResponse(success=False, error_code=error_code, message=message)
+        
+        quota_ok, quota_code, quota_msg, remaining = self.check_quota(request.user_id)
+        if not quota_ok:
+            return ApiResponse(success=False, error_code=quota_code, message=quota_msg)
+        
+        rate_ok, rate_code, rate_msg = self.check_rate_limit(request.user_id)
+        if not rate_ok:
+            return ApiResponse(success=False, error_code=rate_code, message=rate_msg)
+        
+        estimated_size = (request.duration_seconds * request.width * request.height) / (1024 * 1024)
+        storage_ok, storage_code, storage_msg = self.check_storage(estimated_size)
+        if not storage_ok:
+            return ApiResponse(success=False, error_code=storage_code, message=storage_msg)
+        
+        if len(self.active_requests) >= self.max_concurrent:
+            return ApiResponse(
+                success=False,
+                error_code=ErrorCode.SERVICE_UNAVAILABLE,
+                message="Server at capacity. Try again later."
+            )
+        
+        self.active_requests[request.request_id] = time.time()
+        self.user_quotas[request.user_id] = self.user_quotas.get(request.user_id, 0) + 1
+        
+        try:
+            response = self.simulate_processing(request)
+        finally:
+            del self.active_requests[request.request_id]
+        
+        return response
 
-    def test_zero_file_size(self):
-        """Edge case: zero file size"""
-        success, errors = self.validator.validate_video_file(
-            file_size_mb=0,
-            duration_seconds=60.0,
-            width=1920,
-            height=1080,
-            fps=30
+
+class TestVideoGenerationIntegration(unittest.TestCase):
+    """Integration tests for video generation service"""
+    
+    def setUp(self):
+        """Set up test fixtures"""
+        self.service = SoraServiceSimulator()
+    
+    def test_valid_request_success(self):
+        """Test successful video generation with valid request"""
+        request = VideoGenerationRequest(
+            request_id="req_001",
+            prompt="A cat dancing in the rain",
+            duration_seconds=10,
+            width=1024,
+            height=768,
+            user_id="user_001"
         )
-        self.assertFalse(success)
-        self.assertIn("File size must be positive", errors)
-
-    def test_negative_duration(self):
-        """Edge case: negative duration"""
-        success, errors = self.validator.validate_video_file(
-            file_size_mb=100.0,
-            duration_seconds=-10.0,
-            width=1920,
-            height=1080,
-            fps=30
+        response = self.service.generate_video(request)
+        self.assertTrue(response.success)
+        self.assertEqual(response.error_code, ErrorCode.SUCCESS)
+        self.assertIsNotNone(response.data)
+    
+    def test_empty_prompt_rejection(self):
+        """Test rejection of empty prompt"""
+        request = VideoGenerationRequest(
+            request_id="req_002",
+            prompt="",
+            duration_seconds=10,
+            width=1024,
+            height=768,
+            user_id="user_001"
         )
-        self.assertFalse(success)
-        self.assertIn("Duration must be positive", errors)
-
-    def test_extreme_resolution(self):
-        """Edge case: extreme resolution"""
-        success, errors = self.validator.validate_video_file(
-            file_size_mb=100.0,
-            duration_seconds=60.0,
-            width=16384,
-            height=16384,
-            fps=30
+        response = self.service.generate_video(request)
+        self.assertFalse(response.success)
+        self.assertEqual(response.error_code, ErrorCode.INVALID_INPUT)
+    
+    def test_whitespace_only_prompt_rejection(self):
+        """Test rejection of whitespace-only prompt"""
+        request = VideoGenerationRequest(
+            request_id="req_003",
+            prompt="   \t\n  ",
+            duration_seconds=10,
+            width=1024,
+            height=768,
+            user_id="user_001"
         )
-        self.assertFalse(success)
-        self.assertTrue(any("exceeds" in e.lower() for e in errors))
-
-    def test_extreme_aspect_ratio(self):
-        """Edge case: extreme aspect ratio"""
-        success, errors = self.validator.validate_video_file(
-            file_size_mb=100.0,
-            duration_seconds=60.0,
-            width=10000,
-            height=10,
-            fps=30
+        response = self.service.generate_video(request)
+        self.assertFalse(response.success)
+        self.assertEqual(response.error_code, ErrorCode.INVALID_INPUT)
+    
+    def test_prompt_exceeds_max_length(self):
+        """Test rejection of excessively long prompt"""
+        request = VideoGenerationRequest(
+            request_id="req_004",
+            prompt="x" * 10001,
+            duration_seconds=10,
+            width=1024,
+            height=768,
+            user_id="user_001"
         )
-        self.assertFalse(success)
-        self.assertTrue(any("aspect" in e.lower() for e in errors))
-
-    def test_very_short_duration(self):
-        """Edge case: very short duration"""
-        success, errors = self.validator.validate_video_file(
-            file_size_mb=1.0,
-            duration_seconds=0.01,
-            width=1920,
-            height=1080,
-            fps=30
+        response = self.service.generate_video(request)
+        self.assertFalse(response.success)
+        self.assertEqual(response.error_code, ErrorCode.INVALID_INPUT)
+    
+    def test_duration_below_minimum(self):
+        """Test rejection of duration below minimum"""
+        request = VideoGenerationRequest(
+            request_id="req_005",
+            prompt="Valid prompt",
+            duration_seconds=0,
+            width=1024,
+            height=768,
+            user_id="user_001"
         )
-        self.assertFalse(success)
-        self.assertTrue(any("too short" in e.lower() for e in errors))
-
-    def test_empty_prompt(self):
-        """Edge case: empty prompt"""
-        success, errors = self.validator.validate_prompt("")
-        self.assertFalse(success)
-        self.assertIn("Prompt cannot be empty", errors)
-
-    def test_valid_prompt(self):
-        """Test valid prompt"""
-        success, errors = self.validator.validate_prompt(
-            "A serene landscape with mountains and sunset"
+        response = self.service.generate_video(request)
+        self.assertFalse(response.success)
+        self.assertEqual(response.error_code, ErrorCode.INVALID_INPUT)
+    
+    def test_duration_exceeds_maximum(self):
+        """Test rejection of duration exceeding maximum"""
+        request = VideoGenerationRequest(
+            request_id="req_006",
+            prompt="Valid prompt",
+            duration_seconds=121,
+            width=1024,
+            height=768,
+            user_id="user_001"
         )
-        self.assertTrue(success)
-        self.assertEqual(len(errors), 0)
-
-    def test_prompt_with_injection_attempt(self):
-        """Edge case: prompt with potential injection"""
-        success, errors = self.validator.validate_prompt(
-            "Draw <script>alert('xss')</script> a cat"
+        response = self.service.generate_video(request)
+        self.assertFalse(response.success)
+        self.assertEqual(response.error_code, ErrorCode.INVALID_INPUT)
+    
+    def test_width_below_minimum(self):
+        """Test rejection of width below minimum"""
+        request = VideoGenerationRequest(
+            request_id="req_007",
+            prompt="Valid prompt",
+            duration_seconds=10,
+            width=128,
+            height=768,
+            user_id="user_001"
         )
-        self.assertFalse(success)
-        self.assertTrue(any("dangerous" in e.lower() for e in errors))
-
-    def test_prompt_with_token_bomb(self):
-        """Edge case: prompt with token bomb attempt"""
-        success, errors = self.validator.validate_prompt(
-            "repeat repeat repeat repeat repeat repeat " * 200
+        response = self.service.generate_video(request)
+        self.assertFalse(response.success)
+        self.assertEqual(response.error_code, ErrorCode.INVALID_INPUT)
+    
+    def test_width_not_divisible_by_64(self):
+        """Test rejection of width not divisible by 64"""
+        request = VideoGenerationRequest(
+            request_id="req_008",
+            prompt="Valid prompt",
+            duration_seconds=10,
+            width=1000,
+            height=768,
+            user_id="user_001"
         )
-        self.assertFalse(success)
-        self.assertTrue(any("repetition" in e.lower() for e in errors))
-
-    def test_rate_limit_normal(self):
-        """Test rate limit detection - normal case"""
-        success, msg = self.simulator.simulate_rate_limit(50, 100)
-        self.assertTrue(success)
-
-    def test_rate_limit_exceeded(self):
-        """Test rate limit detection - limit exceeded"""
-        success, msg = self.simulator.simulate_rate_limit(100, 100)
-        self.assertFalse(success)
-        self.assertIn("Rate limit exceeded", msg)
-
-    def test_memory_normal(self):
-        """Test memory monitoring - normal usage"""
-        success, msg = self.simulator.simulate_memory_exhaustion(500, 8000)
-        self.assertTrue(success)
-
-    def test_memory_critical(self):
-        """Test memory monitoring - critical usage"""
-        success, msg = self.simulator.simulate_memory_exhaustion(7700, 8000)
-        self.assertFalse(success)
-        self.assertIn("Memory", msg)
-
-    def test_timeout_normal(self):
-        """Test timeout detection - normal"""
-        success, msg = self.simulator.simulate_timeout(5.0, 30.0)
-        self.assertTrue(success)
-
-    def test_timeout_exceeded(self):
-        """Test timeout detection - exceeded"""
-        success, msg = self.simulator.simulate_timeout(35.0, 30.0)
-        self.assertFalse(success)
-        self.assertIn("timeout", msg.lower())
-
-    def test_batch_request_valid(self):
-        """Test batch request validation - valid"""
-        success, errors = self.validator.validate_batch_request(10, 5000)
-        self.assertTrue(success)
-
-    def test_batch_
+        response = self.service.generate_video(request)
+        self.assertFalse(response.success)
+        self.assertEqual(response.error_code, ErrorCode.INVALID_INPUT)
+    
+    def test_height_not_divisible_by_64(self):
+        """Test rejection of height not divisible by 64"""
+        request = VideoGenerationRequest(
+            request_id="req_009",
+            prompt="Valid prompt",
+            duration_seconds=10,
+            width=1024,
+            height=700,
+            user_id="user_001"
+        )
+        response = self.service.generate_video(request)
+        self.assertFalse(response.success)
+        self.assertEqual(response.error_code, ErrorCode.INVALID_INPUT)
+    
+    def test_missing_user_id(self):
+        """Test rejection of missing user ID"""
+        request = VideoGenerationRequest(
+            request_id="req_010",
+            prompt="Valid prompt",
+            duration_seconds=10,
+            width=1024,
+            height=768,
+            user_id=""
+        )
+        response = self.service.generate_video(request)
+        self.assertFalse(response.success)
+        self.assertEqual(response.error_code, ErrorCode.AUTH_FAILED)
+    
+    def test_invalid_priority(self):
+        """Test rejection of invalid priority"""
+        request = VideoGenerationRequest(
+            request_id="req_011",
+            prompt="Valid prompt",
+            duration_seconds=10,
+            width=1024,
+            height=768,
+            user_id="user_001",
+            priority=11
+        )
+        response = self.service.generate_video(request)
+        self.assertFalse(response.success)
+        self.assertEqual(response.error_code, ErrorCode.INVALID_INPUT)
+    
+    def test_quota_exhaustion(self):
+        """Test quota exhaustion after multiple requests"""
+        self.service.quota_per_hour = 2
+        user_id = "user_quota_test"
+        
+        for i in range(2
