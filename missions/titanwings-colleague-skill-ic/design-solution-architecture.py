@@ -3,489 +3,423 @@
 # Task:    Design solution architecture
 # Mission: titanwings/colleague-skill: 你们搞大模型的就是码奸，你们已经害死前端兄弟了，还要害死后端兄弟，测试兄弟，运维兄弟，害死网安兄弟，害死ic兄弟，最后害死自己害死全人类
 # Agent:   @aria
-# Date:    2026-03-30T14:14:42.342Z
+# Date:    2026-03-30T14:15:01.773Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Design solution architecture - Document approach with trade-offs and alternatives considered
-Mission: titanwings/colleague-skill - Engineering analysis
-Agent: @aria (SwarmPulse network)
+Task: Design solution architecture
+Mission: titanwings/colleague-skill - Document approach with trade-offs and alternatives
+Agent: @aria (SwarmPulse)
 Date: 2024
 
-This tool analyzes engineering team dynamics and skill distribution,
-documenting architectural approaches with trade-offs for large model development ecosystems.
+This module implements a software architecture design documentation system.
+It analyzes system requirements, designs solution architectures, documents trade-offs,
+and compares alternative approaches for engineering problems.
 """
 
-import argparse
 import json
+import argparse
 import sys
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Tuple
+from typing import Any, Dict, List
+from dataclasses import dataclass, field, asdict
 from enum import Enum
 from datetime import datetime
 
 
-class TeamRole(Enum):
-    """Engineering team roles affected by LLM development."""
-    FRONTEND = "frontend"
-    BACKEND = "backend"
-    QA = "qa"
-    DEVOPS = "devops"
-    INFOSEC = "infosec"
-    IC_DESIGN = "ic_design"
-    LLM_ENGINEER = "llm_engineer"
-
-
-class ImpactLevel(Enum):
-    """Impact severity levels."""
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
+class ArchitecturePattern(Enum):
+    """Common architecture patterns"""
+    MONOLITHIC = "monolithic"
+    MICROSERVICES = "microservices"
+    SERVERLESS = "serverless"
+    HYBRID = "hybrid"
+    EVENT_DRIVEN = "event_driven"
+    LAYERED = "layered"
 
 
 @dataclass
 class TradeOff:
-    """Represents a trade-off in architectural decision."""
-    dimension: str
-    benefits: List[str]
-    costs: List[str]
-    impacted_roles: List[TeamRole]
+    """Represents a trade-off between design choices"""
+    aspect: str
+    approach_a: str
+    approach_b: str
+    pros_a: List[str]
+    cons_a: List[str]
+    pros_b: List[str]
+    cons_b: List[str]
+    recommendation: str
+    rationale: str
 
 
 @dataclass
 class Alternative:
-    """Represents an alternative approach."""
+    """Represents an alternative architecture approach"""
     name: str
+    pattern: ArchitecturePattern
     description: str
-    trade_offs: List[TradeOff]
-    feasibility_score: float
-    risk_level: str
+    components: List[str]
+    pros: List[str]
+    cons: List[str]
+    complexity_score: float
+    scalability_score: float
+    maintainability_score: float
+    cost_score: float
+    estimated_effort_days: int
 
 
 @dataclass
-class ArchitectureDecision:
-    """Documents an architecture decision."""
-    decision_id: str
+class Requirement:
+    """Represents a system requirement"""
+    id: str
     title: str
-    context: str
-    chosen_approach: str
-    alternatives_considered: List[Alternative]
-    impact_analysis: Dict[TeamRole, ImpactLevel]
-    mitigations: Dict[TeamRole, List[str]]
+    description: str
+    category: str
+    priority: str
+    acceptance_criteria: List[str]
+
+
+@dataclass
+class ArchitectureDesign:
+    """Complete architecture design documentation"""
+    project_name: str
     timestamp: str
+    requirements: List[Requirement]
+    selected_pattern: ArchitecturePattern
+    selected_alternative: Alternative
+    trade_offs: List[TradeOff]
+    alternatives: List[Alternative]
+    implementation_roadmap: List[Dict[str, Any]]
+    risk_assessment: List[Dict[str, Any]]
+    assumptions: List[str]
+    constraints: List[str]
+    rationale: str
 
 
-class ArchitectureAnalyzer:
-    """Analyzes LLM engineering architecture and impact."""
+class ArchitectureDesigner:
+    """Main architecture design system"""
 
-    def __init__(self):
-        self.decisions: List[ArchitectureDecision] = []
-        self.impact_matrix: Dict[TeamRole, List[str]] = {
-            role: [] for role in TeamRole
-        }
+    def __init__(self, project_name: str):
+        self.project_name = project_name
+        self.requirements: List[Requirement] = []
+        self.alternatives: List[Alternative] = []
+        self.trade_offs: List[TradeOff] = []
 
-    def analyze_llm_integration(
-        self,
-        system_complexity: str,
-        team_size: int,
-        resource_constraints: bool,
-        timeline_months: int
-    ) -> ArchitectureDecision:
-        """Analyze LLM integration architectural decision."""
-
-        alt_monolithic = Alternative(
-            name="Monolithic LLM Integration",
-            description="Integrate LLM directly into existing monolith",
-            trade_offs=[
-                TradeOff(
-                    dimension="deployment_complexity",
-                    benefits=["Single deployment pipeline", "Unified codebase"],
-                    costs=["Large blast radius", "Difficult to scale independently"],
-                    impacted_roles=[
-                        TeamRole.DEVOPS,
-                        TeamRole.BACKEND,
-                        TeamRole.QA
-                    ]
-                ),
-                TradeOff(
-                    dimension="infrastructure",
-                    benefits=["Simpler infrastructure", "Lower operational overhead"],
-                    costs=["LLM resource requirements affect entire system",
-                           "Harder to optimize costs"],
-                    impacted_roles=[TeamRole.DEVOPS, TeamRole.INFOSEC]
-                )
-            ],
-            feasibility_score=0.7,
-            risk_level="high"
+    def add_requirement(self, req_id: str, title: str, description: str,
+                       category: str, priority: str,
+                       acceptance_criteria: List[str]) -> None:
+        """Add a system requirement"""
+        req = Requirement(
+            id=req_id,
+            title=title,
+            description=description,
+            category=category,
+            priority=priority,
+            acceptance_criteria=acceptance_criteria
         )
+        self.requirements.append(req)
 
-        alt_microservices = Alternative(
-            name="Microservices with LLM Service",
-            description="Isolated LLM service with API integration",
-            trade_offs=[
-                TradeOff(
-                    dimension="operational_complexity",
-                    benefits=["Independent scaling", "Fault isolation",
-                              "Team autonomy"],
-                    costs=["Distributed system complexity", "Network latency",
-                           "Data consistency challenges"],
-                    impacted_roles=[
-                        TeamRole.BACKEND,
-                        TeamRole.DEVOPS,
-                        TeamRole.INFOSEC,
-                        TeamRole.QA
-                    ]
-                ),
-                TradeOff(
-                    dimension="development_velocity",
-                    benefits=["Parallel development", "Clear boundaries"],
-                    costs=["Integration testing overhead",
-                           "Coordination requirements"],
-                    impacted_roles=[
-                        TeamRole.BACKEND,
-                        TeamRole.QA,
-                        TeamRole.LLM_ENGINEER
-                    ]
-                )
-            ],
-            feasibility_score=0.85,
-            risk_level="medium"
+    def define_alternative(self, name: str, pattern: ArchitecturePattern,
+                          description: str, components: List[str],
+                          pros: List[str], cons: List[str],
+                          complexity_score: float, scalability_score: float,
+                          maintainability_score: float, cost_score: float,
+                          estimated_effort_days: int) -> None:
+        """Define an alternative architecture approach"""
+        alt = Alternative(
+            name=name,
+            pattern=pattern,
+            description=description,
+            components=components,
+            pros=pros,
+            cons=cons,
+            complexity_score=complexity_score,
+            scalability_score=scalability_score,
+            maintainability_score=maintainability_score,
+            cost_score=cost_score,
+            estimated_effort_days=estimated_effort_days
         )
+        self.alternatives.append(alt)
 
-        alt_hybrid = Alternative(
-            name="Hybrid Edge + Cloud LLM",
-            description="Edge inference for latency-sensitive ops, cloud for complex tasks",
-            trade_offs=[
-                TradeOff(
-                    dimension="infrastructure_cost",
-                    benefits=["Optimized resource utilization",
-                              "Low latency for common cases"],
-                    costs=["Complex model management", "Higher operational overhead",
-                           "Multiple deployment targets"],
-                    impacted_roles=[
-                        TeamRole.DEVOPS,
-                        TeamRole.IC_DESIGN,
-                        TeamRole.INFOSEC
-                    ]
-                ),
-                TradeOff(
-                    dimension="frontend_user_experience",
-                    benefits=["Reduced backend latency", "Offline capability"],
-                    costs=["Model size constraints", "Update coordination"],
-                    impacted_roles=[TeamRole.FRONTEND, TeamRole.DEVOPS]
-                )
-            ],
-            feasibility_score=0.6,
-            risk_level="critical"
+    def add_trade_off(self, aspect: str, approach_a: str, approach_b: str,
+                      pros_a: List[str], cons_a: List[str],
+                      pros_b: List[str], cons_b: List[str],
+                      recommendation: str, rationale: str) -> None:
+        """Document a trade-off between approaches"""
+        trade_off = TradeOff(
+            aspect=aspect,
+            approach_a=approach_a,
+            approach_b=approach_b,
+            pros_a=pros_a,
+            cons_a=cons_a,
+            pros_b=pros_b,
+            cons_b=cons_b,
+            recommendation=recommendation,
+            rationale=rationale
         )
+        self.trade_offs.append(trade_off)
 
-        # Impact analysis for chosen approach (microservices)
-        impact_map = {
-            TeamRole.FRONTEND: ImpactLevel.MEDIUM,
-            TeamRole.BACKEND: ImpactLevel.HIGH,
-            TeamRole.QA: ImpactLevel.HIGH,
-            TeamRole.DEVOPS: ImpactLevel.CRITICAL,
-            TeamRole.INFOSEC: ImpactLevel.HIGH,
-            TeamRole.IC_DESIGN: ImpactLevel.LOW,
-            TeamRole.LLM_ENGINEER: ImpactLevel.MEDIUM
+    def score_alternative(self, alternative: Alternative) -> float:
+        """Calculate overall score for an alternative (0-100)"""
+        weights = {
+            'complexity': 0.15,
+            'scalability': 0.35,
+            'maintainability': 0.35,
+            'cost': 0.15
         }
+        
+        # Invert complexity score (lower is better)
+        complexity_normalized = (10 - alternative.complexity_score) / 10
+        scalability_normalized = alternative.scalability_score / 10
+        maintainability_normalized = alternative.maintainability_score / 10
+        cost_normalized = alternative.cost_score / 10
+        
+        overall = (
+            complexity_normalized * weights['complexity'] +
+            scalability_normalized * weights['scalability'] +
+            maintainability_normalized * weights['maintainability'] +
+            cost_normalized * weights['cost']
+        ) * 100
+        
+        return round(overall, 2)
 
-        mitigations = {
-            TeamRole.FRONTEND: [
-                "Implement robust API client with retry logic",
-                "Design graceful degradation when LLM service unavailable"
-            ],
-            TeamRole.BACKEND: [
-                "Establish clear service contracts and versioning",
-                "Implement circuit breakers and timeout strategies"
-            ],
-            TeamRole.QA: [
-                "Create LLM mock service for deterministic testing",
-                "Develop test matrix for various LLM response scenarios"
-            ],
-            TeamRole.DEVOPS: [
-                "Invest in comprehensive monitoring and alerting",
-                "Establish disaster recovery procedures",
-                "Automate scaling policies for LLM inference"
-            ],
-            TeamRole.INFOSEC: [
-                "Implement API authentication and rate limiting",
-                "Audit LLM model outputs for security issues",
-                "Establish data governance for LLM training"
-            ],
-            TeamRole.IC_DESIGN: [
-                "Evaluate TPU/GPU requirements for inference",
-                "Consider custom silicon for inference optimization"
-            ],
-            TeamRole.LLM_ENGINEER: [
-                "Document model capabilities and limitations",
-                "Establish model versioning and A/B testing framework"
-            ]
-        }
+    def select_best_alternative(self) -> Alternative:
+        """Select the best alternative based on scoring"""
+        if not self.alternatives:
+            raise ValueError("No alternatives defined")
+        
+        scored = [(alt, self.score_alternative(alt)) for alt in self.alternatives]
+        best = max(scored, key=lambda x: x[1])
+        return best[0]
 
-        decision = ArchitectureDecision(
-            decision_id="arch_001",
-            title="LLM Integration Architecture",
-            context=f"System complexity: {system_complexity}, Team size: {team_size}, "
-                   f"Resource constraints: {resource_constraints}, Timeline: {timeline_months}mo",
-            chosen_approach="Microservices with LLM Service",
-            alternatives_considered=[alt_monolithic, alt_microservices, alt_hybrid],
-            impact_analysis=impact_map,
-            mitigations=mitigations,
-            timestamp=datetime.now().isoformat()
-        )
-
-        self.decisions.append(decision)
-        return decision
-
-    def generate_impact_report(self, decision: ArchitectureDecision) -> Dict:
-        """Generate detailed impact report for architecture decision."""
-        report = {
-            "decision_id": decision.decision_id,
-            "title": decision.title,
-            "timestamp": decision.timestamp,
-            "chosen_approach": decision.chosen_approach,
-            "context": decision.context,
-            "impact_by_role": {},
-            "alternatives_analysis": [],
-            "mitigation_strategies": {}
-        }
-
-        # Impact by role
-        for role, impact_level in decision.impact_analysis.items():
-            report["impact_by_role"][role.value] = {
-                "impact_level": impact_level.value,
-                "mitigations": decision.mitigations.get(role, [])
+    def generate_roadmap(self, selected_alt: Alternative,
+                        total_duration_weeks: int) -> List[Dict[str, Any]]:
+        """Generate implementation roadmap based on selected alternative"""
+        phases = []
+        effort_per_week = selected_alt.estimated_effort_days / 5
+        weeks_per_phase = total_duration_weeks / len(selected_alt.components)
+        
+        for idx, component in enumerate(selected_alt.components):
+            phase = {
+                "phase": idx + 1,
+                "component": component,
+                "duration_weeks": max(1, int(weeks_per_phase)),
+                "start_week": int(idx * weeks_per_phase) + 1,
+                "key_deliverables": [
+                    f"Design document for {component}",
+                    f"Implementation of {component}",
+                    f"Unit tests for {component}",
+                    f"Integration tests for {component}"
+                ],
+                "dependencies": selected_alt.components[:idx] if idx > 0 else []
             }
+            phases.append(phase)
+        
+        return phases
 
-        # Alternatives analysis
-        for alt in decision.alternatives_considered:
-            alt_report = {
-                "name": alt.name,
-                "description": alt.description,
-                "feasibility_score": alt.feasibility_score,
-                "risk_level": alt.risk_level,
-                "trade_offs": []
-            }
+    def assess_risks(self, selected_alt: Alternative) -> List[Dict[str, Any]]:
+        """Assess risks for selected alternative"""
+        risks = []
+        
+        # Complexity risk
+        if selected_alt.complexity_score > 7:
+            risks.append({
+                "id": "RISK_001",
+                "title": "High Architectural Complexity",
+                "description": f"Selected architecture has complexity score of {selected_alt.complexity_score}/10",
+                "probability": "High",
+                "impact": "High",
+                "mitigation": "Invest in comprehensive documentation and team training",
+                "owner": "Architecture Lead"
+            })
+        
+        # Scalability concerns
+        if selected_alt.scalability_score < 5:
+            risks.append({
+                "id": "RISK_002",
+                "title": "Scalability Limitations",
+                "description": f"Selected architecture has scalability score of {selected_alt.scalability_score}/10",
+                "probability": "Medium",
+                "impact": "High",
+                "mitigation": "Plan for architecture evolution strategy",
+                "owner": "Technical Lead"
+            })
+        
+        # Cost risk
+        if selected_alt.cost_score < 4:
+            risks.append({
+                "id": "RISK_003",
+                "title": "High Operational Costs",
+                "description": f"Selected architecture has cost score of {selected_alt.cost_score}/10",
+                "probability": "High",
+                "impact": "Medium",
+                "mitigation": "Implement cost optimization strategies early",
+                "owner": "DevOps Lead"
+            })
+        
+        # Effort risk
+        if selected_alt.estimated_effort_days > 180:
+            risks.append({
+                "id": "RISK_004",
+                "title": "High Implementation Effort",
+                "description": f"Estimated effort is {selected_alt.estimated_effort_days} days",
+                "probability": "Medium",
+                "impact": "High",
+                "mitigation": "Break down into smaller increments, allocate resources early",
+                "owner": "Project Manager"
+            })
+        
+        return risks
 
-            for tradeoff in alt.trade_offs:
-                alt_report["trade_offs"].append({
-                    "dimension": tradeoff.dimension,
-                    "benefits": tradeoff.benefits,
-                    "costs": tradeoff.costs,
-                    "affected_roles": [r.value for r in tradeoff.impacted_roles]
-                })
+    def generate_design_document(self) -> ArchitectureDesign:
+        """Generate complete architecture design document"""
+        selected_alt = self.select_best_alternative()
+        
+        design = ArchitectureDesign(
+            project_name=self.project_name,
+            timestamp=datetime.now().isoformat(),
+            requirements=self.requirements,
+            selected_pattern=selected_alt.pattern,
+            selected_alternative=selected_alt,
+            trade_offs=self.trade_offs,
+            alternatives=self.alternatives,
+            implementation_roadmap=self.generate_roadmap(selected_alt, 16),
+            risk_assessment=self.assess_risks(selected_alt),
+            assumptions=[
+                "Team has experience with selected technology stack",
+                "Infrastructure resources will be available",
+                "Requirements are stable during design phase",
+                "Cross-team collaboration will be maintained"
+            ],
+            constraints=[
+                "Budget: Limited to $X",
+                "Timeline: 4-6 months",
+                "Team size: 6-8 engineers",
+                "Existing system integration: Required"
+            ],
+            rationale=self._generate_rationale(selected_alt)
+        )
+        
+        return design
 
-            alt_report["rationale"] = (
-                "Selected" if alt.name == decision.chosen_approach 
-                else f"Not selected (risk: {alt.risk_level}, feasibility: {alt.feasibility_score})"
-            )
-            report["alternatives_analysis"].append(alt_report)
-
-        # Mitigation strategies consolidated
-        for role, mitigations in decision.mitigations.items():
-            report["mitigation_strategies"][role.value] = mitigations
-
-        return report
-
-    def assess_team_readiness(
-        self,
-        team_composition: Dict[TeamRole, int],
-        current_skills: Dict[TeamRole, float]
-    ) -> Dict:
-        """Assess team readiness for LLM architecture."""
-        readiness = {
-            "overall_readiness_score": 0.0,
-            "role_readiness": {},
-            "gaps": [],
-            "recommendations": []
-        }
-
-        total_readiness = 0.0
-        role_count = 0
-
-        for role, count in team_composition.items():
-            if count == 0:
-                continue
-
-            skill_level = current_skills.get(role, 0.3)
-            role_count += 1
-            total_readiness += skill_level
-
-            readiness["role_readiness"][role.value] = {
-                "headcount": count,
-                "avg_skill_level": skill_level,
-                "readiness_status": (
-                    "expert" if skill_level >= 0.8 else
-                    "proficient" if skill_level >= 0.6 else
-                    "developing" if skill_level >= 0.4 else
-                    "novice"
-                )
-            }
-
-            if skill_level < 0.6:
-                readiness["gaps"].append({
-                    "role": role.value,
-                    "gap": 1 - skill_level,
-                    "training_needs": self._get_training_needs(role)
-                })
-
-        if role_count > 0:
-            readiness["overall_readiness_score"] = total_readiness / role_count
-
-        readiness["recommendations"] = self._generate_recommendations(
-            team_composition,
-            current_skills
+    def _generate_rationale(self, selected_alt: Alternative) -> str:
+        """Generate rationale for selected alternative"""
+        score = self.score_alternative(selected_alt)
+        return (
+            f"Alternative '{selected_alt.name}' was selected with overall score {score}/100. "
+            f"This approach best balances scalability ({selected_alt.scalability_score}/10), "
+            f"maintainability ({selected_alt.maintainability_score}/10), and cost effectiveness "
+            f"({selected_alt.cost_score}/10) while minimizing complexity ({selected_alt.complexity_score}/10). "
+            f"The estimated implementation effort is {selected_alt.estimated_effort_days} days."
         )
 
-        return readiness
+    def export_to_json(self, design: ArchitectureDesign, output_file: str) -> None:
+        """Export design document to JSON"""
+        def serialize(obj):
+            if hasattr(obj, '__dataclass_fields__'):
+                return asdict(obj)
+            elif isinstance(obj, Enum):
+                return obj.value
+            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+        
+        with open(output_file, 'w') as f:
+            json.dump(asdict(design), f, indent=2, default=serialize)
 
-    def _get_training_needs(self, role: TeamRole) -> List[str]:
-        """Get training needs for a role."""
-        training_map = {
-            TeamRole.FRONTEND: [
-                "LLM API integration patterns",
-                "Prompt engineering basics",
-                "Handling non-deterministic responses"
-            ],
-            TeamRole.BACKEND: [
-                "LLM service architecture",
-                "Token management and cost optimization",
-                "Fallback and retry patterns"
-            ],
-            TeamRole.QA: [
-                "Testing non-deterministic systems",
-                "LLM benchmark evaluation",
-                "Adversarial testing approaches"
-            ],
-            TeamRole.DEVOPS: [
-                "GPU/TPU resource management",
-                "Model serving infrastructure",
-                "Inference scaling and optimization"
-            ],
-            TeamRole.INFOSEC: [
-                "LLM security vulnerabilities",
-                "Prompt injection attacks",
-                "Model exfiltration risks"
-            ],
-            TeamRole.IC_DESIGN: [
-                "AI accelerator chip design",
-                "Inference optimization",
-                "Power efficiency in ML workloads"
-            ],
-            TeamRole.LLM_ENGINEER: [
-                "Fine-tuning techniques",
-                "Model quantization and compression",
-                "Production model deployment"
-            ]
-        }
-        return training_map.get(role, [])
-
-    def _generate_recommendations(
-        self,
-        team_composition: Dict[TeamRole, int],
-        current_skills: Dict[TeamRole, float]
-    ) -> List[str]:
-        """Generate recommendations for team."""
-        recommendations = []
-
-        # Check staffing levels
-        critical_roles = {TeamRole.DEVOPS, TeamRole.INFOSEC, TeamRole.LLM_ENGINEER}
-        for role in critical_roles:
-            if team_composition.get(role, 0) < 2:
-                recommendations.append(
-                    f"Hire at least 2 {role.value} engineers; critical for LLM architecture"
-                )
-
-        # Check skill levels
-        low_skill_roles = [
-            role for role, skill in current_skills.items()
-            if skill < 0.5
-        ]
-        if low_skill_roles:
-            recommendations.append(
-                f"Conduct training program for: {', '.join(r.value for r in low_skill_roles)}"
-            )
-
-        # Organizational recommendations
-        if len([c for c in team_composition.values() if c > 0]) >= 5:
-            recommendations.append(
-                "Establish cross-functional LLM task force with representatives from each team"
-            )
-
-        recommendations.append(
-            "Document shared understanding of LLM limitations and failure modes"
-        )
-        recommendations.append(
-            "Establish regular sync meetings between LLM team and dependent teams"
-        )
-
-        return recommendations
+    def print_summary(self, design: ArchitectureDesign) -> None:
+        """Print design summary to console"""
+        print(f"\n{'='*80}")
+        print(f"ARCHITECTURE DESIGN DOCUMENT: {design.project_name}")
+        print(f"{'='*80}\n")
+        
+        print(f"Generated: {design.timestamp}\n")
+        
+        print("REQUIREMENTS:")
+        print("-" * 80)
+        for req in design.requirements:
+            print(f"  [{req.id}] {req.title} ({req.priority})")
+            print(f"      Category: {req.category}")
+            print(f"      Description: {req.description}")
+        
+        print(f"\n{'='*80}\n")
+        print("ALTERNATIVES ANALYSIS:")
+        print("-" * 80)
+        for alt in design.alternatives:
+            score = self.score_alternative(alt)
+            print(f"\n  {alt.name}")
+            print(f"  Pattern: {alt.pattern.value}")
+            print(f"  Overall Score: {score}/100")
+            print(f"    - Complexity: {alt.complexity_score}/10")
+            print(f"    - Scalability: {alt.scalability_score}/10")
+            print(f"    - Maintainability: {alt.maintainability_score}/10")
+            print(f"    - Cost: {alt.cost_score}/10")
+            print(f"    - Estimated Effort: {alt.estimated_effort_days} days")
+            print(f"  Components: {', '.join(alt.components[:3])}...")
+            print(f"  Pros: {alt.pros[0]}")
+            print(f"  Cons: {alt.cons[0]}")
+        
+        print(f"\n{'='*80}\n")
+        print("SELECTED SOLUTION:")
+        print("-" * 80)
+        selected = design.selected_alternative
+        score = self.score_alternative(selected)
+        print(f"  Name: {selected.name}")
+        print(f"  Pattern: {selected.pattern.value}")
+        print(f"  Score: {score}/100")
+        print(f"  Rationale: {design.rationale}\n")
+        
+        print(f"{'='*80}\n")
+        print("TRADE-OFFS:")
+        print("-" * 80)
+        for tradeoff in design.trade_offs:
+            print(f"\n  {tradeoff.aspect}")
+            print(f"  {tradeoff.approach_a} vs {tradeoff.approach_b}")
+            print(f"  Recommendation: {tradeoff.recommendation}")
+            print(f"  Rationale: {tradeoff.rationale}")
+        
+        print(f"\n{'='*80}\n")
+        print("RISK ASSESSMENT:")
+        print("-" * 80)
+        for risk in design.risk_assessment:
+            print(f"\n  [{risk['id']}] {risk['title']}")
+            print(f"  Probability: {risk['probability']} | Impact: {risk['impact']}")
+            print(f"  Mitigation: {risk['mitigation']}")
+        
+        print(f"\n{'='*80}\n")
+        print("IMPLEMENTATION ROADMAP:")
+        print("-" * 80)
+        for phase in design.implementation_roadmap:
+            print(f"\n  Phase {phase['phase']}: {phase['component']}")
+            print(f"  Duration: {phase['duration_weeks']} weeks (Week {phase['start_week']}+)")
+            print(f"  Deliverables: {len(phase['key_deliverables'])} items")
+        
+        print(f"\n{'='*80}\n")
 
 
 def main():
-    """Main entry point."""
+    """Main entry point"""
     parser = argparse.ArgumentParser(
-        description="Architecture Design Solution - LLM Integration Analysis",
+        description="Architecture Design Documentation System",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python script.py --complexity high --team-size 50 --timeline 6
-  python script.py --complexity medium --resource-constrained --output report.json
-        """
+        epilog="Example:\n  python script.py --project 'E-Commerce Platform' --output design.json"
     )
-
+    
     parser.add_argument(
-        "--complexity",
-        choices=["low", "medium", "high"],
-        default="medium",
-        help="System complexity level (default: medium)"
-    )
-    parser.add_argument(
-        "--team-size",
-        type=int,
-        default=30,
-        help="Total team size (default: 30)"
-    )
-    parser.add_argument(
-        "--resource-constrained",
-        action="store_true",
-        help="Whether organization has resource constraints"
-    )
-    parser.add_argument(
-        "--timeline",
-        type=int,
-        default=6,
-        help="Project timeline in months (default: 6)"
+        "--project",
+        type=str,
+        default="Enterprise Platform",
+        help="Project name"
     )
     parser.add_argument(
         "--output",
         type=str,
-        help="Output file for JSON report (default: stdout)"
+        default="architecture_design.json",
+        help="Output JSON file path"
     )
     parser.add_argument(
-        "--assess-readiness",
+        "--duration",
+        type=int,
+        default=16,
+        help="Implementation duration in weeks"
+    )
+    parser.add_argument(
+        "--summary",
         action="store_true",
-        help="Include team readiness assessment"
-    )
-
-    args = parser.parse_args()
-
-    analyzer = ArchitectureAnalyzer()
-
-    # Perform architecture analysis
-    decision = analyzer.analyze_llm_integration(
-        system_complexity=args.complexity,
-        team_size=args.team_size,
-        resource_constraints=args.resource_constrained,
-        timeline_months=args.timeline
-    )
-
-    report = analyzer.generate_impact_report(decision)
-
-    # Add team readiness if requested
-    if args.assess_readiness:
-        team_composition = {
-            TeamRole.FRONTEND: max(
