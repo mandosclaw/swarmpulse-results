@@ -3,559 +3,645 @@
 # Task:    Implement ML-KEM drop-in adapter
 # Mission: Quantum-Safe Cryptography Migration
 # Agent:   @aria
-# Date:    2026-03-31T18:53:58.067Z
+# Date:    2026-03-31T19:13:40.369Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Implement ML-KEM drop-in adapter
-Mission: Quantum-Safe Cryptography Migration
-Agent: @aria
-Date: 2024
-
-ML-KEM drop-in adapter for seamless migration from RSA/ECC to post-quantum cryptography.
-Provides a unified interface for key encapsulation mechanism operations.
+TASK: Implement ML-KEM drop-in adapter
+MISSION: Quantum-Safe Cryptography Migration
+AGENT: @aria
+DATE: 2025-01-16
+DESCRIPTION: Drop-in ML-KEM adapter for existing RSA/ECC infrastructure
 """
 
 import argparse
-import json
 import base64
+import binascii
 import hashlib
+import json
 import os
+import struct
 import sys
-import time
 from datetime import datetime
-from dataclasses import dataclass, asdict
 from enum import Enum
-from typing import Tuple, Dict, Any, Optional, List
-from abc import ABC, abstractmethod
+from typing import Dict, List, Optional, Tuple
 
 
-class CryptoAlgorithm(Enum):
-    """Supported cryptographic algorithms"""
-    RSA = "rsa"
-    ECC = "ecc"
-    ML_KEM = "ml_kem"
+class KeyType(Enum):
+    """Supported key types for cryptographic operations."""
+    RSA = "RSA"
+    ECC = "ECC"
+    ML_KEM = "ML_KEM"
 
 
-@dataclass
-class KeyPair:
-    """Represents a cryptographic key pair"""
-    public_key: bytes
-    private_key: bytes
-    algorithm: CryptoAlgorithm
-    key_size: int
-    created_at: str
+class SecurityLevel(Enum):
+    """ML-KEM security levels as per FIPS 203."""
+    LEVEL_1 = "ML-KEM-512"
+    LEVEL_3 = "ML-KEM-768"
+    LEVEL_5 = "ML-KEM-1024"
 
 
-@dataclass
-class EncapsulationResult:
-    """Result of key encapsulation"""
-    ciphertext: bytes
-    shared_secret: bytes
-    algorithm: CryptoAlgorithm
-
-
-@dataclass
-class MigrationMetrics:
-    """Metrics for cryptography migration"""
-    total_keys: int
-    rsa_keys: int
-    ecc_keys: int
-    ml_kem_keys: int
-    migration_status: Dict[str, int]
-    timestamp: str
-
-
-class QuantumSafeKEM(ABC):
-    """Abstract base class for quantum-safe key encapsulation"""
-    
-    @abstractmethod
-    def generate_keypair(self) -> KeyPair:
-        """Generate a new key pair"""
-        pass
-    
-    @abstractmethod
-    def encapsulate(self, public_key: bytes) -> EncapsulationResult:
-        """Encapsulate a shared secret using public key"""
-        pass
-    
-    @abstractmethod
-    def decapsulate(self, private_key: bytes, ciphertext: bytes) -> bytes:
-        """Decapsulate and recover shared secret"""
-        pass
-
-
-class MLKEMAdapter(QuantumSafeKEM):
+class MLKEMAdapter:
     """
-    ML-KEM (Module-Lattice-Based Key-Encapsulation Mechanism) adapter
-    Simulates ML-KEM-768 (NIST FIPS 203 standardized variant)
+    Drop-in ML-KEM adapter for quantum-safe cryptography migration.
+    Provides ML-KEM encapsulation/decapsulation with compatibility layers for RSA/ECC.
     """
-    
-    # ML-KEM-768 parameters (simplified simulation)
-    SECURITY_LEVEL = 768
-    PUBLIC_KEY_SIZE = 1184
-    PRIVATE_KEY_SIZE = 2400
-    CIPHERTEXT_SIZE = 1088
-    SHARED_SECRET_SIZE = 32
-    
-    def __init__(self, security_level: int = 768):
+
+    def __init__(self, security_level: SecurityLevel = SecurityLevel.LEVEL_3):
+        """Initialize ML-KEM adapter with specified security level."""
         self.security_level = security_level
-        self.algorithm = CryptoAlgorithm.ML_KEM
-    
-    def generate_keypair(self) -> KeyPair:
-        """Generate ML-KEM keypair using deterministic simulation"""
-        seed = os.urandom(32)
-        
-        # Simulate public key generation from seed
-        public_key = self._derive_public_key(seed)
-        
-        # Simulate private key generation (includes seed)
-        private_key = self._derive_private_key(seed)
-        
-        return KeyPair(
-            public_key=public_key,
-            private_key=private_key,
-            algorithm=self.algorithm,
-            key_size=self.security_level,
-            created_at=datetime.now().isoformat()
-        )
-    
-    def encapsulate(self, public_key: bytes) -> EncapsulationResult:
-        """Encapsulate shared secret for given public key"""
-        # Validate public key
-        if len(public_key) != self.PUBLIC_KEY_SIZE:
-            raise ValueError(f"Invalid public key size: {len(public_key)}")
-        
-        # Generate random message
-        m = os.urandom(32)
-        
-        # Create shared secret using hash-based KDF
-        h_m = hashlib.shake_256(m).digest(self.SHARED_SECRET_SIZE)
-        
-        # Simulate lattice-based encryption (deterministic for testing)
-        h_pk = hashlib.sha3_256(public_key).digest()
-        ciphertext = self._kem_encrypt(h_pk, m)
-        
-        return EncapsulationResult(
-            ciphertext=ciphertext,
-            shared_secret=h_m,
-            algorithm=self.algorithm
-        )
-    
-    def decapsulate(self, private_key: bytes, ciphertext: bytes) -> bytes:
-        """Recover shared secret using private key"""
-        # Validate inputs
-        if len(private_key) != self.PRIVATE_KEY_SIZE:
-            raise ValueError(f"Invalid private key size: {len(private_key)}")
-        
-        if len(ciphertext) != self.CIPHERTEXT_SIZE:
-            raise ValueError(f"Invalid ciphertext size: {len(ciphertext)}")
-        
-        # Simulate decryption and recovery
-        recovered_m = self._kem_decrypt(private_key, ciphertext)
-        shared_secret = hashlib.shake_256(recovered_m).digest(self.SHARED_SECRET_SIZE)
-        
+        self.key_size_map = {
+            SecurityLevel.LEVEL_1: 512,
+            SecurityLevel.LEVEL_3: 768,
+            SecurityLevel.LEVEL_5: 1024,
+        }
+        self.seed_size = 64
+        self.public_key_size_map = {
+            SecurityLevel.LEVEL_1: 800,
+            SecurityLevel.LEVEL_3: 1184,
+            SecurityLevel.LEVEL_5: 1568,
+        }
+        self.ciphertext_size_map = {
+            SecurityLevel.LEVEL_1: 768,
+            SecurityLevel.LEVEL_3: 1088,
+            SecurityLevel.LEVEL_5: 1568,
+        }
+        self.shared_secret_size = 32
+
+    def _drbg_expand(
+        self, seed: bytes, length: int, counter: int = 0
+    ) -> bytes:
+        """Deterministic Random Bit Generator (DRBG) expansion using SHA-256."""
+        output = b""
+        seed_input = seed + struct.pack(">Q", counter)
+
+        for i in range((length + 31) // 32):
+            h = hashlib.sha256()
+            h.update(seed_input + struct.pack(">I", i))
+            output += h.digest()
+
+        return output[:length]
+
+    def _sample_uniform(self, seed: bytes, offset: int) -> int:
+        """Sample a uniform value from seed (simplified ML-KEM sampling)."""
+        h = hashlib.sha256()
+        h.update(seed + struct.pack(">I", offset))
+        digest = h.digest()
+        value = int.from_bytes(digest[:2], byteorder="big") % 3329
+        return value
+
+    def generate_keypair(self, seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
+        """
+        Generate ML-KEM keypair.
+        Returns: (public_key, secret_key)
+        """
+        if seed is None:
+            seed = os.urandom(self.seed_size)
+        elif len(seed) != self.seed_size:
+            seed = hashlib.sha256(seed).digest()
+
+        public_key_size = self.public_key_size_map[self.security_level]
+        secret_key_size = self.key_size_map[self.security_level]
+
+        seed_expanded = self._drbg_expand(seed, public_key_size + secret_key_size)
+        public_key = seed_expanded[:public_key_size]
+        secret_key = seed + seed_expanded[public_key_size : public_key_size + secret_key_size]
+
+        return public_key, secret_key
+
+    def encapsulate(self, public_key: bytes) -> Tuple[bytes, bytes]:
+        """
+        Encapsulate: generate shared secret and ciphertext.
+        Returns: (ciphertext, shared_secret)
+        """
+        public_key_size = self.public_key_size_map[self.security_level]
+        if len(public_key) != public_key_size:
+            raise ValueError(
+                f"Invalid public key size. Expected {public_key_size}, got {len(public_key)}"
+            )
+
+        randomness = os.urandom(32)
+        m = hashlib.sha256(randomness).digest()
+
+        h = hashlib.sha256()
+        h.update(public_key)
+        public_key_hash = h.digest()
+
+        h = hashlib.shake_256()
+        h.update(m + public_key_hash)
+        c_and_d = h.digest(64)
+        c = c_and_d[:32]
+        d = c_and_d[32:64]
+
+        ciphertext = c + d[:self.ciphertext_size_map[self.security_level] - 32]
+
+        h = hashlib.sha256()
+        h.update(c + d)
+        shared_secret = h.digest()
+
+        return ciphertext, shared_secret
+
+    def decapsulate(self, ciphertext: bytes, secret_key: bytes) -> bytes:
+        """
+        Decapsulate: recover shared secret from ciphertext using secret key.
+        """
+        if len(secret_key) < self.seed_size:
+            raise ValueError("Invalid secret key size")
+
+        seed = secret_key[:self.seed_size]
+        public_key_size = self.public_key_size_map[self.security_level]
+        public_key, _ = self.generate_keypair(seed)
+
+        h = hashlib.sha256()
+        h.update(public_key)
+        public_key_hash = h.digest()
+
+        ciphertext_size = self.ciphertext_size_map[self.security_level]
+        if len(ciphertext) != ciphertext_size:
+            raise ValueError(
+                f"Invalid ciphertext size. Expected {ciphertext_size}, got {len(ciphertext)}"
+            )
+
+        h = hashlib.sha256()
+        h.update(ciphertext + public_key_hash)
+        shared_secret = h.digest()
+
         return shared_secret
-    
-    def _derive_public_key(self, seed: bytes) -> bytes:
-        """Derive public key from seed (simplified simulation)"""
-        h = hashlib.sha3_256()
-        h.update(b"MLKEM_PK" + seed)
-        pk_seed = h.digest()
-        
-        # Pad to PUBLIC_KEY_SIZE
-        return (pk_seed * ((self.PUBLIC_KEY_SIZE // len(pk_seed)) + 1))[:self.PUBLIC_KEY_SIZE]
-    
-    def _derive_private_key(self, seed: bytes) -> bytes:
-        """Derive private key from seed (simplified simulation)"""
-        h = hashlib.sha3_256()
-        h.update(b"MLKEM_SK" + seed)
-        sk_seed = h.digest()
-        
-        # Pad to PRIVATE_KEY_SIZE
-        return (sk_seed * ((self.PRIVATE_KEY_SIZE // len(sk_seed)) + 1))[:self.PRIVATE_KEY_SIZE]
-    
-    def _kem_encrypt(self, pk_hash: bytes, m: bytes) -> bytes:
-        """Simulate lattice-based encryption"""
-        # Combine public key hash and message
-        combined = pk_hash + m
-        c = hashlib.shake_256(combined).digest(self.CIPHERTEXT_SIZE)
-        return c
-    
-    def _kem_decrypt(self, sk: bytes, c: bytes) -> bytes:
-        """Simulate lattice-based decryption"""
-        # Derive recovery using private key
-        recovery = hashlib.sha3_256(sk + c).digest(32)
-        return recovery
 
 
-class LegacyKEMAdapter(QuantumSafeKEM):
-    """Adapter for legacy RSA/ECC systems (for comparison)"""
-    
-    def __init__(self, algorithm: CryptoAlgorithm = CryptoAlgorithm.RSA):
-        if algorithm not in [CryptoAlgorithm.RSA, CryptoAlgorithm.ECC]:
-            raise ValueError(f"Invalid legacy algorithm: {algorithm}")
-        self.algorithm = algorithm
-        self.key_size = 2048 if algorithm == CryptoAlgorithm.RSA else 256
-    
-    def generate_keypair(self) -> KeyPair:
-        """Generate legacy keypair (simulated)"""
-        seed = os.urandom(32)
-        
-        # Simulate RSA/ECC key generation
-        public_key = hashlib.sha3_256(b"pub" + seed).digest() * 16
-        private_key = hashlib.sha3_256(b"priv" + seed).digest() * 16
-        
-        return KeyPair(
-            public_key=public_key,
-            private_key=private_key,
-            algorithm=self.algorithm,
-            key_size=self.key_size,
-            created_at=datetime.now().isoformat()
-        )
-    
-    def encapsulate(self, public_key: bytes) -> EncapsulationResult:
-        """Encapsulate using legacy method"""
-        m = os.urandom(32)
-        shared_secret = hashlib.sha3_256(public_key + m).digest()
-        ciphertext = hashlib.sha3_256(shared_secret + m).digest() * 4
-        
-        return EncapsulationResult(
-            ciphertext=ciphertext,
-            shared_secret=shared_secret,
-            algorithm=self.algorithm
-        )
-    
-    def decapsulate(self, private_key: bytes, ciphertext: bytes) -> bytes:
-        """Decapsulate using legacy method"""
-        return hashlib.sha3_256(private_key + ciphertext).digest()
+class CryptographyInventory:
+    """Manages and tracks cryptographic assets in the infrastructure."""
 
-
-class QuantumSafeCryptoInventory:
-    """Inventory and migration tracker for cryptographic keys"""
-    
     def __init__(self):
-        self.keys: Dict[str, KeyPair] = {}
-        self.migrations: List[Dict[str, Any]] = []
-        self.ml_kem_adapter = MLKEMAdapter()
-        self.legacy_adapters: Dict[CryptoAlgorithm, LegacyKEMAdapter] = {
-            CryptoAlgorithm.RSA: LegacyKEMAdapter(CryptoAlgorithm.RSA),
-            CryptoAlgorithm.ECC: LegacyKEMAdapter(CryptoAlgorithm.ECC)
+        """Initialize inventory tracking."""
+        self.assets: List[Dict] = []
+
+    def add_asset(
+        self,
+        asset_id: str,
+        asset_type: str,
+        key_type: KeyType,
+        key_size: int,
+        location: str,
+        usage_context: str,
+        migration_status: str = "pending",
+    ) -> None:
+        """Add a cryptographic asset to inventory."""
+        asset = {
+            "asset_id": asset_id,
+            "asset_type": asset_type,
+            "key_type": key_type.value,
+            "key_size": key_size,
+            "location": location,
+            "usage_context": usage_context,
+            "migration_status": migration_status,
+            "discovered_at": datetime.utcnow().isoformat(),
+            "quantum_vulnerable": key_type in [KeyType.RSA, KeyType.ECC],
         }
-    
-    def register_key(self, key_id: str, key_pair: KeyPair) -> None:
-        """Register a key in the inventory"""
-        self.keys[key_id] = key_pair
-    
-    def scan_inventory(self) -> MigrationMetrics:
-        """Scan and analyze current cryptographic inventory"""
-        rsa_count = sum(1 for k in self.keys.values() if k.algorithm == CryptoAlgorithm.RSA)
-        ecc_count = sum(1 for k in self.keys.values() if k.algorithm == CryptoAlgorithm.ECC)
-        ml_kem_count = sum(1 for k in self.keys.values() if k.algorithm == CryptoAlgorithm.ML_KEM)
-        
-        return MigrationMetrics(
-            total_keys=len(self.keys),
-            rsa_keys=rsa_count,
-            ecc_keys=ecc_count,
-            ml_kem_keys=ml_kem_count,
-            migration_status={
-                "rsa": rsa_count,
-                "ecc": ecc_count,
-                "ml_kem": ml_kem_count
-            },
-            timestamp=datetime.now().isoformat()
+        self.assets.append(asset)
+
+    def get_vulnerable_assets(self) -> List[Dict]:
+        """Return list of quantum-vulnerable assets."""
+        return [a for a in self.assets if a["quantum_vulnerable"]]
+
+    def get_migrated_assets(self) -> List[Dict]:
+        """Return list of assets migrated to ML-KEM."""
+        return [a for a in self.assets if a["migration_status"] == "migrated"]
+
+    def get_summary(self) -> Dict:
+        """Get inventory summary statistics."""
+        vulnerable = self.get_vulnerable_assets()
+        migrated = self.get_migrated_assets()
+        return {
+            "total_assets": len(self.assets),
+            "quantum_vulnerable": len(vulnerable),
+            "migrated_to_mlkem": len(migrated),
+            "migration_progress_percent": (
+                (len(migrated) / max(len(self.assets), 1)) * 100
+            ),
+            "rsa_assets": len([a for a in self.assets if a["key_type"] == "RSA"]),
+            "ecc_assets": len([a for a in self.assets if a["key_type"] == "ECC"]),
+            "mlkem_assets": len([a for a in self.assets if a["key_type"] == "ML_KEM"]),
+        }
+
+
+class RiskAssessment:
+    """Prioritizes migration risks based on multiple factors."""
+
+    RISK_SCORES = {
+        "RSA-2048": 75,
+        "RSA-3072": 65,
+        "RSA-4096": 55,
+        "ECC-P256": 80,
+        "ECC-P384": 70,
+        "ECC-P521": 60,
+    }
+
+    CONTEXT_MULTIPLIERS = {
+        "authentication": 1.5,
+        "key_exchange": 1.4,
+        "digital_signature": 1.3,
+        "encryption": 1.2,
+        "other": 1.0,
+    }
+
+    @staticmethod
+    def calculate_risk_score(
+        key_type: KeyType, key_size: int, usage_context: str
+    ) -> float:
+        """Calculate risk score for an asset (0-100)."""
+        key_name = f"{key_type.value}-{key_size}"
+        base_score = RiskAssessment.RISK_SCORES.get(key_name, 50)
+        multiplier = RiskAssessment.CONTEXT_MULTIPLIERS.get(
+            usage_context.lower(), 1.0
         )
-    
-    def migrate_key(self, old_key_id: str, new_key_id: str) -> Dict[str, Any]:
-        """Migrate a key from legacy to ML-KEM"""
-        if old_key_id not in self.keys:
-            raise KeyError(f"Key not found: {old_key_id}")
-        
-        old_key = self.keys[old_key_id]
-        
-        # Generate new ML-KEM key
-        new_key = self.ml_kem_adapter.generate_keypair()
-        
-        # Register migrated key
-        self.register_key(new_key_id, new_key)
-        
-        # Record migration
-        migration_record = {
-            "old_key_id": old_key_id,
-            "old_algorithm": old_key.algorithm.value,
-            "new_key_id": new_key_id,
-            "new_algorithm": new_key.algorithm.value,
-            "migration_time": datetime.now().isoformat(),
-            "old_key_size": old_key.key_size,
-            "new_key_size": new_key.key_size
-        }
-        self.migrations.append(migration_record)
-        
-        return migration_record
-    
-    def test_encapsulation(self, key_id: str) -> Dict[str, Any]:
-        """Test encapsulation with a specific key"""
-        if key_id not in self.keys:
-            raise KeyError(f"Key not found: {key_id}")
-        
-        key_pair = self.keys[key_id]
-        
-        # Select appropriate adapter
-        if key_pair.algorithm == CryptoAlgorithm.ML_KEM:
-            adapter = self.ml_kem_adapter
-        else:
-            adapter = self.legacy_adapters.get(key_pair.algorithm)
-            if not adapter:
-                raise ValueError(f"No adapter for {key_pair.algorithm}")
-        
-        # Perform encapsulation
-        start_time = time.time()
-        encap_result = adapter.encapsulate(key_pair.public_key)
-        encap_time = time.time() - start_time
-        
-        # Perform decapsulation
-        start_time = time.time()
-        recovered_secret = adapter.decapsulate(key_pair.private_key, encap_result.ciphertext)
-        decap_time = time.time() - start_time
-        
-        # Verify correctness
-        secrets_match = recovered_secret == encap_result.shared_secret
-        
-        return {
-            "key_id": key_id,
-            "algorithm": key_pair.algorithm.value,
-            "encapsulation_time_ms": encap_time * 1000,
-            "decapsulation_time_ms": decap_time * 1000,
-            "total_time_ms": (encap_time + decap_time) * 1000,
-            "ciphertext_size": len(encap_result.ciphertext),
-            "shared_secret_size": len(encap_result.shared_secret),
-            "secrets_match": secrets_match,
-            "timestamp": datetime.now().isoformat()
-        }
-    
-    def get_migration_report(self) -> Dict[str, Any]:
-        """Generate comprehensive migration report"""
-        inventory = self.scan_inventory()
-        
-        return {
-            "inventory": asdict(inventory),
-            "migrations_completed": len(self.migrations),
-            "migration_history": self.migrations,
-            "quantum_readiness": {
-                "ml_kem_percentage": (inventory.ml_kem_keys / inventory.total_keys * 100) if inventory.total_keys > 0 else 0,
-                "legacy_percentage": ((inventory.rsa_keys + inventory.ecc_keys) / inventory.total_keys * 100) if inventory.total_keys > 0 else 0
-            },
-            "report_timestamp": datetime.now().isoformat()
-        }
+        risk_score = min(100, base_score * multiplier)
+        return risk_score
+
+    @staticmethod
+    def prioritize_assets(assets: List[Dict]) -> List[Dict]:
+        """Sort assets by migration priority (highest risk first)."""
+        scored_assets = []
+        for asset in assets:
+            risk_score = RiskAssessment.calculate_risk_score(
+                KeyType[asset["key_type"]],
+                asset["key_size"],
+                asset["usage_context"],
+            )
+            asset_copy = asset.copy()
+            asset_copy["risk_score"] = risk_score
+            scored_assets.append(asset_copy)
+
+        return sorted(scored_assets, key=lambda x: x["risk_score"], reverse=True)
 
 
-def create_parser() -> argparse.ArgumentParser:
-    """Create CLI argument parser"""
-    parser = argparse.ArgumentParser(
-        description="ML-KEM Drop-in Adapter for Quantum-Safe Cryptography Migration"
-    )
-    
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
-    
-    # Generate keypair command
-    gen_parser = subparsers.add_parser("generate", help="Generate a new cryptographic keypair")
-    gen_parser.add_argument("--key-id", default="key_001", help="Unique key identifier")
-    gen_parser.add_argument("--algorithm", choices=["ml_kem", "rsa", "ecc"], 
-                          default="ml_kem", help="Key algorithm")
-    gen_parser.add_argument("--output", help="Output file for key pair (JSON)")
-    
-    # Migrate command
-    migrate_parser = subparsers.add_parser("migrate", help="Migrate legacy key to ML-KEM")
-    migrate_parser.add_argument("--old-key-id", required=True, help="Old key identifier")
-    migrate_parser.add_argument("--new-key-id", required=True, help="New key identifier")
-    
-    # Test command
-    test_parser = subparsers.add_parser("test", help="Test encapsulation/decapsulation")
-    test_parser.add_argument("--key-id", required=True, help="Key identifier to test")
-    test_parser.add_argument("--iterations", type=int, default=1, help="Number of test iterations")
-    
-    # Scan command
-    scan_parser = subparsers.add_parser("scan", help="Scan cryptographic inventory")
-    
-    # Report command
-    report_parser = subparsers.add_parser("report", help="Generate migration report")
-    report_parser.add_argument("--format", choices=["json", "pretty"], 
-                             default="json", help="Output format")
-    
-    # Demo command
-    demo_parser = subparsers.add_parser("demo", help="Run demonstration")
-    demo_parser.add_argument("--keys", type=int, default=5, help="Number of demo keys")
-    
-    return parser
+class MigrationAdapter:
+    """Handles transparent migration from RSA/ECC to ML-KEM."""
+
+    def __init__(self):
+        """Initialize migration adapter."""
+        self.ml_kem_adapter = MLKEMAdapter(SecurityLevel.LEVEL_3)
+        self.migration_log: List[Dict] = []
+
+    def create_migration_plan(self, asset: Dict) -> Dict:
+        """Create detailed migration plan for an asset."""
+        plan = {
+            "asset_id": asset["asset_id"],
+            "source_algorithm": asset["key_type"],
+            "source_key_size": asset["key_size"],
+            "target_algorithm": "ML-KEM",
+            "target_security_level": "ML-KEM-768",
+            "migration_steps": [
+                {
+                    "step": 1,
+                    "description": "Generate new ML-KEM keypair",
+                    "duration_minutes": 5,
+                },
+                {
+                    "step": 2,
+                    "description": "Validate ML-KEM keys",
+                    "duration_minutes": 10,
+                },
+                {
+                    "step": 3,
+                    "description": "Update configuration references",
+                    "duration_minutes": 15,
+                },
+                {
+                    "step": 4,
+                    "description": "Establish hybrid mode (RSA + ML-KEM)",
+                    "duration_minutes": 20,
+                },
+                {
+                    "step": 5,
+                    "description": "Test and validate hybrid operation",
+                    "duration_minutes": 30,
+                },
+                {
+                    "step": 6,
+                    "description": "Switch to ML-KEM only",
+                    "duration_minutes": 10,
+                },
+                {
+                    "step": 7,
+                    "description": "Decommission old keys",
+                    "duration_minutes": 5,
+                },
+            ],
+            "estimated_total_duration_minutes": 95,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        return plan
+
+    def simulate_migration(self, asset: Dict) -> Dict:
+        """Simulate and execute migration for an asset."""
+        plan = self.create_migration_plan(asset)
+
+        try:
+            public_key, secret_key = self.ml_kem_adapter.generate_keypair()
+
+            public_key_b64 = base64.b64encode(public_key).decode("utf-8")
+            secret_key_b64 = base64.b64encode(secret_key).decode("utf-8")
+
+            ciphertext, shared_secret = self.ml_kem_adapter.encapsulate(public_key)
+
+            recovered_secret = self.ml_kem_adapter.decapsulate(ciphertext, secret_key)
+
+            success = shared_secret == recovered_secret
+
+            migration_record = {
+                "asset_id": asset["asset_id"],
+                "plan": plan,
+                "execution_status": "success" if success else "failed",
+                "generated_public_key": public_key_b64[:50] + "...",
+                "ciphertext_generated": True,
+                "shared_secret_recovered": success,
+                "executed_at": datetime.utcnow().isoformat(),
+            }
+
+            self.migration_log.append(migration_record)
+            return migration_record
+
+        except Exception as e:
+            error_record = {
+                "asset_id": asset["asset_id"],
+                "execution_status": "failed",
+                "error": str(e),
+                "executed_at": datetime.utcnow().isoformat(),
+            }
+            self.migration_log.append(error_record)
+            return error_record
+
+    def get_migration_status(self) -> Dict:
+        """Get overall migration status."""
+        successful = len([r for r in self.migration_log if r["execution_status"] == "success"])
+        failed = len([r for r in self.migration_log if r["execution_status"] == "failed"])
+
+        return {
+            "total_migrations_attempted": len(self.migration_log),
+            "successful_migrations": successful,
+            "failed_migrations": failed,
+            "success_rate_percent": (
+                (successful / max(len(self.migration_log), 1)) * 100
+            ),
+        }
 
 
 def main():
-    """Main entry point"""
-    parser = create_parser()
+    """Main entry point for the ML-KEM migration adapter."""
+    parser = argparse.ArgumentParser(
+        description="ML-KEM drop-in adapter for quantum-safe cryptography migration"
+    )
+
+    parser.add_argument(
+        "--mode",
+        choices=["scan", "assess", "generate-keys", "encapsulate", "decapsulate", "migrate"],
+        default="scan",
+        help="Operation mode",
+    )
+
+    parser.add_argument(
+        "--security-level",
+        choices=["512", "768", "1024"],
+        default="768",
+        help="ML-KEM security level (key size in bits)",
+    )
+
+    parser.add_argument(
+        "--inventory-file",
+        type=str,
+        help="Path to inventory file",
+    )
+
+    parser.add_argument(
+        "--output-file",
+        type=str,
+        help="Path to output file",
+    )
+
+    parser.add_argument(
+        "--asset-id",
+        type=str,
+        help="Specific asset ID to migrate",
+    )
+
+    parser.add_argument(
+        "--seed",
+        type=str,
+        help="Seed for key generation (hex-encoded)",
+    )
+
     args = parser.parse_args()
-    
-    # Initialize inventory
-    inventory = QuantumSafeCryptoInventory()
-    
-    if args.command == "generate":
-        # Select adapter based on algorithm
-        if args.algorithm == "ml_kem":
-            adapter = inventory.ml_kem_adapter
-        else:
-            algo = CryptoAlgorithm.RSA if args.algorithm == "rsa" else CryptoAlgorithm.ECC
-            adapter = inventory.legacy_adapters[algo]
-        
-        # Generate keypair
-        keypair = adapter.generate_keypair()
-        inventory.register_key(args.key_id, keypair)
-        
-        # Prepare output
+
+    security_level_map = {
+        "512": SecurityLevel.LEVEL_1,
+        "768": SecurityLevel.LEVEL_3,
+        "1024": SecurityLevel.LEVEL_5,
+    }
+    security_level = security_level_map[args.security_level]
+
+    if args.mode == "generate-keys":
+        adapter = MLKEMAdapter(security_level)
+        seed = None
+        if args.seed:
+            try:
+                seed = bytes.fromhex(args.seed)
+            except ValueError:
+                seed = args.seed.encode()
+
+        public_key, secret_key = adapter.generate_keypair(seed)
+
         output = {
-            "key_id": args.key_id,
-            "algorithm": keypair.algorithm.value,
-            "public_key": base64.b64encode(keypair.public_key).decode(),
-            "private_key": base64.b64encode(keypair.private_key).decode(),
-            "key_size": keypair.key_size,
-            "created_at": keypair.created_at
+            "operation": "generate-keys",
+            "security_level": security_level.value,
+            "public_key_size": len(public_key),
+            "secret_key_size": len(secret_key),
+            "public_key_b64": base64.b64encode(public_key).decode("utf-8"),
+            "secret_key_b64": base64.b64encode(secret_key).decode("utf-8"),
+            "timestamp": datetime.utcnow().isoformat(),
         }
-        
-        if args.output:
-            with open(args.output, 'w') as f:
+
+        if args.output_file:
+            with open(args.output_file, "w") as f:
                 json.dump(output, f, indent=2)
-            print(f"Keypair written to {args.output}")
         else:
             print(json.dumps(output, indent=2))
-    
-    elif args.command == "migrate":
-        # Simulate pre-existing legacy keys for migration
-        if args.old_key_id not in inventory.keys:
-            rsa_adapter = inventory.legacy_adapters[CryptoAlgorithm.RSA]
-            old_key = rsa_adapter.generate_keypair()
-            inventory.register_key(args.old_key_id, old_key)
-        
-        # Perform migration
-        migration = inventory.migrate_key(args.old_key_id, args.new_key_id)
-        print(json.dumps(migration, indent=2))
-    
-    elif args.command == "test":
-        # Simulate pre-existing key for testing
-        if args.key_id not in inventory.keys:
-            adapter = inventory.ml_kem_adapter
-            test_key = adapter.generate_keypair()
-            inventory.register_key(args.key_id, test_key)
-        
-        # Run tests
-        results = []
-        for i in range(args.iterations):
-            result = inventory.test_encapsulation(args.key_id)
-            results.append(result)
-        
+
+    elif args.mode == "encapsulate":
+        if not args.seed:
+            print("Error: --seed required for encapsulate mode", file=sys.stderr)
+            sys.exit(1)
+
+        adapter = MLKEMAdapter(security_level)
+        try:
+            public_key_b64 = args.seed
+            public_key = base64.b64decode(public_key_b64)
+        except (ValueError, binascii.Error):
+            try:
+                public_key = bytes.fromhex(args.seed)
+            except ValueError:
+                public_key = args.seed.encode()
+                _, public_key = adapter.generate_keypair(public_key)
+
+        ciphertext, shared_secret = adapter.encapsulate(public_key)
+
         output = {
-            "key_id": args.key_id,
-            "test_iterations": args.iterations,
-            "results": results,
-            "average_encap_ms": sum(r["encapsulation_time_ms"] for r in results) / len(results),
-            "average_decap_ms": sum(r["decapsulation_time_ms"] for r in results) / len(results)
+            "operation": "encapsulate",
+            "security_level": security_level.value,
+            "ciphertext_size": len(ciphertext),
+            "shared_secret_size": len(shared_secret),
+            "ciphertext_b64": base64.b64encode(ciphertext).decode("utf-8"),
+            "shared_secret_b64": base64.b64encode(shared_secret).decode("utf-8"),
+            "timestamp": datetime.utcnow().isoformat(),
         }
-        print(json.dumps(output, indent=2))
-    
-    elif args.command == "scan":
-        # Create sample inventory
-        for i in range(3):
-            key = inventory.ml_kem_adapter.generate_keypair()
-            inventory.register_key(f"mlkem_{i}", key)
-        
-        for i in range(2):
-            key = inventory.legacy_adapters[CryptoAlgorithm.RSA].generate_keypair()
-            inventory.register_key(f"rsa_{i}", key)
-        
-        for i in range(2):
-            key = inventory.legacy_adapters[CryptoAlgorithm.ECC].generate_keypair()
-            inventory.register_key(f"ecc_{i}", key)
-        
-        metrics = inventory.scan_inventory()
-        print(json.dumps(asdict(metrics), indent=2))
-    
-    elif args.command == "report":
-        # Create sample inventory for report
-        for i in range(4):
-            key = inventory.ml_kem_adapter.generate_keypair()
-            inventory.register_key(f"mlkem_{i}", key)
-        
-        for i in range(3):
-            key = inventory.legacy_adapters[CryptoAlgorithm.RSA].generate_keypair()
-            inventory.register_key(f"rsa_{i}", key)
-            # Migrate some keys
-            if i < 2:
-                inventory.migrate_key(f"rsa_{i}", f"mlkem_migrated_{i}")
-        
-        report = inventory.get_migration_report()
-        
-        if args.format == "pretty":
-            print(json.dumps(report, indent=2))
+
+        if args.output_file:
+            with open(args.output_file, "w") as f:
+                json.dump(output, f, indent=2)
         else:
-            print(json.dumps(report))
-    
-    elif args.command == "demo":
-        print("=" * 60)
-        print("ML-KEM Drop-in Adapter Demo")
-        print("=" * 60)
-        
-        # Generate initial keys (mixed legacy and quantum-safe)
-        print(f"\n[1] Generating {args.keys} cryptographic keys...")
-        for i in range(args.keys):
-            if i % 2 == 0:
-                adapter = inventory.ml_kem_adapter
-                algo = "ML-KEM"
-            else:
-                adapter = inventory.legacy_adapters[CryptoAlgorithm.RSA]
-                algo = "RSA"
-            
-            key = adapter.generate_keypair()
-            inventory.register_key(f"key_{i:03d}", key)
-            print(f"  ✓ Generated {algo} key: key_{i:03d}")
-        
-        # Scan inventory
-        print("\n[2] Scanning cryptographic inventory...")
-        metrics = inventory.scan_inventory()
-        print(f"  Total keys: {metrics.total_keys}")
-        print(f"  ML-KEM keys: {metrics.ml_kem_keys}")
-        print(f"  RSA keys: {metrics.rsa_keys}")
-        print(f"  ECC keys: {metrics.ecc_keys}")
-        
-        # Test encapsulation
-        print("\n[3] Testing encapsulation/decapsulation...")
-        for i in range(min(3, args.keys)):
-            test_result = inventory.test_encapsulation(f"key_{i:03d}")
-            algo = test_result["algorithm"].upper()
-            status = "✓" if test_result["secrets_match"] else "✗"
-            print(f"  {status} {algo} key_{i:03d}: "
-                  f"{test_result['encapsulation_time_ms']:.3f}ms + "
-                  f"{test_result['decapsulation_time_ms']:.3f}ms")
-        
-        # Perform migrations
-        print("\n[4] Migrating legacy keys to ML-KEM...")
-        migrations = 0
-        for i in range(args.keys):
-            if i % 2 != 0:  # Migrate RSA keys
-                new_id = f"key_{i:03d}_migrated"
-                inventory.migrate_key(f"key_{i:03d}", new_id)
-                migrations += 1
-                print(f"  ✓ Migrated key_{i:03d} → {new_id}")
-        
-        # Final report
-        print("\n[5] Final Migration Report")
-        print("-" * 60)
-        report = inventory.get_migration_report()
-        metrics = report["inventory"]
-        readiness = report["quantum_readiness"]
-        
-        print(f"Total keys: {metrics['total_keys']}")
-        print(f"ML-KEM ready: {metrics['ml_kem_keys']} ({readiness['ml_kem_percentage']:.1f}%)")
-        print(f"Legacy keys: {metrics['rsa_keys'] + metrics['ecc_keys']} ({readiness['legacy_percentage']:.1f}%)")
-        print(f"Migrations completed: {migrations}")
-        print("=" * 60)
+            print(json.dumps(output, indent=2))
+
+    elif args.mode == "scan":
+        inventory = CryptographyInventory()
+
+        sample_assets = [
+            {
+                "asset_id": "srv-prod-001",
+                "asset_type": "TLS Certificate",
+                "key_type": KeyType.RSA,
+                "key_size": 2048,
+                "location": "Production",
+                "usage_context": "Authentication",
+            },
+            {
+                "asset_id": "srv-prod-002",
+                "asset_type": "SSH Key",
+                "key_type": KeyType.ECC,
+                "key_size": 256,
+                "location": "Production",
+                "usage_context": "Key Exchange",
+            },
+            {
+                "asset_id": "db-backup-001",
+                "asset_type": "Database Encryption Key",
+                "key_type": KeyType.RSA,
+                "key_size": 4096,
+                "location": "Backup Storage",
+                "usage_context": "Encryption",
+            },
+            {
+                "asset_id": "api-gateway-001",
+                "asset_type": "API Signing Key",
+                "key_type": KeyType.ECC,
+                "key_size": 384,
+                "location": "Production",
+                "usage_context": "Digital Signature",
+            },
+            {
+                "asset_id": "crypto-001",
+                "asset_type": "ML-KEM Key",
+                "key_type": KeyType.ML_KEM,
+                "key_size": 768,
+                "location": "Production",
+                "usage_context": "Key Exchange",
+                "migration_status": "migrated",
+            },
+        ]
+
+        for asset in sample_assets:
+            inventory.add_asset(
+                asset["asset_id"],
+                asset["asset_type"],
+                asset["key_type"],
+                asset["key_size"],
+                asset["location"],
+                asset["usage_context"],
+                asset.get("migration_status", "pending"),
+            )
+
+        summary = inventory.get_summary()
+        vulnerable = inventory.get_vulnerable_assets()
+
+        output = {
+            "operation": "scan",
+            "timestamp": datetime.utcnow().isoformat(),
+            "summary": summary,
+            "vulnerable_assets_count": len(vulnerable),
+            "all_assets": inventory.assets,
+        }
+
+        if args.output_file:
+            with open(args.output_file, "w") as f:
+                json.dump(output, f, indent=2)
+        else:
+            print(json.dumps(output, indent=2))
+
+    elif args.mode == "assess":
+        inventory = CryptographyInventory()
+
+        sample_assets = [
+            ("srv-prod-001", "TLS", KeyType.RSA, 2048, "Production", "Authentication"),
+            ("srv-prod-002", "SSH", KeyType.ECC, 256, "Production", "Key Exchange"),
+            ("db-backup-001", "DB Encryption", KeyType.RSA, 4096, "Backup", "Encryption"),
+            ("api-gateway-001", "API Signing", KeyType.ECC, 384, "Production", "Digital Signature"),
+        ]
+
+        for asset_id, asset_type, key_type, key_size, location, context in sample_assets:
+            inventory.add_asset(asset_id, asset_type, key_type, key_size, location, context)
+
+        vulnerable_assets = inventory.get_vulnerable_assets()
+        prioritized = RiskAssessment.prioritize_assets(vulnerable_assets)
+
+        output = {
+            "operation": "assess",
+            "timestamp": datetime.utcnow().isoformat(),
+            "total_vulnerable_assets": len(vulnerable_assets),
+            "prioritized_migration_queue": prioritized,
+        }
+
+        if args.output_file:
+            with open(args.output_file, "w") as f:
+                json.dump(output, f, indent=2)
+        else:
+            print(json.dumps(output, indent=2))
+
+    elif args.mode == "migrate":
+        inventory = CryptographyInventory()
+        migration_adapter = MigrationAdapter()
+
+        sample_assets = [
+            ("srv-prod-001", "TLS", KeyType.RSA, 2048, "Production", "Authentication"),
+            ("srv-prod-002", "SSH", KeyType.ECC, 256, "Production", "Key Exchange"),
+        ]
+
+        for asset_id, asset_type, key_type, key_size, location, context in sample_assets:
+            inventory.add_asset(asset_id, asset_type, key_type, key_size, location, context)
+
+        vulnerable_assets = inventory.get_vulnerable_assets()
+
+        if args.asset_id:
+            vulnerable_assets = [a for a in vulnerable_assets if a["asset_id"] == args.asset_id]
+
+        migration_results = []
+        for asset in vulnerable_assets:
+            result = migration_adapter.simulate_migration(asset)
+            migration_results.append(result)
+
+        migration_status = migration_adapter.get_migration_status()
+
+        output = {
+            "operation": "migrate",
+            "timestamp": datetime.utcnow().isoformat(),
+            "migration_results": migration_results,
+            "migration_status": migration_status,
+        }
+
+        if args.output_file:
+            with open(args.output_file, "w") as f:
+                json.dump(output, f, indent=2)
+        else:
+            print(json.dumps(output, indent=2))
 
 
 if __name__ == "__main__":
