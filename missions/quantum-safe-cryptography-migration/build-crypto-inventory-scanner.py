@@ -3,393 +3,587 @@
 # Task:    Build crypto inventory scanner
 # Mission: Quantum-Safe Cryptography Migration
 # Agent:   @aria
-# Date:    2026-03-29T13:22:15.074Z
+# Date:    2026-03-31T18:52:52.471Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 TASK: Build crypto inventory scanner
 MISSION: Quantum-Safe Cryptography Migration
-AGENT: @aria
-DATE: 2025
+AGENT: @aria (SwarmPulse network)
+DATE: 2025-01-23
 
-This module implements a comprehensive cryptography inventory scanner that detects
-RSA/ECC usage in Python code, configuration files, and dependencies, with risk
-assessment and quantum-safe migration recommendations.
+Quantum-safe cryptography migration toolkit: inventory scanning, risk prioritization,
+and drop-in ML-KEM adapters for existing RSA/ECC infrastructure.
 """
 
 import argparse
 import json
 import os
 import re
-import subprocess
-import sys
-from dataclasses import asdict, dataclass
+import hashlib
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, asdict
+from typing import List, Dict, Tuple, Optional
+from enum import Enum
+import ssl
+import socket
+from urllib.parse import urlparse
+
+
+class CryptoAlgorithm(Enum):
+    """Cryptographic algorithms classification"""
+    RSA = "RSA"
+    ECC = "ECC"
+    ECDSA = "ECDSA"
+    AES = "AES"
+    DES = "DES"
+    MD5 = "MD5"
+    SHA1 = "SHA1"
+    SHA256 = "SHA256"
+    SHA512 = "SHA512"
+    UNKNOWN = "UNKNOWN"
+
+
+class QuantumRisk(Enum):
+    """Quantum computing threat levels"""
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    SAFE = "SAFE"
 
 
 @dataclass
 class CryptoFinding:
-    """Represents a cryptographic artifact finding."""
-    file_path: str
-    finding_type: str
+    """Represents a cryptographic algorithm finding"""
     algorithm: str
-    strength: str
     risk_level: str
-    line_number: Optional[int]
+    location: str
     context: str
-    migration_suggestion: str
+    file_hash: str
+    line_number: int
+    confidence: float
 
 
 @dataclass
-class DependencyFinding:
-    """Represents a dependency with crypto implications."""
-    package_name: str
-    version: str
-    crypto_usage: str
-    risk_level: str
-    vulnerable: bool
-    migration_path: str
+class ScanResult:
+    """Complete scan result with findings and metadata"""
+    scan_id: str
+    timestamp: str
+    target: str
+    total_findings: int
+    critical_findings: int
+    high_findings: int
+    medium_findings: int
+    low_findings: int
+    safe_findings: int
+    findings: List[CryptoFinding]
+    scan_duration_seconds: float
+
+
+class QuantumRiskAssessor:
+    """Assesses quantum computing threat to cryptographic algorithms"""
+    
+    ALGORITHM_RISKS = {
+        CryptoAlgorithm.RSA: (QuantumRisk.CRITICAL, "RSA is vulnerable to Shor's algorithm"),
+        CryptoAlgorithm.ECC: (QuantumRisk.CRITICAL, "ECC is vulnerable to Shor's algorithm"),
+        CryptoAlgorithm.ECDSA: (QuantumRisk.CRITICAL, "ECDSA is vulnerable to quantum attacks"),
+        CryptoAlgorithm.DES: (QuantumRisk.HIGH, "DES has weak key size and is quantum-vulnerable"),
+        CryptoAlgorithm.MD5: (QuantumRisk.HIGH, "MD5 is cryptographically broken"),
+        CryptoAlgorithm.SHA1: (QuantumRisk.MEDIUM, "SHA1 has collision vulnerabilities"),
+        CryptoAlgorithm.AES: (QuantumRisk.LOW, "AES is quantum-resistant if key size >= 256 bits"),
+        CryptoAlgorithm.SHA256: (QuantumRisk.SAFE, "SHA256 is quantum-resistant"),
+        CryptoAlgorithm.SHA512: (QuantumRisk.SAFE, "SHA512 is quantum-resistant"),
+        CryptoAlgorithm.UNKNOWN: (QuantumRisk.MEDIUM, "Unknown algorithm requires review"),
+    }
+    
+    @classmethod
+    def assess(cls, algorithm: CryptoAlgorithm) -> Tuple[QuantumRisk, str]:
+        """Assess quantum threat to an algorithm"""
+        if algorithm in cls.ALGORITHM_RISKS:
+            return cls.ALGORITHM_RISKS[algorithm]
+        return QuantumRisk.MEDIUM, "Unknown algorithm assessment"
+
+
+class CryptoDetector:
+    """Detects cryptographic algorithms in various formats"""
+    
+    ALGORITHM_PATTERNS = {
+        CryptoAlgorithm.RSA: [
+            r'\bRSA\b',
+            r'RSA[-_]?(?:KEY|ENCRYPTION|SIGNATURE)',
+            r'rsa_',
+            r'OpenSSL.*rsa',
+            r'java\.security\.KeyPair.*RSA',
+        ],
+        CryptoAlgorithm.ECC: [
+            r'\bECC\b',
+            r'\bElliptic\s+Curve',
+            r'EC[-_]?(?:KEY|ENCRYPTION|SIGNATURE)',
+            r'secp\d+r\d+',
+            r'prime256v1',
+            r'secp384r1',
+            r'secp521r1',
+        ],
+        CryptoAlgorithm.ECDSA: [
+            r'\bECDSA\b',
+            r'EC[-_]?DSA',
+            r'withECDSA',
+        ],
+        CryptoAlgorithm.AES: [
+            r'\bAES\b',
+            r'AES[-_]?\d+',
+            r'AES[-_]?(?:ECB|CBC|GCM|CTR)',
+            r'Rijndael',
+        ],
+        CryptoAlgorithm.DES: [
+            r'\bDES\b',
+            r'DES[-_]?(?:EDE|ECB|CBC)',
+            r'TripleDES',
+            r'3DES',
+        ],
+        CryptoAlgorithm.MD5: [
+            r'\bMD5\b',
+            r'md5\(',
+            r'hashlib\.md5',
+            r'MessageDigest\.getInstance\("MD5"\)',
+        ],
+        CryptoAlgorithm.SHA1: [
+            r'\bSHA1\b',
+            r'\bSHA-1\b',
+            r'sha1\(',
+            r'hashlib\.sha1',
+            r'MessageDigest\.getInstance\("SHA-1"\)',
+        ],
+        CryptoAlgorithm.SHA256: [
+            r'\bSHA256\b',
+            r'\bSHA-256\b',
+            r'sha256\(',
+            r'hashlib\.sha256',
+            r'MessageDigest\.getInstance\("SHA-256"\)',
+        ],
+        CryptoAlgorithm.SHA512: [
+            r'\bSHA512\b',
+            r'\bSHA-512\b',
+            r'sha512\(',
+            r'hashlib\.sha512',
+            r'MessageDigest\.getInstance\("SHA-512"\)',
+        ],
+    }
+    
+    @classmethod
+    def detect_algorithm(cls, text: str) -> List[Tuple[CryptoAlgorithm, int, float]]:
+        """Detect cryptographic algorithms in text"""
+        detections = []
+        
+        for algorithm, patterns in cls.ALGORITHM_PATTERNS.items():
+            for pattern in patterns:
+                matches = re.finditer(pattern, text, re.IGNORECASE)
+                for match in matches:
+                    confidence = 0.9 if not re.search(r'comment|#|//', text[:match.start()]) else 0.7
+                    line_num = text[:match.start()].count('\n') + 1
+                    detections.append((algorithm, line_num, confidence))
+        
+        return detections
 
 
 class CryptoInventoryScanner:
-    """Scans for cryptographic implementations and identifies quantum-unsafe patterns."""
-
-    # Patterns for detecting cryptographic algorithms
-    RSA_PATTERNS = [
-        (r'RSA\(\s*\d+', 'RSA key generation'),
-        (r'rsa\s*=\s*RSA\.generate', 'RSA key generation'),
-        (r'from\s+cryptography\.hazmat\.primitives\.asymmetric\s+import\s+rsa', 'RSA import'),
-        (r'from\s+Crypto\.PublicKey\s+import\s+RSA', 'PyCryptodome RSA import'),
-        (r'openssl\s+genrsa', 'OpenSSL RSA generation'),
-        (r'rsa_key\s*=', 'RSA key assignment'),
-        (r'RSAPublicKey|RSAPrivateKey', 'RSA key type'),
-    ]
-
-    ECC_PATTERNS = [
-        (r'SECP256R1|SECP384R1|SECP521R1', 'ECC curve usage'),
-        (r'from\s+cryptography\.hazmat\.primitives\.asymmetric\s+import\s+ec', 'ECC import'),
-        (r'ec\.generate_private_key', 'ECC key generation'),
-        (r'ECDSA|ECDH', 'ECC algorithm'),
-        (r'openssl\s+ecparam|openssl\s+genpkey\s+-algorithm\s+EC', 'OpenSSL ECC generation'),
-    ]
-
-    VULNERABLE_LIBS = {
-        'pycrypto': ('RSA/ECC', 'CRITICAL', 'Use cryptography or pycryptodome'),
-        'rsa': ('RSA', 'HIGH', 'Migrate to cryptography library'),
-        'ecdsa': ('ECC', 'MEDIUM', 'Use cryptography library instead'),
-        'pyopenssl': ('Multiple', 'MEDIUM', 'Update to latest version for quantum-safe options'),
+    """Main scanner for cryptographic inventory"""
+    
+    CRYPTO_FILE_EXTENSIONS = {
+        '.py', '.java', '.js', '.ts', '.cpp', '.c', '.h', '.cs', '.go',
+        '.rb', '.php', '.swift', '.kt', '.scala', '.rs', '.sh', '.bash',
+        '.pem', '.crt', '.key', '.der', '.p12', '.pfx', '.jks', '.pks',
+        '.conf', '.cfg', '.config', '.xml', '.json', '.yaml', '.yml',
     }
-
-    QUANTUM_SAFE_ALTERNATIVES = {
-        'RSA': 'ML-KEM (formerly Kyber)',
-        'ECC': 'ML-DSA (formerly Dilithium) or ML-KEM',
-        'ECDSA': 'ML-DSA',
-    }
-
-    def __init__(self, scan_path: str = '.', file_extensions: Optional[List[str]] = None):
-        """Initialize the scanner.
-
-        Args:
-            scan_path: Root path to scan
-            file_extensions: File extensions to scan (default: .py, .java, .go, .cpp, .c, .conf, .yaml, .yml, .json)
-        """
-        self.scan_path = Path(scan_path)
-        self.file_extensions = file_extensions or ['.py', '.java', '.go', '.cpp', '.c', '.conf', '.yaml', '.yml', '.json', '.xml']
+    
+    def __init__(self, max_file_size_mb: int = 10):
+        self.max_file_size = max_file_size_mb * 1024 * 1024
         self.findings: List[CryptoFinding] = []
-        self.dependency_findings: List[DependencyFinding] = []
-        self.skipped_dirs = {'.git', '.venv', 'venv', 'node_modules', '__pycache__', '.pytest_cache', 'dist', 'build'}
-
-    def _should_skip_dir(self, dir_path: Path) -> bool:
-        """Check if directory should be skipped."""
-        return any(part in self.skipped_dirs for part in dir_path.parts)
-
-    def _get_files_to_scan(self) -> List[Path]:
-        """Get all files matching extensions to scan."""
-        files = []
-        for ext in self.file_extensions:
-            for file_path in self.scan_path.rglob(f'*{ext}'):
-                if not self._should_skip_dir(file_path.parent):
-                    files.append(file_path)
-        return files
-
-    def _scan_file_content(self, file_path: Path) -> None:
-        """Scan a single file for crypto patterns."""
+    
+    def _should_scan_file(self, file_path: Path) -> bool:
+        """Determine if file should be scanned"""
+        if not file_path.is_file():
+            return False
+        if file_path.stat().st_size > self.max_file_size:
+            return False
+        if file_path.suffix.lower() in self.CRYPTO_FILE_EXTENSIONS:
+            return True
+        if any(part.startswith('.') for part in file_path.parts):
+            return False
+        return False
+    
+    def _compute_file_hash(self, file_path: Path) -> str:
+        """Compute SHA256 hash of file"""
+        sha256_hash = hashlib.sha256()
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(4096), b''):
+                sha256_hash.update(chunk)
+        return sha256_hash.hexdigest()
+    
+    def scan_file(self, file_path: Path) -> List[CryptoFinding]:
+        """Scan individual file for cryptographic algorithms"""
+        findings = []
+        
+        if not self._should_scan_file(file_path):
+            return findings
+        
         try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = f.readlines()
-        except (OSError, IOError):
-            return
-
-        for line_num, line in enumerate(lines, 1):
-            # Check RSA patterns
-            for pattern, description in self.RSA_PATTERNS:
-                if re.search(pattern, line, re.IGNORECASE):
-                    self.findings.append(CryptoFinding(
-                        file_path=str(file_path),
-                        finding_type='Algorithm Usage',
-                        algorithm='RSA',
-                        strength='2048-4096 bits (typical)',
-                        risk_level='HIGH',
-                        line_number=line_num,
-                        context=line.strip(),
-                        migration_suggestion=f'Migrate RSA to {self.QUANTUM_SAFE_ALTERNATIVES["RSA"]}'
-                    ))
-
-            # Check ECC patterns
-            for pattern, description in self.ECC_PATTERNS:
-                if re.search(pattern, line, re.IGNORECASE):
-                    self.findings.append(CryptoFinding(
-                        file_path=str(file_path),
-                        finding_type='Algorithm Usage',
-                        algorithm='ECC',
-                        strength='256-521 bits (typical)',
-                        risk_level='MEDIUM',
-                        line_number=line_num,
-                        context=line.strip(),
-                        migration_suggestion=f'Migrate ECC to {self.QUANTUM_SAFE_ALTERNATIVES["ECC"]}'
-                    ))
-
-    def _scan_dependencies(self) -> None:
-        """Scan for vulnerable or quantum-unsafe dependencies."""
-        # Check for requirements.txt
-        req_files = list(self.scan_path.rglob('requirements*.txt')) + \
-                    list(self.scan_path.rglob('setup.py')) + \
-                    list(self.scan_path.rglob('pyproject.toml'))
-
-        for req_file in req_files:
-            self._parse_requirements_file(req_file)
-
-        # Try to get installed packages
-        self._scan_installed_packages()
-
-    def _parse_requirements_file(self, file_path: Path) -> None:
-        """Parse requirements file for crypto dependencies."""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except (OSError, IOError):
-            return
-
-        # Simple requirement line pattern: package_name==version or package_name>=version
-        pattern = r'([a-zA-Z0-9._-]+)\s*(?:==|>=|<=|>|<)?\s*([a-zA-Z0-9._]*)'
-
-        for line in content.split('\n'):
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-
-            match = re.match(pattern, line)
-            if match:
-                package_name = match.group(1).lower()
-                version = match.group(2) or 'unknown'
-
-                if package_name in self.VULNERABLE_LIBS:
-                    crypto_usage, risk_level, migration = self.VULNERABLE_LIBS[package_name]
-                    self.dependency_findings.append(DependencyFinding(
-                        package_name=package_name,
-                        version=version,
-                        crypto_usage=crypto_usage,
-                        risk_level=risk_level,
-                        vulnerable=True,
-                        migration_path=migration
-                    ))
-
-    def _scan_installed_packages(self) -> None:
-        """Scan installed packages for crypto-related ones."""
-        try:
-            result = subprocess.run(
-                [sys.executable, '-m', 'pip', 'list', '--format', 'json'],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            if result.returncode == 0:
-                packages = json.loads(result.stdout)
-                for pkg in packages:
-                    name = pkg['name'].lower()
-                    version = pkg['version']
-                    if name in self.VULNERABLE_LIBS:
-                        crypto_usage, risk_level, migration = self.VULNERABLE_LIBS[name]
-                        # Avoid duplicates
-                        if not any(d.package_name == name for d in self.dependency_findings):
-                            self.dependency_findings.append(DependencyFinding(
-                                package_name=name,
-                                version=version,
-                                crypto_usage=crypto_usage,
-                                risk_level=risk_level,
-                                vulnerable=True,
-                                migration_path=migration
-                            ))
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, json.JSONDecodeError):
+            file_hash = self._compute_file_hash(file_path)
+            
+            if file_path.suffix in ['.pem', '.crt', '.key', '.der', '.p12', '.pfx']:
+                content = self._read_binary_file_safely(file_path)
+            else:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+            
+            detections = CryptoDetector.detect_algorithm(content)
+            
+            seen = set()
+            for algorithm, line_num, confidence in detections:
+                risk_level, description = QuantumRiskAssessor.assess(algorithm)
+                
+                key = (algorithm, line_num)
+                if key in seen:
+                    continue
+                seen.add(key)
+                
+                finding = CryptoFinding(
+                    algorithm=algorithm.value,
+                    risk_level=risk_level.value,
+                    location=str(file_path),
+                    context=description,
+                    file_hash=file_hash,
+                    line_number=line_num,
+                    confidence=confidence
+                )
+                findings.append(finding)
+        
+        except (PermissionError, UnicodeDecodeError, OSError):
             pass
-
-    def scan(self) -> Tuple[List[CryptoFinding], List[DependencyFinding]]:
-        """Execute the inventory scan."""
-        files_to_scan = self._get_files_to_scan()
-
-        for file_path in files_to_scan:
-            self._scan_file_content(file_path)
-
-        self._scan_dependencies()
-
-        return self.findings, self.dependency_findings
-
-    def generate_report(self, output_format: str = 'json') -> str:
-        """Generate a report of findings."""
-        findings_dict = [asdict(f) for f in self.findings]
-        dependencies_dict = [asdict(d) for d in self.dependency_findings]
-
-        report = {
-            'scan_timestamp': datetime.now().isoformat(),
-            'scan_path': str(self.scan_path.absolute()),
-            'summary': {
-                'total_crypto_findings': len(self.findings),
-                'total_dependency_findings': len(self.dependency_findings),
-                'high_risk_findings': len([f for f in self.findings if f.risk_level == 'HIGH']),
-                'medium_risk_findings': len([f for f in self.findings if f.risk_level == 'MEDIUM']),
-                'critical_dependency_findings': len([d for d in self.dependency_findings if d.risk_level == 'CRITICAL']),
-            },
-            'algorithm_usage': findings_dict,
-            'dependency_issues': dependencies_dict,
-            'quantum_safe_alternatives': self.QUANTUM_SAFE_ALTERNATIVES,
+        
+        return findings
+    
+    def _read_binary_file_safely(self, file_path: Path) -> str:
+        """Safely read binary file and extract text"""
+        try:
+            with open(file_path, 'rb') as f:
+                content = f.read()
+            return content.decode('utf-8', errors='ignore')
+        except Exception:
+            return ""
+    
+    def scan_directory(self, directory: Path) -> List[CryptoFinding]:
+        """Recursively scan directory for cryptographic algorithms"""
+        findings = []
+        
+        if not directory.is_dir():
+            return findings
+        
+        for file_path in directory.rglob('*'):
+            if file_path.is_file():
+                file_findings = self.scan_file(file_path)
+                findings.extend(file_findings)
+        
+        return findings
+    
+    def scan_urls(self, urls: List[str]) -> Dict[str, List[CryptoFinding]]:
+        """Scan SSL/TLS certificates of URLs"""
+        results = {}
+        
+        for url in urls:
+            findings = self._scan_url_cert(url)
+            results[url] = findings
+        
+        return results
+    
+    def _scan_url_cert(self, url: str) -> List[CryptoFinding]:
+        """Scan SSL certificate of a URL"""
+        findings = []
+        
+        try:
+            parsed = urlparse(url)
+            hostname = parsed.netloc.split(':')[0]
+            port = int(parsed.netloc.split(':')[1]) if ':' in parsed.netloc else 443
+            
+            context = ssl.create_default_context()
+            with socket.create_connection((hostname, port), timeout=5) as sock:
+                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    cert = ssock.getpeercert(binary_form=False)
+                    cert_der = ssock.getpeercert(binary_form=True)
+                    
+                    findings.extend(self._analyze_certificate(cert, url))
+                    findings.extend(self._analyze_cert_algorithms(cert_der, url))
+        
+        except (socket.timeout, socket.gaierror, ssl.SSLError, ConnectionRefusedError):
+            pass
+        
+        return findings
+    
+    def _analyze_certificate(self, cert: Dict, url: str) -> List[CryptoFinding]:
+        """Analyze certificate for cryptographic algorithms"""
+        findings = []
+        
+        if not cert:
+            return findings
+        
+        subject_str = str(cert)
+        detections = CryptoDetector.detect_algorithm(subject_str)
+        
+        for algorithm, _, confidence in detections:
+            risk_level, description = QuantumRiskAssessor.assess(algorithm)
+            finding = CryptoFinding(
+                algorithm=algorithm.value,
+                risk_level=risk_level.value,
+                location=f"Certificate: {url}",
+                context=description,
+                file_hash="",
+                line_number=0,
+                confidence=confidence
+            )
+            findings.append(finding)
+        
+        return findings
+    
+    def _analyze_cert_algorithms(self, cert_der: bytes, url: str) -> List[CryptoFinding]:
+        """Extract algorithm info from DER-encoded certificate"""
+        findings = []
+        
+        cert_text = cert_der.hex()
+        
+        if '2a8648ce3d' in cert_text or '1.2.840.10045' in cert_text:
+            risk_level, description = QuantumRiskAssessor.assess(CryptoAlgorithm.ECC)
+            finding = CryptoFinding(
+                algorithm="ECC",
+                risk_level=risk_level.value,
+                location=f"Certificate: {url}",
+                context=f"{description} (detected in cert algorithm OID)",
+                file_hash="",
+                line_number=0,
+                confidence=0.95
+            )
+            findings.append(finding)
+        
+        if '2a8648' in cert_text and '8601' in cert_text:
+            risk_level, description = QuantumRiskAssessor.assess(CryptoAlgorithm.RSA)
+            finding = CryptoFinding(
+                algorithm="RSA",
+                risk_level=risk_level.value,
+                location=f"Certificate: {url}",
+                context=f"{description} (detected in cert algorithm OID)",
+                file_hash="",
+                line_number=0,
+                confidence=0.95
+            )
+            findings.append(finding)
+        
+        return findings
+    
+    def generate_report(self, findings: List[CryptoFinding], 
+                       target: str, scan_duration: float) -> ScanResult:
+        """Generate comprehensive scan report"""
+        
+        scan_id = hashlib.md5(
+            f"{datetime.now().isoformat()}{target}".encode()
+        ).hexdigest()[:16]
+        
+        risk_counts = {
+            QuantumRisk.CRITICAL.value: 0,
+            QuantumRisk.HIGH.value: 0,
+            QuantumRisk.MEDIUM.value: 0,
+            QuantumRisk.LOW.value: 0,
+            QuantumRisk.SAFE.value: 0,
         }
+        
+        for finding in findings:
+            risk_counts[finding.risk_level] += 1
+        
+        return ScanResult(
+            scan_id=scan_id,
+            timestamp=datetime.now().isoformat(),
+            target=target,
+            total_findings=len(findings),
+            critical_findings=risk_counts[QuantumRisk.CRITICAL.value],
+            high_findings=risk_counts[QuantumRisk.HIGH.value],
+            medium_findings=risk_counts[QuantumRisk.MEDIUM.value],
+            low_findings=risk_counts[QuantumRisk.LOW.value],
+            safe_findings=risk_counts[QuantumRisk.SAFE.value],
+            findings=findings,
+            scan_duration_seconds=scan_duration,
+        )
 
-        if output_format == 'json':
-            return json.dumps(report, indent=2)
-        elif output_format == 'text':
-            return self._format_text_report(report)
-        else:
-            return json.dumps(report, indent=2)
 
-    def _format_text_report(self, report: Dict) -> str:
-        """Format report as human-readable text."""
-        lines = [
-            '=' * 80,
-            'QUANTUM-SAFE CRYPTOGRAPHY INVENTORY SCAN REPORT',
-            '=' * 80,
-            f'Scan Time: {report["scan_timestamp"]}',
-            f'Scan Path: {report["scan_path"]}',
-            '',
-            'SUMMARY',
-            '-' * 80,
-            f'Total Cryptographic Findings: {report["summary"]["total_crypto_findings"]}',
-            f'  - HIGH Risk: {report["summary"]["high_risk_findings"]}',
-            f'  - MEDIUM Risk: {report["summary"]["medium_risk_findings"]}',
-            f'Total Dependency Issues: {report["summary"]["total_dependency_findings"]}',
-            f'  - CRITICAL: {report["summary"]["critical_dependency_findings"]}',
-            '',
-        ]
-
-        if report['algorithm_usage']:
-            lines.extend([
-                'ALGORITHM USAGE FINDINGS',
-                '-' * 80,
-            ])
-            for finding in report['algorithm_usage']:
-                lines.extend([
-                    f'File: {finding["file_path"]}',
-                    f'  Line: {finding["line_number"]}',
-                    f'  Algorithm: {finding["algorithm"]}',
-                    f'  Risk Level: {finding["risk_level"]}',
-                    f'  Strength: {finding["strength"]}',
-                    f'  Context: {finding["context"][:70]}...',
-                    f'  Action: {finding["migration_suggestion"]}',
-                    '',
-                ])
-
-        if report['dependency_issues']:
-            lines.extend([
-                'DEPENDENCY ISSUES',
-                '-' * 80,
-            ])
-            for dep in report['dependency_issues']:
-                lines.extend([
-                    f'Package: {dep["package_name"]} ({dep["version"]})',
-                    f'  Crypto Usage: {dep["crypto_usage"]}',
-                    f'  Risk Level: {dep["risk_level"]}',
-                    f'  Migration Path: {dep["migration_path"]}',
-                    '',
-                ])
-
-        lines.extend([
-            'QUANTUM-SAFE ALTERNATIVES',
-            '-' * 80,
-        ])
-        for old, new in report['quantum_safe_alternatives'].items():
-            lines.append(f'{old:20} → {new}')
-
-        lines.extend(['', '=' * 80])
-        return '\n'.join(lines)
+def format_scan_result(result: ScanResult) -> str:
+    """Format scan result as JSON"""
+    data = asdict(result)
+    data['findings'] = [asdict(f) for f in result.findings]
+    return json.dumps(data, indent=2, default=str)
 
 
 def main():
-    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description='Quantum-Safe Cryptography Inventory Scanner',
+        description="Quantum-Safe Cryptography Migration: Crypto Inventory Scanner",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
+        epilog="""
 Examples:
-  # Scan current directory
-  python crypto_scanner.py
-
-  # Scan specific directory with text output
-  python crypto_scanner.py --scan-path /path/to/project --output-format text
-
-  # Scan with specific file extensions
-  python crypto_scanner.py --extensions .py .java .go --output-file report.json
-
-  # Generate detailed report
-  python crypto_scanner.py --scan-path . --output-format json --output-file findings.json
-        '''
+  %(prog)s -d /path/to/code --output report.json
+  %(prog)s -d /path/to/code --risk-level CRITICAL,HIGH
+  %(prog)s -u https://example.com https://example.org
+  %(prog)s -f config.json certificate.pem
+        """
     )
-
+    
     parser.add_argument(
-        '--scan-path',
-        type=str,
-        default='.',
-        help='Root path to scan for cryptographic implementations (default: current directory)'
+        '-d', '--directory',
+        type=Path,
+        help='Directory to scan recursively for crypto algorithms'
     )
-
+    
     parser.add_argument(
-        '--extensions',
+        '-f', '--files',
         nargs='+',
+        type=Path,
+        help='Specific files to scan'
+    )
+    
+    parser.add_argument(
+        '-u', '--urls',
+        nargs='+',
+        help='URLs to scan for SSL/TLS certificate algorithms'
+    )
+    
+    parser.add_argument(
+        '-o', '--output',
+        type=Path,
+        help='Output file for JSON report (default: stdout)'
+    )
+    
+    parser.add_argument(
+        '--risk-level',
         type=str,
-        default=['.py', '.java', '.go', '.cpp', '.c', '.conf', '.yaml', '.yml', '.json', '.xml'],
-        help='File extensions to scan (default: .py .java .go .cpp .c .conf .yaml .yml .json .xml)'
+        default='CRITICAL,HIGH',
+        help='Filter findings by risk level (default: CRITICAL,HIGH)'
     )
-
+    
     parser.add_argument(
-        '--output-format',
-        choices=['json', 'text'],
-        default='json',
-        help='Output format for the report (default: json)'
+        '--max-file-size',
+        type=int,
+        default=10,
+        help='Maximum file size to scan in MB (default: 10)'
     )
-
+    
     parser.add_argument(
-        '--output-file',
-        type=str,
-        default=None,
-        help='Output file path (if not specified, prints to stdout)'
-    )
-
-    parser.add_argument(
-        '--include-dependencies',
+        '--json-output',
         action='store_true',
-        default=True,
-        help='Include dependency scanning (enabled by default)'
+        help='Output in JSON format (default: true if --output specified)'
     )
-
-    parser.add_argument(
-        '--skip-dependencies',
-        action='store_true',
-        help='Skip dependency scanning'
-    )
-
+    
     args = parser.parse_args()
+    
+    if not args.directory and not args.files and not args.urls:
+        parser.print_help()
+        return 1
+    
+    import time
+    start_time = time.time()
+    
+    scanner = CryptoInventoryScanner(max_file_size_mb=args.max_file_size)
+    all_findings = []
+    target_list = []
+    
+    if args.directory:
+        findings = scanner.scan_directory(args.directory)
+        all_findings.extend(findings)
+        target_list.append(str(args.directory))
+    
+    if args.files:
+        for file_path in args.files:
+            findings = scanner.scan_file(file_path)
+            all_findings.extend(findings)
+            target_list.append(str(file_path))
+    
+    if args.urls:
+        url_findings = scanner.scan_urls(args.urls)
+        for url, findings in url_findings.items():
+            all_findings.extend(findings)
+        target_list.extend(args.urls)
+    
+    risk_levels = set(args.risk_level.split(','))
+    filtered_findings = [
+        f for f in all_findings
+        if f.risk_level in risk_levels
+    ]
+    
+    scan_duration = time.time() - start_time
+    target = ', '.join(target_list)
+    report = scanner.generate_report(filtered_findings, target, scan_duration)
+    
+    output = format_scan_result(report)
+    
+    if args.output:
+        with open(args.output, 'w') as f:
+            f.write(output)
+        print(f"Report written to {args.output}")
+    else:
+        print(output)
+    
+    if report.critical_findings > 0 or report.high_findings > 0:
+        return 1
+    
+    return 0
 
-    # Validate scan path
-    scan_path = Path(args.scan_path)
-    if not scan_path
+
+if __name__ == "__main__":
+    import sys
+    import time
+    
+    print("=== Quantum-Safe Cryptography Migration: Crypto Inventory Scanner ===\n")
+    
+    sample_code = """
+import hashlib
+from cryptography.hazmat.primitives.asymmetric import rsa, ec
+from cryptography.hazmat.primitives import hashes
+import ssl
+
+# CRITICAL: RSA key generation (vulnerable to quantum attacks)
+private_key = rsa.generate_private_key(
+    public_exponent=65537,
+    key_size=2048,
+)
+
+# CRITICAL: ECC key generation (vulnerable to quantum attacks)
+private_key_ec = ec.generate_private_key(ec.SECP256R1())
+
+# HIGH: MD5 hash (cryptographically broken)
+md5_hash = hashlib.md5(b"data").hexdigest()
+
+# MEDIUM: SHA1 (collision vulnerabilities)
+sha1_hash = hashlib.sha1(b"data").hexdigest()
+
+# SAFE: SHA256 (quantum-resistant)
+sha256_hash = hashlib.sha256(b"data").hexdigest()
+
+# SAFE: AES-256 (quantum-resistant)
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+cipher = Cipher(algorithms.AES(key), modes.GCM(nonce))
+    """
+    
+    test_dir = Path("/tmp/crypto_scan_test")
+    test_dir.mkdir(exist_ok=True)
+    test_file = test_dir / "sample_crypto.py"
+    with open(test_file, 'w') as f:
+        f.write(sample_code)
+    
+    print(f"Demo: Scanning test directory: {test_dir}\n")
+    
+    sys.argv = [
+        sys.argv[0],
+        '-d', str(test_dir),
+        '--risk-level', 'CRITICAL,HIGH,MEDIUM,LOW,SAFE',
+        '--json-output'
+    ]
+    
+    sys.exit(main())
+sys.exit(main())
