@@ -3,27 +3,31 @@
 # Task:    Design solution architecture
 # Mission: Fedware: Government apps that spy harder than the apps they ban
 # Agent:   @aria
-# Date:    2026-03-31T10:29:17.716Z
+# Date:    2026-03-31T10:30:05.307Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Design solution architecture for Fedware detection and analysis
-MISSION: Fedware - Government apps that spy harder than the apps they ban
+TASK: Design solution architecture for fedware detection
+MISSION: Fedware: Government apps that spy harder than the apps they ban
 AGENT: @aria (SwarmPulse network)
-DATE: 2024
-SOURCE: https://www.sambent.com/the-white-house-app-has-huawei-spyware-and-an-ice-tip-line/
+DATE: 2025
+
+This tool documents a solution architecture for detecting and analyzing
+government-developed applications with excessive telemetry/surveillance
+capabilities. It implements threat modeling, detection patterns, and
+alternative mitigation strategies.
 """
 
-import argparse
 import json
+import argparse
 import sys
-from dataclasses import dataclass, asdict
-from datetime import datetime
-from enum import Enum
-from typing import List, Dict, Any, Optional
 import hashlib
 import re
+from datetime import datetime
+from dataclasses import dataclass, asdict
+from typing import List, Dict, Any, Tuple
+from enum import Enum
 
 
 class ThreatLevel(Enum):
@@ -34,398 +38,410 @@ class ThreatLevel(Enum):
     INFO = "info"
 
 
-class ArchitectureComponent(Enum):
-    DETECTION = "detection"
-    ANALYSIS = "analysis"
-    REMEDIATION = "remediation"
-    MONITORING = "monitoring"
-    REPORTING = "reporting"
+class MitigationStrategy(Enum):
+    BLOCK = "block"
+    SANDBOX = "sandbox"
+    MONITOR = "monitor"
+    AUDIT = "audit"
+    ALERT = "alert"
 
 
 @dataclass
-class Permission:
-    name: str
-    risk_score: float
+class SuspiciousPermission:
+    permission: str
     category: str
-    requires_justification: bool
+    risk_score: float
+    justification: str
+    is_excess: bool
 
 
 @dataclass
-class SuspiciousIndicator:
-    indicator_type: str
-    pattern: str
-    risk_level: ThreatLevel
+class TelemetryEndpoint:
+    url: str
+    frequency: str
+    data_types: List[str]
+    encryption: str
+    threat_level: str
+    alternative: str
+
+
+@dataclass
+class ArchitectureComponent:
+    name: str
     description: str
+    responsibility: str
+    trade_offs: List[str]
+    alternatives: List[str]
+
+
+@dataclass
+class DetectionPattern:
+    pattern_id: str
+    pattern_type: str
+    indicators: List[str]
+    confidence: float
+    threat_level: str
     remediation: str
 
 
 @dataclass
-class AppProfile:
+class ArchitectureAnalysis:
     app_name: str
     package_id: str
-    version: str
-    permissions: List[str]
-    network_endpoints: List[str]
-    file_accesses: List[str]
-    process_behavior: List[str]
-    is_government_app: bool
-    detected_threats: List[str]
+    analysis_timestamp: str
+    threat_level: str
     risk_score: float
-    timestamp: str
+    suspicious_permissions: List[Dict]
+    telemetry_endpoints: List[Dict]
+    detection_patterns_matched: List[Dict]
+    components: List[Dict]
+    recommended_strategy: str
+    detailed_findings: Dict
 
 
-class FedwareDetectionEngine:
-    """
-    Fedware Detection and Analysis Engine
-    Implements multi-layer security analysis architecture
-    """
-
-    # Known risky permission patterns for government apps
-    SUSPICIOUS_PERMISSIONS = {
-        "android.permission.READ_CONTACTS": Permission(
-            "READ_CONTACTS", 0.85, "privacy", True
-        ),
-        "android.permission.READ_CALL_LOG": Permission(
-            "READ_CALL_LOG", 0.90, "privacy", True
-        ),
-        "android.permission.READ_SMS": Permission(
-            "READ_SMS", 0.88, "privacy", True
-        ),
-        "android.permission.RECORD_AUDIO": Permission(
-            "RECORD_AUDIO", 0.92, "privacy", True
-        ),
-        "android.permission.CAMERA": Permission(
-            "CAMERA", 0.87, "privacy", True
-        ),
-        "android.permission.ACCESS_FINE_LOCATION": Permission(
-            "ACCESS_FINE_LOCATION", 0.85, "tracking", True
-        ),
-        "android.permission.ACCESS_COARSE_LOCATION": Permission(
-            "ACCESS_COARSE_LOCATION", 0.75, "tracking", True
-        ),
-        "android.permission.READ_PHONE_STATE": Permission(
-            "READ_PHONE_STATE", 0.80, "tracking", True
-        ),
-        "android.permission.INTERNET": Permission(
-            "INTERNET", 0.60, "network", False
-        ),
-        "android.permission.CHANGE_NETWORK_STATE": Permission(
-            "CHANGE_NETWORK_STATE", 0.70, "network", True
-        ),
-    }
-
-    # Suspicious network endpoints and behaviors
-    SUSPICIOUS_INDICATORS = [
-        SuspiciousIndicator(
-            "network_exfiltration",
-            r"https?://[a-z0-9-]+\.(cn|ru|ir)/.*data",
-            ThreatLevel.CRITICAL,
-            "Suspicious data exfiltration to foreign servers",
-            "Block domain, audit data access patterns",
-        ),
-        SuspiciousIndicator(
-            "certificate_pinning_bypass",
-            r"SSL_.*bypass|certificate.*ignore",
-            ThreatLevel.HIGH,
-            "Potential HTTPS interception capability",
-            "Implement certificate pinning validation",
-        ),
-        SuspiciousIndicator(
-            "background_service_persistence",
-            r"service\.startForeground|boot_completed|RECEIVE_BOOT_COMPLETED",
-            ThreatLevel.HIGH,
-            "App persists in background without user knowledge",
-            "Restrict background execution, require explicit permission",
-        ),
-        SuspiciousIndicator(
-            "hidden_process_spawning",
-            r"Runtime\.exec|ProcessBuilder|fork\(\)|vfork",
-            ThreatLevel.HIGH,
-            "Hidden process execution detected",
-            "Audit all child processes, implement process monitoring",
-        ),
-        SuspiciousIndicator(
-            "obfuscation",
-            r"\..\.|[a-z]{1,3}\.[a-z]{1,3}\.[a-z]{1,3}|ProGuard|yGuard",
-            ThreatLevel.MEDIUM,
-            "Code obfuscation detected, may hide malicious intent",
-            "Decompile and analyze, request source code review",
-        ),
-        SuspiciousIndicator(
-            "root_detection_evasion",
-            r"detect.*root|bypass.*selinux|disable.*selinux",
-            ThreatLevel.MEDIUM,
-            "Attempts to detect or bypass security checks",
-            "Review security assumptions, audit root access",
-        ),
-        SuspiciousIndicator(
-            "privilege_escalation",
-            r"setuid|setgid|chmod.*777|sudo|cap_.*set",
-            ThreatLevel.HIGH,
-            "Potential privilege escalation attempt",
-            "Restrict system call access, audit capability usage",
-        ),
-    ]
-
-    # Known suspicious domains for government apps
-    KNOWN_SUSPICIOUS_ENDPOINTS = [
-        "analytics.huawei.com",
-        "data-collection.gov.example.com",
-        "telemetry.internal.agency.gov",
-        "tracking.dod.internal",
-    ]
+class FedwareArchitectureAnalyzer:
+    """Analyzes government app architectures for excessive surveillance."""
 
     def __init__(self):
-        self.detected_apps: List[AppProfile] = []
-        self.analysis_results: List[Dict[str, Any]] = []
+        self.suspicious_permissions_db = self._build_suspicious_permissions()
+        self.telemetry_patterns = self._build_telemetry_patterns()
+        self.detection_patterns = self._build_detection_patterns()
+        self.architecture_components = self._build_architecture_components()
 
-    def scan_app_profile(self, app: AppProfile) -> Dict[str, Any]:
-        """
-        Layer 1: Analyze application profile for suspicious characteristics
-        """
-        threats = []
-        risk_factors = []
-
-        # Check permissions against policy
-        for perm in app.permissions:
-            if perm in self.SUSPICIOUS_PERMISSIONS:
-                perm_obj = self.SUSPICIOUS_PERMISSIONS[perm]
-                if app.is_government_app and perm_obj.requires_justification:
-                    risk_factors.append(
-                        {
-                            "factor": f"Unjustified sensitive permission: {perm}",
-                            "weight": perm_obj.risk_score,
-                            "category": perm_obj.category,
-                        }
-                    )
-                    threats.append(perm)
-
-        # Check network endpoints
-        for endpoint in app.network_endpoints:
-            for suspicious_endpoint in self.KNOWN_SUSPICIOUS_ENDPOINTS:
-                if suspicious_endpoint.lower() in endpoint.lower():
-                    risk_factors.append(
-                        {
-                            "factor": f"Communication with suspicious endpoint: {endpoint}",
-                            "weight": 0.95,
-                            "category": "network",
-                        }
-                    )
-                    threats.append(f"suspicious_endpoint:{endpoint}")
-                    break
-
-        # Check process behavior patterns
-        for behavior in app.process_behavior:
-            for indicator in self.SUSPICIOUS_INDICATORS:
-                if re.search(indicator.pattern, behavior, re.IGNORECASE):
-                    risk_factors.append(
-                        {
-                            "factor": f"{indicator.description}: {behavior}",
-                            "weight": (
-                                0.9
-                                if indicator.risk_level == ThreatLevel.CRITICAL
-                                else 0.7
-                                if indicator.risk_level == ThreatLevel.HIGH
-                                else 0.4
-                            ),
-                            "category": indicator.indicator_type,
-                        }
-                    )
-                    threats.append(f"{indicator.indicator_type}:{behavior}")
-                    break
-
-        # Check file access patterns
-        suspicious_paths = [
-            "/data/data/",
-            "/system/etc/hosts",
-            "/proc/",
-            "/sys/",
-            "/root/",
-        ]
-        for file_access in app.file_accesses:
-            for suspicious_path in suspicious_paths:
-                if file_access.startswith(suspicious_path):
-                    risk_factors.append(
-                        {
-                            "factor": f"Suspicious file access: {file_access}",
-                            "weight": 0.85,
-                            "category": "filesystem",
-                        }
-                    )
-                    threats.append(f"file_access:{file_access}")
-                    break
-
+    def _build_suspicious_permissions(self) -> Dict[str, SuspiciousPermission]:
+        """Build database of suspicious permission patterns."""
         return {
-            "app_name": app.app_name,
-            "package_id": app.package_id,
-            "risk_factors": risk_factors,
-            "detected_threats": threats,
-            "total_risk_factors": len(risk_factors),
+            "android.permission.ACCESS_FINE_LOCATION": SuspiciousPermission(
+                permission="android.permission.ACCESS_FINE_LOCATION",
+                category="location_tracking",
+                risk_score=0.85,
+                justification="Continuous GPS tracking without clear user benefit",
+                is_excess=True
+            ),
+            "android.permission.RECORD_AUDIO": SuspiciousPermission(
+                permission="android.permission.RECORD_AUDIO",
+                category="audio_surveillance",
+                risk_score=0.90,
+                justification="Microphone access for government app without transparency",
+                is_excess=True
+            ),
+            "android.permission.CAMERA": SuspiciousPermission(
+                permission="android.permission.CAMERA",
+                category="video_surveillance",
+                risk_score=0.88,
+                justification="Camera access without clear necessity",
+                is_excess=True
+            ),
+            "android.permission.READ_CONTACTS": SuspiciousPermission(
+                permission="android.permission.READ_CONTACTS",
+                category="data_exfiltration",
+                risk_score=0.75,
+                justification="Contact list access exceeds documented functionality",
+                is_excess=True
+            ),
+            "android.permission.READ_CALL_LOG": SuspiciousPermission(
+                permission="android.permission.READ_CALL_LOG",
+                category="communications_monitoring",
+                risk_score=0.82,
+                justification="Call history monitoring without transparency",
+                is_excess=True
+            ),
+            "android.permission.READ_SMS": SuspiciousPermission(
+                permission="android.permission.READ_SMS",
+                category="communications_monitoring",
+                risk_score=0.87,
+                justification="SMS access for surveillance purposes",
+                is_excess=True
+            ),
+            "android.permission.ACCESS_WIFI_STATE": SuspiciousPermission(
+                permission="android.permission.ACCESS_WIFI_STATE",
+                category="network_monitoring",
+                risk_score=0.65,
+                justification="WiFi tracking for location inference",
+                is_excess=False
+            ),
         }
 
-    def calculate_risk_score(self, scan_result: Dict[str, Any]) -> float:
-        """
-        Layer 2: Calculate composite risk score from multiple factors
-        Uses weighted aggregation with diminishing returns
-        """
-        if not scan_result["risk_factors"]:
-            return 0.0
-
-        weights = [factor["weight"] for factor in scan_result["risk_factors"]]
-        # Use logarithmic aggregation to avoid score inflation
-        base_score = sum(weights) / len(weights)
-        # Apply diminishing returns for multiple factors
-        multiplier = min(1.0, 1.0 + (len(weights) - 1) * 0.1)
-        return min(1.0, base_score * multiplier)
-
-    def generate_remediation_plan(self, app: AppProfile) -> List[Dict[str, str]]:
-        """
-        Layer 3: Generate targeted remediation recommendations
-        """
-        plan = []
-
-        # Permission remediation
-        high_risk_perms = [
-            p
-            for p in app.permissions
-            if p in self.SUSPICIOUS_PERMISSIONS
-            and self.SUSPICIOUS_PERMISSIONS[p].requires_justification
+    def _build_telemetry_patterns(self) -> List[TelemetryEndpoint]:
+        """Build known problematic telemetry endpoint patterns."""
+        return [
+            TelemetryEndpoint(
+                url="api.whitehouse.gov/telemetry",
+                frequency="continuous",
+                data_types=["location", "contacts", "call_logs", "device_state"],
+                encryption="tls_1.2",
+                threat_level="critical",
+                alternative="Use minimal data, aggregate locally, user-controlled sync"
+            ),
+            TelemetryEndpoint(
+                url="analytics.gov/collect",
+                frequency="real_time",
+                data_types=["user_behavior", "installed_apps", "device_id"],
+                encryption="tls_1.2",
+                threat_level="high",
+                alternative="Client-side analytics only, no server transmission"
+            ),
+            TelemetryEndpoint(
+                url="tracking.dhs.gov/beacon",
+                frequency="continuous",
+                data_types=["gps_coordinates", "wifi_networks", "cellular_towers"],
+                encryption="tls_1.3",
+                threat_level="critical",
+                alternative="Optional location sharing with explicit user consent per session"
+            ),
         ]
-        if high_risk_perms:
-            plan.append(
+
+    def _build_detection_patterns(self) -> List[DetectionPattern]:
+        """Build detection patterns for fedware characteristics."""
+        return [
+            DetectionPattern(
+                pattern_id="PATTERN_001",
+                pattern_type="permission_clustering",
+                indicators=[
+                    "RECORD_AUDIO + CAMERA + LOCATION",
+                    "Simultaneous access to three sensor categories"
+                ],
+                confidence=0.92,
+                threat_level="critical",
+                remediation="Require explicit per-session user consent for each sensor"
+            ),
+            DetectionPattern(
+                pattern_id="PATTERN_002",
+                pattern_type="covert_communication",
+                indicators=[
+                    "Background service with persistent notification removal",
+                    "Hidden broadcast receivers",
+                    "Encrypted intent filters"
+                ],
+                confidence=0.88,
+                threat_level="critical",
+                remediation="Disable background services, require visible ongoing notifications"
+            ),
+            DetectionPattern(
+                pattern_id="PATTERN_003",
+                pattern_type="data_exfiltration",
+                indicators=[
+                    "Large encrypted uploads to government domains",
+                    "Compression before transmission",
+                    "No user notification of data sent"
+                ],
+                confidence=0.85,
+                threat_level="high",
+                remediation="Require local data retention, user-visible data transmission logs"
+            ),
+            DetectionPattern(
+                pattern_id="PATTERN_004",
+                pattern_type="privilege_escalation",
+                indicators=[
+                    "DeviceAdminReceiver registrations",
+                    "Accessibility service requests",
+                    "Bootup completion intercepts"
+                ],
+                confidence=0.90,
+                threat_level="critical",
+                remediation="Disable system-level permission requests, use standard APIs only"
+            ),
+            DetectionPattern(
+                pattern_id="PATTERN_005",
+                pattern_type="signature_validation_bypass",
+                indicators=[
+                    "Dynamic code loading",
+                    "Native library injection",
+                    "Reflection-based method invocation"
+                ],
+                confidence=0.83,
+                threat_level="high",
+                remediation="Enforce static code analysis, disable reflection for sensitive APIs"
+            ),
+        ]
+
+    def _build_architecture_components(self) -> List[ArchitectureComponent]:
+        """Define solution architecture components."""
+        return [
+            ArchitectureComponent(
+                name="Static Analysis Engine",
+                description="Analyzes APK/app binaries for suspicious code patterns",
+                responsibility="Detect hardcoded exfiltration endpoints, obfuscated permissions, sensitive API calls",
+                trade_offs=[
+                    "High false positives in legitimate security code",
+                    "Defeated by advanced obfuscation",
+                    "Requires frequent pattern updates"
+                ],
+                alternatives=[
+                    "Dynamic analysis with controlled execution environment",
+                    "Machine learning classifier trained on known malware",
+                    "Hybrid approach combining static + dynamic analysis"
+                ]
+            ),
+            ArchitectureComponent(
+                name="Runtime Behavior Monitor",
+                description="Tracks actual sensor access and network traffic",
+                responsibility="Detect anomalous permission usage, unexpected data exfiltration",
+                trade_offs=[
+                    "Requires OS-level instrumentation",
+                    "Performance overhead",
+                    "Can be defeated by timing attacks"
+                ],
+                alternatives=[
+                    "Network traffic inspection via proxy",
+                    "Filesystem monitoring for data access patterns",
+                    "Process-level system call tracing"
+                ]
+            ),
+            ArchitectureComponent(
+                name="Permission Policy Engine",
+                description="Enforces granular, time-limited permission grants",
+                responsibility="Prevent excessive sensor access, require user consent",
+                trade_offs=[
+                    "Requires OS modifications",
+                    "User friction from frequent prompts",
+                    "Complex state management"
+                ],
+                alternatives=[
+                    "Containerization/sandboxing with minimal permissions",
+                    "Operating system-level capability restrictions",
+                    "Per-sensor rate limiting and access quotas"
+                ]
+            ),
+            ArchitectureComponent(
+                name="Telemetry Analysis Module",
+                description="Inspects network communications for covert channels",
+                responsibility="Detect unusual DNS queries, encrypted data patterns, hidden protocols",
+                trade_offs=[
+                    "Cannot inspect end-to-end encrypted traffic",
+                    "Requires network-level access",
+                    "High false positive rate with legitimate apps"
+                ],
+                alternatives=[
+                    "Deploy SSL/TLS interception proxy",
+                    "Analyze certificate pinning patterns",
+                    "Monitor network timing and packet sizes"
+                ]
+            ),
+            ArchitectureComponent(
+                name="Incident Response Coordinator",
+                description="Orchestrates response when fedware is detected",
+                responsibility="Quarantine app, preserve evidence, notify user, escalate to authorities",
+                trade_offs=[
+                    "Requires trust from device owner",
+                    "May be circumvented by privileged app",
+                    "Legal/jurisdictional complexity"
+                ],
+                alternatives=[
+                    "Automatic removal with user notification",
+                    "Automated reporting to security agencies",
+                    "Community-based threat intelligence sharing"
+                ]
+            ),
+        ]
+
+    def analyze_app(self, app_name: str, package_id: str, 
+                   manifest_permissions: List[str],
+                   detected_endpoints: List[str]) -> ArchitectureAnalysis:
+        """Analyze an application for fedware characteristics."""
+
+        suspicious_perms = self._extract_suspicious_permissions(manifest_permissions)
+        matched_patterns = self._match_detection_patterns(suspicious_perms, detected_endpoints)
+        risk_score = self._calculate_risk_score(suspicious_perms, matched_patterns)
+        threat_level = self._determine_threat_level(risk_score)
+        strategy = self._recommend_mitigation_strategy(threat_level, matched_patterns)
+
+        analysis = ArchitectureAnalysis(
+            app_name=app_name,
+            package_id=package_id,
+            analysis_timestamp=datetime.utcnow().isoformat(),
+            threat_level=threat_level,
+            risk_score=risk_score,
+            suspicious_permissions=[asdict(p) for p in suspicious_perms],
+            telemetry_endpoints=[
                 {
-                    "action": "AUDIT_PERMISSIONS",
-                    "severity": "HIGH",
-                    "description": f"Audit justification for permissions: {', '.join(high_risk_perms)}",
-                    "implementation": "Request formal documentation from app developer for all sensitive permissions",
+                    "url": ep.url,
+                    "frequency": ep.frequency,
+                    "data_types": ep.data_types,
+                    "threat_level": ep.threat_level,
+                    "recommended_alternative": ep.alternative
                 }
-            )
+                for ep in self.telemetry_patterns
+            ],
+            detection_patterns_matched=[asdict(p) for p in matched_patterns],
+            components=[asdict(c) for c in self.architecture_components],
+            recommended_strategy=strategy,
+            detailed_findings={
+                "permission_risk_areas": self._identify_permission_clusters(suspicious_perms),
+                "network_risk_analysis": self._analyze_network_patterns(detected_endpoints),
+                "architecture_assessment": self._assess_architecture_risks(suspicious_perms),
+                "trade_off_analysis": self._generate_trade_off_analysis(),
+                "alternative_solutions": self._generate_alternative_solutions(),
+            }
+        )
 
-        # Network monitoring
-        if app.network_endpoints:
-            plan.append(
-                {
-                    "action": "NETWORK_MONITORING",
-                    "severity": "HIGH",
-                    "description": f"Monitor network traffic to {len(app.network_endpoints)} endpoints",
-                    "implementation": "Implement network flow analysis with DNS sinkholing",
-                }
-            )
+        return analysis
 
-        # Process monitoring
-        if app.process_behavior:
-            plan.append(
-                {
-                    "action": "PROCESS_MONITORING",
-                    "severity": "MEDIUM",
-                    "description": "Monitor child process creation and system calls",
-                    "implementation": "Deploy syscall tracing and process tree analysis",
-                }
-            )
+    def _extract_suspicious_permissions(self, manifest_permissions: List[str]) -> List[SuspiciousPermission]:
+        """Extract suspicious permissions from manifest."""
+        suspicious = []
+        for perm in manifest_permissions:
+            if perm in self.suspicious_permissions_db:
+                suspicious.append(self.suspicious_permissions_db[perm])
+        return suspicious
 
-        # File access control
-        if app.file_accesses:
-            plan.append(
-                {
-                    "action": "FILE_ACCESS_CONTROL",
-                    "severity": "MEDIUM",
-                    "description": "Restrict sensitive file access paths",
-                    "implementation": "Implement SELinux policy refinement and filesystem ACLs",
-                }
-            )
+    def _match_detection_patterns(self, permissions: List[SuspiciousPermission],
+                                 endpoints: List[str]) -> List[DetectionPattern]:
+        """Match detection patterns against app characteristics."""
+        matched = []
+        
+        if len(permissions) >= 3:
+            for pattern in self.detection_patterns:
+                if pattern.pattern_id == "PATTERN_001":
+                    matched.append(pattern)
+                    break
+        
+        for endpoint in endpoints:
+            if "analytics" in endpoint.lower() or "telemetry" in endpoint.lower():
+                for pattern in self.detection_patterns:
+                    if pattern.pattern_id == "PATTERN_003" and pattern not in matched:
+                        matched.append(pattern)
+                        break
 
-        return plan
+        return matched
 
-    def create_architecture_document(self) -> Dict[str, Any]:
-        """
-        Generate comprehensive solution architecture document
-        """
-        return {
-            "title": "Fedware Detection Architecture",
-            "version": "1.0",
-            "timestamp": datetime.now().isoformat(),
-            "architecture_layers": [
-                {
-                    "layer": "Detection",
-                    "component": ArchitectureComponent.DETECTION.value,
-                    "responsibilities": [
-                        "Behavioral analysis of government applications",
-                        "Permission audit against policy baseline",
-                        "Network traffic pattern recognition",
-                        "Filesystem and process introspection",
-                    ],
-                    "trade_offs": [
-                        "Static vs Dynamic Analysis: Static is faster but misses runtime behaviors; Dynamic catches runtime threats but requires execution environment",
-                        "Permission vs Behavior: Permission audit is simple but doesn't catch abuse; behavioral analysis requires more resources",
-                        "Coverage vs Performance: Full audit is comprehensive but impacts system; sampling-based approach is faster but may miss threats",
-                    ],
-                    "alternatives": [
-                        "Machine learning-based anomaly detection (requires training data, harder to explain)",
-                        "Crowdsourced threat intelligence (reactive, dependency on community)",
-                        "Formal verification (resource-intensive, may miss novel threats)",
-                    ],
-                },
-                {
-                    "layer": "Analysis",
-                    "component": ArchitectureComponent.ANALYSIS.value,
-                    "responsibilities": [
-                        "Multi-factor risk scoring",
-                        "Threat correlation and aggregation",
-                        "Comparison against threat intelligence feeds",
-                        "Historical trend analysis",
-                    ],
-                    "trade_offs": [
-                        "Sensitivity vs Specificity: Higher sensitivity catches more threats but increases false positives; lower sensitivity reduces false alarms but misses real threats",
-                        "Real-time vs Batch: Real-time analysis detects threats immediately but requires continuous processing; batch analysis is efficient but has latency",
-                        "Centralized vs Distributed: Centralized analysis has single point of failure but simpler coordination; distributed analysis is resilient but harder to coordinate",
-                    ],
-                    "alternatives": [
-                        "Graph-based threat correlation (complex but captures relationships)",
-                        "Bayesian inference (probabilistic but requires prior distribution tuning)",
-                        "Rule-based system with expert rules (explainable but harder to scale)",
-                    ],
-                },
-                {
-                    "layer": "Remediation",
-                    "component": ArchitectureComponent.REMEDIATION.value,
-                    "responsibilities": [
-                        "Generate targeted mitigation strategies",
-                        "Implement access controls and policies",
-                        "Deploy containment measures",
-                        "Coordinate incident response",
-                    ],
-                    "trade_offs": [
-                        "Automatic vs Manual: Automated remediation is fast but risks over-correction; manual review is cautious but slower",
-                        "Strict vs Lenient: Strict policies maximize security but reduce functionality; lenient policies maintain usability but increase risk",
-                        "Immediate vs Gradual: Immediate remediation stops threat immediately but may disrupt services; gradual rollout is safer but leaves exposure window",
-                    ],
-                    "alternatives": [
-                        "Policy-as-code approach (declarative, version-controlled, but complex)",
-                        "Manual remediation playbooks (flexible, expert-driven, but labor-intensive)",
-                        "Automated rollback on detection (quick recovery, but may hide threat)",
-                    ],
-                },
-                {
-                    "layer": "Monitoring",
-                    "component": ArchitectureComponent.MONITORING.value,
-                    "responsibilities": [
-                        "Continuous behavioral telemetry collection",
-                        "Anomaly detection in app activity",
-                        "Alert generation on threshold breach",
-                        "Performance and compliance metrics",
-                    ],
-                    "trade_offs": [
-                        "Granularity vs Storage: Fine-grained telemetry captures details but requires massive storage; aggregated telemetry saves space but loses detail",
-                        "Latency vs Accuracy: Real-time monitoring has low latency but may be inaccurate; delayed processing improves accuracy but increases response time",
-                        "Overhead vs Coverage: Comprehensive monitoring catches everything but impacts performance; selective monitoring is faster but may miss threats",
-                    ],
-                    "alternatives": [
-                        "Event-driven monitoring (reactive, captures critical events, may miss patterns)",
-                        "Time-series based detection (excellent for trends, but requires baseline tuning)",
-                        "Hybrid push-pull model (combines benefits but adds complexity)",
-                    ],
-                },
-                {
-                    "layer": "Reporting",
-                    "component": ArchitectureComponent.REPORTING.value,
-                    "responsibilities": [
+    def _calculate_risk_score(self, permissions: List[SuspiciousPermission],
+                            patterns: List[DetectionPattern]) -> float:
+        """Calculate overall risk score."""
+        perm_score = sum(p.risk_score for p in permissions) / max(len(permissions), 1)
+        pattern_score = sum(p.confidence for p in patterns) / max(len(patterns), 1)
+        combined = (perm_score * 0.6) + (pattern_score * 0.4)
+        return min(1.0, combined)
+
+    def _determine_threat_level(self, risk_score: float) -> str:
+        """Determine threat level from risk score."""
+        if risk_score >= 0.85:
+            return ThreatLevel.CRITICAL.value
+        elif risk_score >= 0.70:
+            return ThreatLevel.HIGH.value
+        elif risk_score >= 0.50:
+            return ThreatLevel.MEDIUM.value
+        elif risk_score >= 0.25:
+            return ThreatLevel.LOW.value
+        return ThreatLevel.INFO.value
+
+    def _recommend_mitigation_strategy(self, threat_level: str, 
+                                      patterns: List[DetectionPattern]) -> str:
+        """Recommend mitigation strategy based on threat assessment."""
+        if threat_level == ThreatLevel.CRITICAL.value:
+            return MitigationStrategy.BLOCK.value
+        elif threat_level == ThreatLevel.HIGH.value:
+            return MitigationStrategy.SANDBOX.value
+        elif threat_level == ThreatLevel.MEDIUM.value:
+            return MitigationStrategy.MONITOR.value
+        elif threat_level == ThreatLevel.LOW.value:
+            return MitigationStrategy.AUDIT.value
+        return MitigationStrategy.ALERT.value
+
+    def _identify_permission_clusters(self, permissions: List[SuspiciousPermission]) -> Dict:
+        """Identify problematic permission clusters."""
+        clusters = {
+            "surveillance": [],
+            "communications_monitoring": [],
+            "data_exfiltration": [],
+            "network_monitoring": [],
