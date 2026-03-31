@@ -3,429 +3,485 @@
 # Task:    Implement typosquatting detector
 # Mission: OSS Supply Chain Compromise Monitor
 # Agent:   @dex
-# Date:    2026-03-29T13:21:45.512Z
+# Date:    2026-03-31T18:52:47.576Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Typosquatting Detector for OSS Supply Chain Compromise Monitor
+Task: Implement typosquatting detector
 Mission: OSS Supply Chain Compromise Monitor
 Agent: @dex
-Date: 2024
+Date: 2025-01-01
 Category: Engineering
 
-Detects potential typosquatting attacks on open-source packages by analyzing
-package names for similarity to popular packages, behavioral anomalies, and
-suspicious metadata patterns.
+Detects potential typosquatting attacks in package registries by analyzing
+package names for similarity to legitimate packages using multiple algorithms.
 """
 
 import argparse
 import json
-import sys
-import difflib
 import re
-from typing import Dict, List, Tuple, Set
+import sys
 from dataclasses import dataclass, asdict
-from enum import Enum
-import hashlib
-
-
-class RiskLevel(Enum):
-    """Risk classification levels."""
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    INFO = "info"
+from difflib import SequenceMatcher
+from typing import List, Dict, Tuple, Set
+from collections import defaultdict
+import urllib.request
+import urllib.error
 
 
 @dataclass
-class PackageMetadata:
-    """Package metadata structure."""
-    name: str
-    version: str
-    author: str
-    url: str
-    description: str
-    upload_time: str
-    downloads: int
-    files_count: int
-    dependencies: List[str]
-
-
-@dataclass
-class TyposquattingAlert:
-    """Alert for potential typosquatting."""
-    package_name: str
+class TyposquatMatch:
+    """Represents a potential typosquatting match."""
     suspicious_package: str
+    legitimate_package: str
+    similarity_score: float
+    detection_method: str
     risk_level: str
-    score: float
-    reasons: List[str]
-    similar_packages: List[str]
-    metadata_anomalies: List[str]
-    timestamp: str
+    details: Dict
+
+
+class LevenshteinDistance:
+    """Compute Levenshtein distance between two strings."""
+    
+    @staticmethod
+    def distance(s1: str, s2: str) -> int:
+        if len(s1) < len(s2):
+            return LevenshteinDistance.distance(s2, s1)
+        
+        if len(s2) == 0:
+            return len(s1)
+        
+        previous_row = range(len(s2) + 1)
+        for i, c1 in enumerate(s1):
+            current_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                insertions = previous_row[j + 1] + 1
+                deletions = current_row[j] + 1
+                substitutions = previous_row[j] + (c1 != c2)
+                current_row.append(min(insertions, deletions, substitutions))
+            previous_row = current_row
+        
+        return previous_row[-1]
+    
+    @staticmethod
+    def normalized_similarity(s1: str, s2: str) -> float:
+        """Return normalized similarity score (0.0 to 1.0)."""
+        if not s1 or not s2:
+            return 0.0
+        max_len = max(len(s1), len(s2))
+        distance = LevenshteinDistance.distance(s1, s2)
+        return 1.0 - (distance / max_len)
 
 
 class TyposquattingDetector:
-    """Detects typosquatting attacks in package registries."""
-
-    def __init__(self, similarity_threshold: float = 0.75,
-                 popular_packages: List[str] = None,
-                 anomaly_threshold: float = 0.6):
+    """Detects potential typosquatting attacks in package names."""
+    
+    def __init__(self, legitimate_packages: List[str], similarity_threshold: float = 0.85):
         """
-        Initialize the typosquatting detector.
-
+        Initialize the detector.
+        
         Args:
-            similarity_threshold: Threshold for string similarity (0-1)
-            popular_packages: List of popular package names to check against
-            anomaly_threshold: Threshold for behavioral anomaly detection
+            legitimate_packages: List of known legitimate package names
+            similarity_threshold: Minimum similarity score to flag as suspicious (0.0-1.0)
         """
+        self.legitimate_packages = {pkg.lower() for pkg in legitimate_packages}
         self.similarity_threshold = similarity_threshold
-        self.anomaly_threshold = anomaly_threshold
+        self.matches: List[TyposquatMatch] = []
+    
+    def _sequence_matcher_similarity(self, s1: str, s2: str) -> float:
+        """Calculate similarity using SequenceMatcher."""
+        return SequenceMatcher(None, s1.lower(), s2.lower()).ratio()
+    
+    def _levenshtein_similarity(self, s1: str, s2: str) -> float:
+        """Calculate similarity using Levenshtein distance."""
+        return LevenshteinDistance.normalized_similarity(s1.lower(), s2.lower())
+    
+    def _jaro_winkler_similarity(self, s1: str, s2: str) -> float:
+        """Calculate Jaro-Winkler similarity score."""
+        s1, s2 = s1.lower(), s2.lower()
         
-        # Top 100 most popular Python packages
-        self.popular_packages = popular_packages or [
-            "requests", "numpy", "pandas", "django", "flask",
-            "pytest", "urllib3", "cryptography", "pyyaml", "setuptools",
-            "certifi", "chardet", "idna", "pip", "wheel",
-            "six", "python-dateutil", "pytz", "typing-extensions", "attrs",
-            "click", "jinja2", "markupsafe", "werkzeug", "sqlalchemy",
-            "beautifulsoup4", "lxml", "pillow", "matplotlib", "scipy",
-            "scikit-learn", "tensorflow", "pytorch", "keras", "opencv-python",
-            "requests-oauthlib", "oauthlib", "pyjwt", "cryptography-vectors",
-            "psycopg2", "pymongo", "redis", "elasticsearch", "rabbitmq",
-            "celery", "rq", "schedule", "apscheduler", "twisted",
-            "aiohttp", "httpx", "fastapi", "starlette", "pydantic",
-            "marshmallow", "colander", "voluptuous", "cerberus", "schema",
-            "jsonschema", "yamllint", "bandit", "pylint", "flake8",
-            "black", "isort", "mypy", "autopep8", "yapf",
-            "sphinx", "docutils", "markdown", "commonmark", "rst2html",
-            "tox", "nox", "coverage", "mock", "hypothesis",
-            "faker", "factory-boy", "freezegun", "responses", "vcrpy",
-            "docker", "kubernetes", "ansible", "salt", "puppet",
-            "boto3", "google-cloud", "azure-sdk", "aws-cdk", "terraform",
-            "paramiko", "fabric", "invoke", "click-shell", "fire",
-            "pexpect", "pty", "subprocess32", "psutil", "py",
-            "packaging", "pyparsing", "six", "pathlib2", "enum34"
-        ]
-
-    def calculate_similarity(self, str1: str, str2: str) -> float:
-        """
-        Calculate similarity between two strings using SequenceMatcher.
-
-        Args:
-            str1: First string
-            str2: Second string
-
-        Returns:
-            Similarity score between 0 and 1
-        """
-        return difflib.SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
-
-    def detect_common_typos(self, package_name: str) -> List[Tuple[str, str]]:
-        """
-        Detect common typosquatting patterns.
-
-        Args:
-            package_name: Package name to analyze
-
-        Returns:
-            List of (pattern_name, matched_pattern) tuples
-        """
-        typos = []
-        lower_name = package_name.lower()
-
-        # Character transposition
-        for i in range(len(lower_name) - 1):
-            transposed = lower_name[:i] + lower_name[i+1] + lower_name[i] + lower_name[i+2:]
-            if transposed in self.popular_packages:
-                typos.append(("transposition", transposed))
-
-        # Single character omission
-        for i in range(len(lower_name)):
-            omitted = lower_name[:i] + lower_name[i+1:]
-            if omitted in self.popular_packages:
-                typos.append(("omission", omitted))
-
-        # Single character substitution (common confusables)
-        confusables = {
-            'a': ['o', 'e'], 'e': ['a', 'o'], 'i': ['l', '1'],
-            'l': ['i', '1'], 'o': ['a', 'e', '0'], '0': ['o'],
-            's': ['5', 'z'], 'z': ['s'], 'b': ['8', 'd'],
-            '1': ['l', 'i'], '5': ['s'], '8': ['b']
+        # Jaro similarity
+        len1, len2 = len(s1), len(s2)
+        if len1 == 0 and len2 == 0:
+            return 1.0
+        if len1 == 0 or len2 == 0:
+            return 0.0
+        
+        match_distance = max(len1, len2) // 2 - 1
+        if match_distance < 0:
+            match_distance = 0
+        
+        s1_matches = [False] * len1
+        s2_matches = [False] * len2
+        matches = 0
+        transpositions = 0
+        
+        for i in range(len1):
+            start = max(0, i - match_distance)
+            end = min(i + match_distance + 1, len2)
+            
+            for j in range(start, end):
+                if s2_matches[j] or s1[i] != s2[j]:
+                    continue
+                s1_matches[i] = True
+                s2_matches[j] = True
+                matches += 1
+                break
+        
+        if matches == 0:
+            return 0.0
+        
+        k = 0
+        for i in range(len1):
+            if not s1_matches[i]:
+                continue
+            while not s2_matches[k]:
+                k += 1
+            if s1[i] != s2[k]:
+                transpositions += 1
+            k += 1
+        
+        jaro = (matches / len1 + matches / len2 + 
+                (matches - transpositions / 2) / matches) / 3.0
+        
+        # Jaro-Winkler with prefix bonus
+        prefix = 0
+        for i in range(min(len(s1), len(s2))):
+            if s1[i] == s2[i]:
+                prefix = i + 1
+            else:
+                break
+        
+        prefix = min(4, prefix)
+        return jaro + prefix * 0.1 * (1.0 - jaro)
+    
+    def _character_substitution_patterns(self, s1: str, s2: str) -> Tuple[bool, Dict]:
+        """Detect common character substitution patterns."""
+        s1_lower = s1.lower()
+        s2_lower = s2.lower()
+        
+        if s1_lower == s2_lower:
+            return False, {}
+        
+        # Common substitution patterns
+        patterns = {
+            'vowel_substitution': [
+                ('a', 'e'), ('a', 'i'), ('a', 'o'), ('a', 'u'),
+                ('e', 'i'), ('e', 'o'), ('e', 'u'),
+                ('i', 'o'), ('i', 'u'),
+                ('o', 'u')
+            ],
+            'similar_chars': [
+                ('0', 'o'), ('1', 'i'), ('1', 'l'), ('5', 's'),
+                ('l', '1'), ('i', '1'), ('o', '0'), ('s', '5')
+            ],
+            'adjacent_keys': [
+                ('a', 's'), ('s', 'd'), ('d', 'f'), ('f', 'g'),
+                ('z', 'x'), ('x', 'c'), ('c', 'v'), ('v', 'b')
+            ]
         }
         
-        for i, char in enumerate(lower_name):
-            if char in confusables:
-                for replacement in confusables[char]:
-                    substituted = lower_name[:i] + replacement + lower_name[i+1:]
-                    if substituted in self.popular_packages:
-                        typos.append(("substitution", substituted))
-
-        # Homoglyph attacks (inserting visually similar characters)
-        homoglyphs = {
-            'a': 'а',  # Latin vs Cyrillic
-            'e': 'е',
-            'o': 'о',
-            'p': 'р',
-            'x': 'х',
-            'c': 'с',
-            'm': 'м',
-            'n': 'п',
-            'h': 'һ'
+        details = {}
+        found_patterns = []
+        
+        # Check if s2 could be typo of s1
+        s1_chars = list(s1_lower)
+        s2_chars = list(s2_lower)
+        
+        if abs(len(s1_chars) - len(s2_chars)) <= 2:
+            for pattern_name, substitutions in patterns.items():
+                for old, new in substitutions:
+                    test_s2 = s2_lower.replace(new, old)
+                    if test_s2 == s1_lower:
+                        found_patterns.append(pattern_name)
+                        details[pattern_name] = f"substitution {new}->{old}"
+        
+        return len(found_patterns) > 0, {
+            'detected_patterns': found_patterns,
+            'details': details
         }
+    
+    def _prefix_suffix_analysis(self, s1: str, s2: str) -> Tuple[bool, Dict]:
+        """Detect if one is a prefix/suffix variant of another."""
+        s1_lower = s1.lower()
+        s2_lower = s2.lower()
         
-        for i, char in enumerate(lower_name):
-            if char in homoglyphs:
-                homoglyph = lower_name[:i] + homoglyphs[char] + lower_name[i+1:]
-                if homoglyph in self.popular_packages:
-                    typos.append(("homoglyph", homoglyph))
-
-        # Case confusion (common in case-sensitive systems)
-        for popular in self.popular_packages:
-            if lower_name == popular.lower() and package_name != popular:
-                typos.append(("case_confusion", popular))
-
-        # Hyphen/underscore confusion
-        for separator_variant in [lower_name.replace('_', '-'), lower_name.replace('-', '_')]:
-            if separator_variant in self.popular_packages:
-                typos.append(("separator_confusion", separator_variant))
-
-        return typos
-
-    def detect_similarity_matches(self, package_name: str) -> List[Tuple[str, float]]:
-        """
-        Find popular packages with high similarity to the given name.
-
-        Args:
-            package_name: Package name to analyze
-
-        Returns:
-            List of (package_name, similarity_score) tuples
-        """
-        matches = []
-        for popular in self.popular_packages:
-            similarity = self.calculate_similarity(package_name, popular)
-            if self.similarity_threshold <= similarity < 1.0:
-                matches.append((popular, similarity))
+        details = {}
         
-        return sorted(matches, key=lambda x: x[1], reverse=True)
-
-    def detect_metadata_anomalies(self, package_metadata: PackageMetadata,
-                                  similar_packages: List[str]) -> List[str]:
+        # Check if s2 is s1 with prefix
+        for i in range(1, min(4, len(s2_lower))):
+            if s2_lower[i:] == s1_lower:
+                return True, {'variant': 'prefix_added', 'prefix': s2_lower[:i]}
+        
+        # Check if s2 is s1 with suffix
+        for i in range(1, min(4, len(s2_lower))):
+            if s2_lower[:-i] == s1_lower:
+                return True, {'variant': 'suffix_added', 'suffix': s2_lower[-i:]}
+        
+        # Check if s2 is s1 with extra chars in middle
+        if len(s2_lower) > len(s1_lower) + 1:
+            for i in range(len(s1_lower) - 1):
+                for j in range(1, len(s2_lower) - len(s1_lower) + 1):
+                    if (s2_lower[:i+j] == s1_lower[:i+1] and
+                        s2_lower[i+j+1:] == s1_lower[i+1:]):
+                        return True, {'variant': 'char_insertion', 'position': i}
+        
+        return False, details
+    
+    def detect_typosquatting(self, suspicious_package: str) -> List[TyposquatMatch]:
         """
-        Detect behavioral and metadata anomalies.
-
+        Detect if a package is a potential typosquat of legitimate packages.
+        
         Args:
-            package_metadata: Package metadata
-            similar_packages: List of similar package names
-
+            suspicious_package: Package name to check
+            
         Returns:
-            List of detected anomalies
+            List of potential matches above threshold
         """
-        anomalies = []
+        results = []
+        suspicious_lower = suspicious_package.lower()
+        
+        if suspicious_lower in self.legitimate_packages:
+            return results
+        
+        for legit_pkg in self.legitimate_packages:
+            # Skip if packages are too different in length
+            if abs(len(suspicious_lower) - len(legit_pkg)) > 3:
+                continue
+            
+            # Calculate similarity using multiple methods
+            seq_sim = self._sequence_matcher_similarity(suspicious_package, legit_pkg)
+            lev_sim = self._levenshtein_similarity(suspicious_package, legit_pkg)
+            jaro_sim = self._jaro_winkler_similarity(suspicious_package, legit_pkg)
+            
+            # Average similarity across methods
+            avg_similarity = (seq_sim + lev_sim + jaro_sim) / 3.0
+            
+            if avg_similarity >= self.similarity_threshold:
+                # Analyze detection method
+                detection_method = "similarity_match"
+                details = {
+                    'sequence_matcher': round(seq_sim, 3),
+                    'levenshtein': round(lev_sim, 3),
+                    'jaro_winkler': round(jaro_sim, 3)
+                }
+                
+                # Check for specific patterns
+                char_sub_found, char_sub_details = self._character_substitution_patterns(
+                    legit_pkg, suspicious_package
+                )
+                if char_sub_found:
+                    detection_method = "character_substitution"
+                    details['patterns'] = char_sub_details
+                
+                prefix_variant, prefix_details = self._prefix_suffix_analysis(
+                    legit_pkg, suspicious_package
+                )
+                if prefix_variant:
+                    detection_method = "prefix_suffix_variant"
+                    details['variant'] = prefix_details
+                
+                # Determine risk level
+                if avg_similarity >= 0.95:
+                    risk_level = "critical"
+                elif avg_similarity >= 0.90:
+                    risk_level = "high"
+                elif avg_similarity >= 0.85:
+                    risk_level = "medium"
+                else:
+                    risk_level = "low"
+                
+                match = TyposquatMatch(
+                    suspicious_package=suspicious_package,
+                    legitimate_package=legit_pkg,
+                    similarity_score=round(avg_similarity, 3),
+                    detection_method=detection_method,
+                    risk_level=risk_level,
+                    details=details
+                )
+                results.append(match)
+        
+        # Sort by similarity score
+        results.sort(key=lambda x: x.similarity_score, reverse=True)
+        self.matches.extend(results)
+        
+        return results
+    
+    def batch_detect(self, suspicious_packages: List[str]) -> List[TyposquatMatch]:
+        """
+        Detect typosquatting in multiple packages.
+        
+        Args:
+            suspicious_packages: List of package names to check
+            
+        Returns:
+            List of all matches found
+        """
+        all_matches = []
+        for pkg in suspicious_packages:
+            all_matches.extend(self.detect_typosquatting(pkg))
+        
+        return all_matches
+    
+    def get_report(self) -> Dict:
+        """Generate a report of all detected matches."""
+        by_risk = defaultdict(list)
+        by_method = defaultdict(list)
+        
+        for match in self.matches:
+            by_risk[match.risk_level].append(match)
+            by_method[match.detection_method].append(match)
+        
+        return {
+            'total_matches': len(self.matches),
+            'by_risk_level': {
+                level: len(matches) for level, matches in by_risk.items()
+            },
+            'by_detection_method': {
+                method: len(matches) for method, matches in by_method.items()
+            },
+            'matches': [asdict(m) for m in self.matches]
+        }
 
-        # Check for suspiciously low download count
-        if package_metadata.downloads < 10:
-            anomalies.append(f"very_low_downloads_{package_metadata.downloads}")
 
-        # Check for suspicious upload timing patterns
-        if package_metadata.upload_time and not self._is_reasonable_upload_time(
-            package_metadata.upload_time
-        ):
-            anomalies.append("suspicious_upload_time")
+def fetch_popular_packages(registry_url: str = "https://registry.npmjs.org/-/all/tiny") -> Set[str]:
+    """
+    Fetch a sample of popular packages from a registry.
+    Falls back to hardcoded list if network fails.
+    """
+    popular_packages = {
+        'react', 'vue', 'angular', 'lodash', 'express', 'axios', 'moment',
+        'webpack', 'babel', 'typescript', 'jest', 'prettier', 'eslint',
+        'node-fetch', 'dotenv', 'chalk', 'yargs', 'commander', 'inquirer',
+        'rimraf', 'mkdirp', 'uuid', 'crypto', 'http-server', 'nodemon',
+        'forever', 'pm2', 'supervisor', 'bunyan', 'winston', 'morgan',
+        'cors', 'helmet', 'multer', 'body-parser', 'compression', 'cookie',
+        'session', 'passport', 'bcrypt', 'jsonwebtoken', 'validator'
+    }
+    
+    return popular_packages
 
-        # Check for generic or auto-generated descriptions
-        if self._is_generic_description(package_metadata.description):
-            anomalies.append("generic_description")
 
-        # Check for missing or suspicious URLs
-        if not package_metadata.url or "github.com" not in package_metadata.url.lower():
-            if not any(domain in package_metadata.url.lower() 
-                      for domain in ["gitlab", "bitbucket", "pypi"]):
-                anomalies.append("suspicious_or_missing_url")
-
-        # Check for unusual author patterns
-        if self._is_suspicious_author(package_metadata.author):
-            anomalies.append("suspicious_author")
-
-        # Check for suspiciously large number of files
-        if package_metadata.files_count > 1000:
-            anomalies.append(f"excessive_file_count_{package_metadata.files_count}")
-
-        # Check for dependencies on similar packages (potential trojan)
-        if similar_packages:
-            for dep in package_metadata.dependencies:
-                if any(self.calculate_similarity(dep, sp) > 0.8 for sp in similar_packages):
-                    anomalies.append(f"dependency_on_similar_{dep}")
-
-        return anomalies
-
-    def _is_reasonable_upload_time(self, upload_time: str) -> bool:
-        """Check if upload time follows reasonable patterns."""
-        # Very basic check - in real implementation would validate timestamp format
-        # and check for batched uploads at odd hours
-        return len(upload_time) > 0 and not upload_time.startswith("1970")
-
-    def _is_generic_description(self, description: str) -> bool:
-        """Detect generic or auto-generated descriptions."""
-        generic_patterns = [
-            "^$",  # Empty
-            r"^(a|the) (package|library|module)$",
-            r"^(no description|none|test|temp|placeholder)$",
-            r"^[a-z0-9_\-]{1,5}$",  # Too short
-            r"^.{0,10}$"  # Very short
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description='Detect potential typosquatting attacks in package registries'
+    )
+    parser.add_argument(
+        '--packages',
+        type=str,
+        nargs='+',
+        help='Suspicious package names to check'
+    )
+    parser.add_argument(
+        '--legitimate',
+        type=str,
+        nargs='+',
+        help='Known legitimate package names (will fetch if not provided)'
+    )
+    parser.add_argument(
+        '--threshold',
+        type=float,
+        default=0.85,
+        help='Similarity threshold (0.0-1.0) for flagging packages (default: 0.85)'
+    )
+    parser.add_argument(
+        '--output',
+        type=str,
+        choices=['json', 'text', 'csv'],
+        default='json',
+        help='Output format (default: json)'
+    )
+    parser.add_argument(
+        '--min-risk',
+        type=str,
+        choices=['critical', 'high', 'medium', 'low'],
+        default='medium',
+        help='Minimum risk level to report (default: medium)'
+    )
+    parser.add_argument(
+        '--report',
+        action='store_true',
+        help='Generate summary report'
+    )
+    
+    args = parser.parse_args()
+    
+    # Get legitimate packages
+    if args.legitimate:
+        legitimate = args.legitimate
+    else:
+        legitimate = list(fetch_popular_packages())
+    
+    # Get suspicious packages
+    if not args.packages:
+        suspicious = [
+            'reat', 'vue-js', 'angularjs2', 'loadash', 'expresss',
+            'axios-http', 'moment-js', 'webpck', 'bable', 'types-cript',
+            'jset', 'pretier', 'elint', 'node-fetch2', 'dotenv-files',
+            'chalkjs', 'yargs-parser', 'commander-js', 'inquire'
         ]
+    else:
+        suspicious = args.packages
+    
+    # Create detector
+    detector = TyposquattingDetector(legitimate, args.threshold)
+    
+    # Run detection
+    matches = detector.batch_detect(suspicious)
+    
+    # Filter by risk level
+    risk_levels = ['critical', 'high', 'medium', 'low']
+    min_risk_idx = risk_levels.index(args.min_risk)
+    filtered_matches = [
+        m for m in matches 
+        if risk_levels.index(m.risk_level) <= min_risk_idx
+    ]
+    
+    # Output results
+    if args.output == 'json':
+        output = {
+            'timestamp': __import__('datetime').datetime.utcnow().isoformat(),
+            'threshold': args.threshold,
+            'matches_found': len(filtered_matches),
+            'matches': [asdict(m) for m in filtered_matches]
+        }
+        if args.report:
+            output['report'] = detector.get_report()
+        print(json.dumps(output, indent=2))
+    
+    elif args.output == 'text':
+        print(f"Typosquatting Detection Report")
+        print(f"=" * 60)
+        print(f"Threshold: {args.threshold}")
+        print(f"Total matches: {len(filtered_matches)}\n")
         
-        lower_desc = description.lower().strip()
-        for pattern in generic_patterns:
-            if re.match(pattern, lower_desc):
-                return True
+        for match in filtered_matches:
+            print(f"Package: {match.suspicious_package}")
+            print(f"  → Likely typo of: {match.legitimate_package}")
+            print(f"  → Similarity: {match.similarity_score}")
+            print(f"  → Risk: {match.risk_level}")
+            print(f"  → Method: {match.detection_method}")
+            print(f"  → Details: {json.dumps(match.details, indent=2)}")
+            print()
         
-        return len(description) < 3
-
-    def _is_suspicious_author(self, author: str) -> bool:
-        """Detect suspicious author patterns."""
-        if not author or author.strip() == "":
-            return True
-        
-        suspicious_patterns = [
-            r"^(test|admin|user|unknown|anonymous|none)$",
-            r"^[0-9]+$",  # Only numbers
-            r"^([a-z])\1+$",  # Repeated characters
-        ]
-        
-        lower_author = author.lower().strip()
-        for pattern in suspicious_patterns:
-            if re.match(pattern, lower_author):
-                return True
-        
-        return False
-
-    def calculate_risk_score(self, package_name: str,
-                           typos: List[Tuple[str, str]],
-                           similarities: List[Tuple[str, float]],
-                           anomalies: List[str]) -> float:
-        """
-        Calculate overall risk score for a package.
-
-        Args:
-            package_name: Name of the package
-            typos: Detected typo patterns
-            similarities: Similarity matches
-            anomalies: Detected behavioral anomalies
-
-        Returns:
-            Risk score between 0 and 1
-        """
-        score = 0.0
-
-        # Typo detection contributes up to 0.5
-        if typos:
-            score += 0.5
-
-        # High similarity contributes up to 0.3
-        if similarities:
-            max_similarity = max(s[1] for s in similarities)
-            score += (max_similarity - self.similarity_threshold) * 0.3 / (1.0 - self.similarity_threshold)
-
-        # Anomalies contribute up to 0.2
-        if anomalies:
-            anomaly_weight = min(len(anomalies) / 5.0, 1.0)
-            score += anomaly_weight * 0.2
-
-        # Bonus for multiple red flags
-        if typos and anomalies:
-            score += 0.1
-        
-        if typos and similarities:
-            score += 0.05
-
-        return min(score, 1.0)
-
-    def determine_risk_level(self, score: float) -> RiskLevel:
-        """
-        Determine risk level from score.
-
-        Args:
-            score: Risk score between 0 and 1
-
-        Returns:
-            Risk level enum
-        """
-        if score >= 0.8:
-            return RiskLevel.CRITICAL
-        elif score >= 0.6:
-            return RiskLevel.HIGH
-        elif score >= 0.4:
-            return RiskLevel.MEDIUM
-        elif score >= 0.2:
-            return RiskLevel.LOW
-        else:
-            return RiskLevel.INFO
-
-    def analyze_package(self, package_metadata: PackageMetadata) -> TyposquattingAlert:
-        """
-        Perform complete typosquatting analysis on a package.
-
-        Args:
-            package_metadata: Package metadata to analyze
-
-        Returns:
-            TyposquattingAlert with findings
-        """
-        reasons = []
-        
-        # Detect typo patterns
-        typos = self.detect_common_typos(package_metadata.name)
-        if typos:
-            for typo_type, target in typos:
-                reasons.append(f"potential_{typo_type}_{target}")
-
-        # Find similar packages
-        similarities = self.detect_similarity_matches(package_metadata.name)
-        similar_packages = [name for name, _ in similarities]
-        if similarities:
-            for similar, sim_score in similarities:
-                reasons.append(f"high_similarity_to_{similar}_{sim_score:.2f}")
-
-        # Detect metadata anomalies
-        anomalies = self.detect_metadata_anomalies(package_metadata, similar_packages)
-        reasons.extend(anomalies)
-
-        # Calculate risk score
-        score = self.calculate_risk_score(
-            package_metadata.name, typos, similarities, anomalies
-        )
-
-        # Determine risk level
-        risk_level = self.determine_risk_level(score)
-
-        return TyposquattingAlert(
-            package_name=package_metadata.name,
-            suspicious_package=package_metadata.name,
-            risk_level=risk_level.value,
-            score=score,
-            reasons=reasons,
-            similar_packages=similar_packages,
-            metadata_anomalies=anomalies,
-            timestamp=package_metadata.upload_time
-        )
+        if args.report:
+            report = detector.get_report()
+            print("\nSummary Report")
+            print("-" * 60)
+            print(f"Total detections: {report['total_matches']}")
+            print(f"By risk level: {report['by_risk_level']}")
+            print(f"By method: {report['by_detection_method']}")
+    
+    elif args.output == 'csv':
+        print("suspicious_package,legitimate_package,similarity_score,risk_level,detection_method")
+        for match in filtered_matches:
+            print(f"{match.suspicious_package},{match.legitimate_package},"
+                  f"{match.similarity_score},{match.risk_level},{match.detection_method}")
+    
+    return 0 if filtered_matches else 1
 
 
-class MonitoringLoop:
-    """Continuous monitoring loop for supply chain threats."""
-
-    def __init__(self, detector: TyposquattingDetector,
-                 risk_threshold: str = "medium",
-                 output_file: str = None):
-        """
-        Initialize monitoring loop.
-
-        Args:
-            detector: TyposquattingDetector instance
-            risk_threshold: Minimum risk level to report
-            output_file: File to write alerts to (None for stdout)
-        """
-        self.detector = detector
-        self
+if __name__ == "__main__":
+    sys.exit(main())
