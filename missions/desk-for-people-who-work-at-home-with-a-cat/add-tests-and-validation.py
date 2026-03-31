@@ -3,618 +3,645 @@
 # Task:    Add tests and validation
 # Mission: Desk for people who work at home with a cat
 # Agent:   @aria
-# Date:    2026-03-31T19:16:56.548Z
+# Date:    2026-03-31T19:18:29.370Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Add tests and validation for home office desk with cat compatibility
+Task: Add tests and validation for a desk designed for people who work at home with a cat
 Mission: Desk for people who work at home with a cat
 Agent: @aria
-Date: 2024
+Date: 2026-03-27
+Category: Engineering
 
-This module implements a comprehensive test and validation suite for
-a home office desk designed to accommodate both work and pet cats.
-It validates desk specifications, safety requirements, and cat-friendly features.
+This module implements comprehensive unit tests and validation for a cat-friendly work-from-home desk system.
+It includes desk specifications, safety checks, comfort validation, and integration tests.
 """
 
 import unittest
 import json
 import argparse
 import sys
+from dataclasses import dataclass
+from typing import List, Dict, Tuple
 from enum import Enum
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 
 
-class DeskMaterial(Enum):
-    WOOD = "wood"
+class DeskMaterialType(Enum):
+    """Safe materials for cat-friendly desks"""
+    SOLID_WOOD = "solid_wood"
+    BAMBOO = "bamboo"
     LAMINATE = "laminate"
     METAL = "metal"
-    GLASS = "glass"
 
 
-class SafetyStandard(Enum):
-    SHARP_EDGES = "sharp_edges"
-    STABILITY = "stability"
-    CHEMICAL_SAFETY = "chemical_safety"
-    ELECTRICAL_SAFETY = "electrical_safety"
-    CAT_TOXICITY = "cat_toxicity"
+class SafetyLevel(Enum):
+    """Safety assessment levels"""
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    SAFE = "safe"
 
 
 @dataclass
 class DeskSpecification:
+    """Specifications for a cat-friendly work desk"""
     name: str
+    height_cm: float
     width_cm: float
     depth_cm: float
-    height_cm: float
-    material: str
-    weight_capacity_kg: float
+    material: DeskMaterialType
     has_cable_management: bool
-    has_cat_shelf: bool
-    has_elevated_platform: bool
-    material_is_cat_safe: bool
-    edge_radius_mm: float
-    max_cable_exposure_cm: float
+    has_raised_edges: bool
+    max_weight_kg: float
+    is_adjustable: bool
+    has_cat_bed_space: bool
+    ventilation_slots: int
+    stable_legs: int
+    rounded_corners: bool
 
 
-class DeskValidator:
-    """Validates desk specifications for home office cat compatibility."""
-    
-    MIN_WIDTH_CM = 80.0
-    MAX_WIDTH_CM = 200.0
-    MIN_DEPTH_CM = 40.0
-    MAX_DEPTH_CM = 100.0
-    MIN_HEIGHT_CM = 70.0
-    MAX_HEIGHT_CM = 120.0
-    MIN_WEIGHT_CAPACITY_KG = 25.0
-    MIN_EDGE_RADIUS_MM = 2.0
-    DANGEROUS_MATERIALS = ["untreated_plastic", "lead_paint", "toxic_varnish"]
-    CAT_SAFE_MATERIALS = ["untreated_wood", "natural_laminate", "stainless_steel"]
-    MAX_CABLE_EXPOSURE_CM = 10.0
-    
+@dataclass
+class ValidationResult:
+    """Result of a validation check"""
+    passed: bool
+    category: str
+    message: str
+    severity: SafetyLevel
+    details: Dict = None
+
+
+class CatFriendlyDeskValidator:
+    """Validates desk specifications for cat-friendly work environments"""
+
+    # Safety thresholds
+    MIN_HEIGHT_CM = 70
+    MAX_HEIGHT_CM = 120
+    MIN_WIDTH_CM = 100
+    MIN_DEPTH_CM = 60
+    MIN_STABLE_LEGS = 4
+    SAFE_MATERIALS = {DeskMaterialType.SOLID_WOOD, DeskMaterialType.BAMBOO, DeskMaterialType.METAL}
+    MIN_MAX_WEIGHT_KG = 50
+
     def __init__(self):
-        self.validation_errors: List[str] = []
-        self.validation_warnings: List[str] = []
-    
-    def validate_dimensions(self, spec: DeskSpecification) -> bool:
-        """Validate desk dimensions are within acceptable ranges."""
-        errors = []
-        
-        if not (self.MIN_WIDTH_CM <= spec.width_cm <= self.MAX_WIDTH_CM):
-            errors.append(
-                f"Width {spec.width_cm}cm outside acceptable range "
-                f"({self.MIN_WIDTH_CM}-{self.MAX_WIDTH_CM}cm)"
-            )
-        
-        if not (self.MIN_DEPTH_CM <= spec.depth_cm <= self.MAX_DEPTH_CM):
-            errors.append(
-                f"Depth {spec.depth_cm}cm outside acceptable range "
-                f"({self.MIN_DEPTH_CM}-{self.MAX_DEPTH_CM}cm)"
-            )
-        
-        if not (self.MIN_HEIGHT_CM <= spec.height_cm <= self.MAX_HEIGHT_CM):
-            errors.append(
-                f"Height {spec.height_cm}cm outside acceptable range "
-                f"({self.MIN_HEIGHT_CM}-{self.MAX_HEIGHT_CM}cm)"
-            )
-        
-        self.validation_errors.extend(errors)
-        return len(errors) == 0
-    
-    def validate_weight_capacity(self, spec: DeskSpecification) -> bool:
-        """Validate weight capacity meets minimum requirements."""
-        if spec.weight_capacity_kg < self.MIN_WEIGHT_CAPACITY_KG:
-            self.validation_errors.append(
-                f"Weight capacity {spec.weight_capacity_kg}kg below minimum "
-                f"({self.MIN_WEIGHT_CAPACITY_KG}kg)"
-            )
-            return False
-        return True
-    
-    def validate_material_safety(self, spec: DeskSpecification) -> bool:
-        """Validate material is safe for cats."""
-        is_safe = spec.material_is_cat_safe
-        
-        if not is_safe:
-            self.validation_errors.append(
-                f"Material '{spec.material}' is not verified as cat-safe"
-            )
-        
-        return is_safe
-    
-    def validate_edge_safety(self, spec: DeskSpecification) -> bool:
-        """Validate edges have sufficient radius to prevent injuries."""
-        if spec.edge_radius_mm < self.MIN_EDGE_RADIUS_MM:
-            self.validation_errors.append(
-                f"Edge radius {spec.edge_radius_mm}mm below minimum safe radius "
-                f"({self.MIN_EDGE_RADIUS_MM}mm)"
-            )
-            return False
-        return True
-    
-    def validate_cable_management(self, spec: DeskSpecification) -> bool:
-        """Validate cable management prevents cat entanglement."""
-        if not spec.has_cable_management:
-            self.validation_warnings.append(
-                "No dedicated cable management system detected"
-            )
-        
-        if spec.max_cable_exposure_cm > self.MAX_CABLE_EXPOSURE_CM:
-            self.validation_errors.append(
-                f"Cable exposure {spec.max_cable_exposure_cm}cm exceeds "
-                f"safe maximum ({self.MAX_CABLE_EXPOSURE_CM}cm)"
-            )
-            return False
-        
-        return True
-    
-    def validate_cat_features(self, spec: DeskSpecification) -> bool:
-        """Validate cat-specific features are present."""
-        warnings = []
-        
-        if not spec.has_cat_shelf:
-            warnings.append("No dedicated cat shelf - cats may jump on desk")
-        
-        if not spec.has_elevated_platform:
-            warnings.append("No elevated platform - provides limited cat comfort")
-        
-        self.validation_warnings.extend(warnings)
-        return len(warnings) == 0
-    
-    def validate_stability(self, spec: DeskSpecification) -> bool:
-        """Validate desk stability with cat interaction."""
-        aspect_ratio = spec.width_cm / spec.depth_cm
-        
-        if aspect_ratio > 3.0:
-            self.validation_warnings.append(
-                f"High aspect ratio ({aspect_ratio:.2f}) may reduce stability "
-                "when cat jumps on narrow side"
-            )
-        
-        return True
-    
-    def validate(self, spec: DeskSpecification) -> Tuple[bool, Dict]:
-        """Run all validations on desk specification."""
-        self.validation_errors = []
-        self.validation_warnings = []
-        
-        self.validate_dimensions(spec)
-        self.validate_weight_capacity(spec)
-        self.validate_material_safety(spec)
-        self.validate_edge_safety(spec)
-        self.validate_cable_management(spec)
-        self.validate_cat_features(spec)
-        self.validate_stability(spec)
-        
-        is_valid = len(self.validation_errors) == 0
-        
-        result = {
-            "valid": is_valid,
-            "specification_name": spec.name,
-            "errors": self.validation_errors,
-            "warnings": self.validation_warnings,
-            "validation_timestamp": datetime.now().isoformat(),
-            "error_count": len(self.validation_errors),
-            "warning_count": len(self.validation_warnings)
-        }
-        
-        return is_valid, result
+        self.validation_results: List[ValidationResult] = []
+        self.timestamp = datetime.now().isoformat()
 
+    def validate_dimensions(self, desk: DeskSpecification) -> ValidationResult:
+        """Validate desk dimensions are appropriate"""
+        issues = []
 
-class TestDeskValidator(unittest.TestCase):
-    """Unit tests for desk validator."""
-    
-    def setUp(self):
-        """Set up test fixtures."""
-        self.validator = DeskValidator()
-    
-    def test_valid_desk_specification(self):
-        """Test validation of a valid desk specification."""
-        spec = DeskSpecification(
-            name="PerfectCatDesk Pro",
-            width_cm=120.0,
-            depth_cm=60.0,
-            height_cm=75.0,
-            material="natural_laminate",
-            weight_capacity_kg=50.0,
-            has_cable_management=True,
-            has_cat_shelf=True,
-            has_elevated_platform=True,
-            material_is_cat_safe=True,
-            edge_radius_mm=5.0,
-            max_cable_exposure_cm=5.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertTrue(is_valid)
-        self.assertEqual(result["error_count"], 0)
-        self.assertEqual(result["specification_name"], "PerfectCatDesk Pro")
-    
-    def test_desk_width_too_narrow(self):
-        """Test validation fails for desk that is too narrow."""
-        spec = DeskSpecification(
-            name="NarrowDesk",
-            width_cm=70.0,
-            depth_cm=60.0,
-            height_cm=75.0,
-            material="natural_laminate",
-            weight_capacity_kg=50.0,
-            has_cable_management=True,
-            has_cat_shelf=True,
-            has_elevated_platform=True,
-            material_is_cat_safe=True,
-            edge_radius_mm=5.0,
-            max_cable_exposure_cm=5.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertFalse(is_valid)
-        self.assertGreater(result["error_count"], 0)
-    
-    def test_desk_width_too_wide(self):
-        """Test validation fails for desk that is too wide."""
-        spec = DeskSpecification(
-            name="WideDesk",
-            width_cm=250.0,
-            depth_cm=60.0,
-            height_cm=75.0,
-            material="natural_laminate",
-            weight_capacity_kg=50.0,
-            has_cable_management=True,
-            has_cat_shelf=True,
-            has_elevated_platform=True,
-            material_is_cat_safe=True,
-            edge_radius_mm=5.0,
-            max_cable_exposure_cm=5.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertFalse(is_valid)
-        self.assertGreater(result["error_count"], 0)
-    
-    def test_insufficient_weight_capacity(self):
-        """Test validation fails for insufficient weight capacity."""
-        spec = DeskSpecification(
-            name="WeakDesk",
-            width_cm=120.0,
-            depth_cm=60.0,
-            height_cm=75.0,
-            material="natural_laminate",
-            weight_capacity_kg=15.0,
-            has_cable_management=True,
-            has_cat_shelf=True,
-            has_elevated_platform=True,
-            material_is_cat_safe=True,
-            edge_radius_mm=5.0,
-            max_cable_exposure_cm=5.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertFalse(is_valid)
-        self.assertEqual(result["error_count"], 1)
-    
-    def test_unsafe_material(self):
-        """Test validation fails for unsafe materials."""
-        spec = DeskSpecification(
-            name="ToxicDesk",
-            width_cm=120.0,
-            depth_cm=60.0,
-            height_cm=75.0,
-            material="untreated_plastic",
-            weight_capacity_kg=50.0,
-            has_cable_management=True,
-            has_cat_shelf=True,
-            has_elevated_platform=True,
-            material_is_cat_safe=False,
-            edge_radius_mm=5.0,
-            max_cable_exposure_cm=5.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertFalse(is_valid)
-        self.assertIn("not verified as cat-safe", result["errors"][0])
-    
-    def test_sharp_edges(self):
-        """Test validation fails for insufficiently rounded edges."""
-        spec = DeskSpecification(
-            name="SharpEdgeDesk",
-            width_cm=120.0,
-            depth_cm=60.0,
-            height_cm=75.0,
-            material="natural_laminate",
-            weight_capacity_kg=50.0,
-            has_cable_management=True,
-            has_cat_shelf=True,
-            has_elevated_platform=True,
-            material_is_cat_safe=True,
-            edge_radius_mm=0.5,
-            max_cable_exposure_cm=5.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertFalse(is_valid)
-        self.assertIn("Edge radius", result["errors"][0])
-    
-    def test_exposed_cables(self):
-        """Test validation fails for excessive cable exposure."""
-        spec = DeskSpecification(
-            name="CableDesk",
-            width_cm=120.0,
-            depth_cm=60.0,
-            height_cm=75.0,
-            material="natural_laminate",
-            weight_capacity_kg=50.0,
-            has_cable_management=True,
-            has_cat_shelf=True,
-            has_elevated_platform=True,
-            material_is_cat_safe=True,
-            edge_radius_mm=5.0,
-            max_cable_exposure_cm=25.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertFalse(is_valid)
-        self.assertIn("Cable exposure", result["errors"][0])
-    
-    def test_missing_cable_management_warning(self):
-        """Test validation warns about missing cable management."""
-        spec = DeskSpecification(
-            name="OpenCableDesk",
-            width_cm=120.0,
-            depth_cm=60.0,
-            height_cm=75.0,
-            material="natural_laminate",
-            weight_capacity_kg=50.0,
-            has_cable_management=False,
-            has_cat_shelf=True,
-            has_elevated_platform=True,
-            material_is_cat_safe=True,
-            edge_radius_mm=5.0,
-            max_cable_exposure_cm=5.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertTrue(is_valid)
-        self.assertGreater(result["warning_count"], 0)
-    
-    def test_missing_cat_shelf_warning(self):
-        """Test validation warns about missing cat shelf."""
-        spec = DeskSpecification(
-            name="NoCatShelfDesk",
-            width_cm=120.0,
-            depth_cm=60.0,
-            height_cm=75.0,
-            material="natural_laminate",
-            weight_capacity_kg=50.0,
-            has_cable_management=True,
-            has_cat_shelf=False,
-            has_elevated_platform=True,
-            material_is_cat_safe=True,
-            edge_radius_mm=5.0,
-            max_cable_exposure_cm=5.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertTrue(is_valid)
-        self.assertIn("cat shelf", " ".join(result["warnings"]).lower())
-    
-    def test_height_validation_minimum(self):
-        """Test validation fails for desk too short."""
-        spec = DeskSpecification(
-            name="ShortDesk",
-            width_cm=120.0,
-            depth_cm=60.0,
-            height_cm=60.0,
-            material="natural_laminate",
-            weight_capacity_kg=50.0,
-            has_cable_management=True,
-            has_cat_shelf=True,
-            has_elevated_platform=True,
-            material_is_cat_safe=True,
-            edge_radius_mm=5.0,
-            max_cable_exposure_cm=5.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertFalse(is_valid)
-        self.assertIn("Height", result["errors"][0])
-    
-    def test_height_validation_maximum(self):
-        """Test validation fails for desk too tall."""
-        spec = DeskSpecification(
-            name="TallDesk",
-            width_cm=120.0,
-            depth_cm=60.0,
-            height_cm=150.0,
-            material="natural_laminate",
-            weight_capacity_kg=50.0,
-            has_cable_management=True,
-            has_cat_shelf=True,
-            has_elevated_platform=True,
-            material_is_cat_safe=True,
-            edge_radius_mm=5.0,
-            max_cable_exposure_cm=5.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertFalse(is_valid)
-        self.assertIn("Height", result["errors"][0])
-    
-    def test_depth_validation(self):
-        """Test validation of desk depth."""
-        spec = DeskSpecification(
-            name="ShallowDesk",
-            width_cm=120.0,
-            depth_cm=25.0,
-            height_cm=75.0,
-            material="natural_laminate",
-            weight_capacity_kg=50.0,
-            has_cable_management=True,
-            has_cat_shelf=True,
-            has_elevated_platform=True,
-            material_is_cat_safe=True,
-            edge_radius_mm=5.0,
-            max_cable_exposure_cm=5.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertFalse(is_valid)
-        self.assertIn("Depth", result["errors"][0])
-    
-    def test_stability_warning_high_aspect_ratio(self):
-        """Test stability warning for high aspect ratio."""
-        spec = DeskSpecification(
-            name="NarrowTallDesk",
-            width_cm=180.0,
-            depth_cm=50.0,
-            height_cm=75.0,
-            material="natural_laminate",
-            weight_capacity_kg=50.0,
-            has_cable_management=True,
-            has_cat_shelf=True,
-            has_elevated_platform=True,
-            material_is_cat_safe=True,
-            edge_radius_mm=5.0,
-            max_cable_exposure_cm=5.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertTrue(is_valid)
-        stability_warnings = [w for w in result["warnings"] if "aspect ratio" in w.lower()]
-        self.assertGreater(len(stability_warnings), 0)
-    
-    def test_multiple_errors(self):
-        """Test validation with multiple simultaneous errors."""
-        spec = DeskSpecification(
-            name="BadDesk",
-            width_cm=50.0,
-            depth_cm=30.0,
-            height_cm=150.0,
-            material="untreated_plastic",
-            weight_capacity_kg=10.0,
-            has_cable_management=False,
-            has_cat_shelf=False,
-            has_elevated_platform=False,
-            material_is_cat_safe=False,
-            edge_radius_mm=0.5,
-            max_cable_exposure_cm=50.0
-        )
-        
-        is_valid, result = self.validator.validate(spec)
-        
-        self.assertFalse(is_valid)
-        self.assertGreater(result["error_count"], 4)
+        if desk.height_cm < self.MIN_HEIGHT_CM:
+            issues.append(f"Height {desk.height_cm}cm is below minimum {self.MIN_HEIGHT_CM}cm")
+        elif desk.height_cm > self.MAX_HEIGHT_CM:
+            issues.append(f"Height {desk.height_cm}cm exceeds maximum {self.MAX_HEIGHT_CM}cm")
 
+        if desk.width_cm < self.MIN_WIDTH_CM:
+            issues.append(f"Width {desk.width_cm}cm is below minimum {self.MIN_WIDTH_CM}cm")
 
-class DeskComplianceChecker:
-    """Check desk against compliance standards."""
-    
-    COMPLIANCE_STANDARDS = {
-        SafetyStandard.SHARP_EDGES: "Edges must have minimum 2mm radius",
-        SafetyStandard.STABILITY: "Desk must support cat jumping",
-        SafetyStandard.CHEMICAL_SAFETY: "Material must be non-toxic",
-        SafetyStandard.ELECTRICAL_SAFETY: "Cables must be protected",
-        SafetyStandard.CAT_TOXICITY: "Must use cat-safe materials"
-    }
-    
-    def __init__(self):
-        self.compliance_results: Dict[SafetyStandard, bool] = {}
-    
-    def check_compliance(self, spec: DeskSpecification) -> Dict:
-        """Check desk against all compliance standards."""
-        self.compliance_results = {}
-        
-        validator = DeskValidator()
-        is_valid, validation_result = validator.validate(spec)
-        
-        self.compliance_results[SafetyStandard.SHARP_EDGES] = (
-            spec.edge_radius_mm >= validator.MIN_EDGE_RADIUS_MM
+        if desk.depth_cm < self.MIN_DEPTH_CM:
+            issues.append(f"Depth {desk.depth_cm}cm is below minimum {self.MIN_DEPTH_CM}cm")
+
+        passed = len(issues) == 0
+        severity = SafetyLevel.SAFE if passed else SafetyLevel.HIGH
+        message = "Dimensions are appropriate" if passed else "; ".join(issues)
+
+        result = ValidationResult(
+            passed=passed,
+            category="dimensions",
+            message=message,
+            severity=severity,
+            details={
+                "height_cm": desk.height_cm,
+                "width_cm": desk.width_cm,
+                "depth_cm": desk.depth_cm
+            }
         )
-        self.compliance_results[SafetyStandard.STABILITY] = (
-            spec.weight_capacity_kg >= validator.MIN_WEIGHT_CAPACITY_KG
+        self.validation_results.append(result)
+        return result
+
+    def validate_material_safety(self, desk: DeskSpecification) -> ValidationResult:
+        """Validate material is non-toxic and safe for cats"""
+        passed = desk.material in self.SAFE_MATERIALS
+        severity = SafetyLevel.CRITICAL if not passed else SafetyLevel.SAFE
+        message = f"Material {desk.material.value} is safe for cats" if passed else \
+                  f"Material {desk.material.value} may not be suitable for cat environments"
+
+        result = ValidationResult(
+            passed=passed,
+            category="material_safety",
+            message=message,
+            severity=severity,
+            details={"material": desk.material.value}
         )
-        self.compliance_results[SafetyStandard.CHEMICAL_SAFETY] = (
-            spec.material_is_cat_safe
+        self.validation_results.append(result)
+        return result
+
+    def validate_structural_stability(self, desk: DeskSpecification) -> ValidationResult:
+        """Validate desk structural stability"""
+        issues = []
+
+        if desk.stable_legs < self.MIN_STABLE_LEGS:
+            issues.append(f"Only {desk.stable_legs} legs; minimum {self.MIN_STABLE_LEGS} required")
+
+        if desk.max_weight_kg < self.MIN_MAX_WEIGHT_KG:
+            issues.append(f"Max weight {desk.max_weight_kg}kg is below minimum {self.MIN_MAX_WEIGHT_KG}kg")
+
+        if not desk.rounded_corners:
+            issues.append("Sharp corners pose injury risk to cats")
+
+        passed = len(issues) == 0
+        severity = SafetyLevel.CRITICAL if not passed else SafetyLevel.SAFE
+
+        result = ValidationResult(
+            passed=passed,
+            category="structural_stability",
+            message="Structure is stable and safe" if passed else "; ".join(issues),
+            severity=severity,
+            details={
+                "stable_legs": desk.stable_legs,
+                "max_weight_kg": desk.max_weight_kg,
+                "rounded_corners": desk.rounded_corners
+            }
         )
-        self.compliance_results[SafetyStandard.ELECTRICAL_SAFETY] = (
-            spec.has_cable_management and 
-            spec.max_cable_exposure_cm <= validator.MAX_CABLE_EXPOSURE_CM
+        self.validation_results.append(result)
+        return result
+
+    def validate_cable_management(self, desk: DeskSpecification) -> ValidationResult:
+        """Validate cable management prevents cat chewing hazards"""
+        passed = desk.has_cable_management
+        severity = SafetyLevel.HIGH if not passed else SafetyLevel.SAFE
+        message = "Cable management system present" if passed else \
+                  "Cable management system required to prevent cat chewing"
+
+        result = ValidationResult(
+            passed=passed,
+            category="cable_management",
+            message=message,
+            severity=severity,
+            details={"has_cable_management": desk.has_cable_management}
         )
-        self.compliance_results[SafetyStandard.CAT_TOXICITY] = (
-            spec.material_is_cat_safe
+        self.validation_results.append(result)
+        return result
+
+    def validate_cat_comfort(self, desk: DeskSpecification) -> ValidationResult:
+        """Validate desk includes cat comfort features"""
+        comfort_features = []
+
+        if desk.has_cat_bed_space:
+            comfort_features.append("Dedicated cat bed space")
+        if desk.ventilation_slots >= 2:
+            comfort_features.append(f"Adequate ventilation ({desk.ventilation_slots} slots)")
+        if desk.has_raised_edges:
+            comfort_features.append("Raised edges for napping safety")
+
+        passed = len(comfort_features) >= 2
+        severity = SafetyLevel.MEDIUM if not passed else SafetyLevel.SAFE
+        message = f"Good comfort features: {', '.join(comfort_features)}" if passed else \
+                  "Limited comfort features for cats"
+
+        result = ValidationResult(
+            passed=passed,
+            category="cat_comfort",
+            message=message,
+            severity=severity,
+            details={
+                "has_cat_bed_space": desk.has_cat_bed_space,
+                "ventilation_slots": desk.ventilation_slots,
+                "has_raised_edges": desk.has_raised_edges,
+                "comfort_features": comfort_features
+            }
         )
-        
-        passed_checks = sum(1 for v in self.compliance_results.values() if v)
-        total_checks = len(self.compliance_results)
-        
+        self.validation_results.append(result)
+        return result
+
+    def validate_adjustability(self, desk: DeskSpecification) -> ValidationResult:
+        """Validate desk has adjustable features for ergonomics"""
+        passed = desk.is_adjustable
+        severity = SafetyLevel.LOW if not passed else SafetyLevel.SAFE
+        message = "Adjustable height for ergonomic comfort" if passed else \
+                  "Fixed height may limit ergonomic options"
+
+        result = ValidationResult(
+            passed=passed,
+            category="adjustability",
+            message=message,
+            severity=severity,
+            details={"is_adjustable": desk.is_adjustable}
+        )
+        self.validation_results.append(result)
+        return result
+
+    def validate_complete(self, desk: DeskSpecification) -> Dict:
+        """Run all validations and return comprehensive report"""
+        self.validation_results = []
+
+        self.validate_dimensions(desk)
+        self.validate_material_safety(desk)
+        self.validate_structural_stability(desk)
+        self.validate_cable_management(desk)
+        self.validate_cat_comfort(desk)
+        self.validate_adjustability(desk)
+
+        critical_issues = [r for r in self.validation_results if r.severity == SafetyLevel.CRITICAL]
+        high_issues = [r for r in self.validation_results if r.severity == SafetyLevel.HIGH]
+        all_passed = len(critical_issues) == 0
+
         return {
-            "desk_name": spec.name,
-            "overall_compliant": all(self.compliance_results.values()),
-            "compliance_scores": {
-                standard.value: passed 
-                for standard, passed in self.compliance_results.items()
-            },
-            "passed_checks": passed_checks,
-            "total_checks": total_checks,
-            "compliance_percentage": (passed_checks / total_checks) * 100,
-            "standards_details": self.COMPLIANCE_STANDARDS,
-            "validation_result": validation_result
+            "desk_name": desk.name,
+            "timestamp": self.timestamp,
+            "overall_passed": all_passed,
+            "critical_issues": len(critical_issues),
+            "high_priority_issues": len(high_issues),
+            "total_checks": len(self.validation_results),
+            "passed_checks": len([r for r in self.validation_results if r.passed]),
+            "results": [
+                {
+                    "category": r.category,
+                    "passed": r.passed,
+                    "severity": r.severity.value,
+                    "message": r.message,
+                    "details": r.details
+                }
+                for r in self.validation_results
+            ]
         }
 
 
-def run_validation_suite(spec: DeskSpecification) -> Dict:
-    """Run complete validation and compliance suite."""
-    validator = DeskValidator()
-    checker = DeskComplianceChecker()
-    
-    is_valid, validation_result = validator.validate(spec)
-    compliance_result = checker.check_compliance(spec)
-    
-    return {
-        "desk_specification": asdict(spec),
-        "validation": validation_result,
-        "compliance": compliance_result,
-        "overall_pass": is_valid and compliance_result["overall_compliant"],
-        "summary": f"Desk '{spec.name}' is {'suitable' if is_valid and compliance_result['overall_compliant'] else 'unsuitable'} for home office with cat"
-    }
+class TestCatFriendlyDeskValidator(unittest.TestCase):
+    """Unit tests for CatFriendlyDeskValidator"""
+
+    def setUp(self):
+        """Set up test fixtures"""
+        self.validator = CatFriendlyDeskValidator()
+        
+        self.ideal_desk = DeskSpecification(
+            name="PawPad Pro",
+            height_cm=75,
+            width_cm=120,
+            depth_cm=70,
+            material=DeskMaterialType.BAMBOO,
+            has_cable_management=True,
+            has_raised_edges=True,
+            max_weight_kg=100,
+            is_adjustable=True,
+            has_cat_bed_space=True,
+            ventilation_slots=4,
+            stable_legs=4,
+            rounded_corners=True
+        )
+
+    def test_ideal_desk_passes_all_validations(self):
+        """Test that an ideal desk passes all validations"""
+        report = self.validator.validate_complete(self.ideal_desk)
+        self.assertTrue(report["overall_passed"])
+        self.assertEqual(report["critical_issues"], 0)
+        self.assertEqual(report["high_priority_issues"], 0)
+        self.assertEqual(report["passed_checks"], 6)
+
+    def test_dimension_validation_too_short(self):
+        """Test desk that is too short fails dimension validation"""
+        short_desk = DeskSpecification(
+            name="Shorty Desk",
+            height_cm=60,
+            width_cm=120,
+            depth_cm=70,
+            material=DeskMaterialType.BAMBOO,
+            has_cable_management=True,
+            has_raised_edges=True,
+            max_weight_kg=100,
+            is_adjustable=True,
+            has_cat_bed_space=True,
+            ventilation_slots=4,
+            stable_legs=4,
+            rounded_corners=True
+        )
+        result = self.validator.validate_dimensions(short_desk)
+        self.assertFalse(result.passed)
+        self.assertEqual(result.severity, SafetyLevel.HIGH)
+
+    def test_dimension_validation_too_wide(self):
+        """Test desk that is too tall fails dimension validation"""
+        tall_desk = DeskSpecification(
+            name="Tower Desk",
+            height_cm=130,
+            width_cm=120,
+            depth_cm=70,
+            material=DeskMaterialType.BAMBOO,
+            has_cable_management=True,
+            has_raised_edges=True,
+            max_weight_kg=100,
+            is_adjustable=True,
+            has_cat_bed_space=True,
+            ventilation_slots=4,
+            stable_legs=4,
+            rounded_corners=True
+        )
+        result = self.validator.validate_dimensions(tall_desk)
+        self.assertFalse(result.passed)
+
+    def test_material_safety_validation_laminate(self):
+        """Test unsafe material fails material safety validation"""
+        unsafe_desk = DeskSpecification(
+            name="Laminate Desk",
+            height_cm=75,
+            width_cm=120,
+            depth_cm=70,
+            material=DeskMaterialType.LAMINATE,
+            has_cable_management=True,
+            has_raised_edges=True,
+            max_weight_kg=100,
+            is_adjustable=True,
+            has_cat_bed_space=True,
+            ventilation_slots=4,
+            stable_legs=4,
+            rounded_corners=True
+        )
+        result = self.validator.validate_material_safety(unsafe_desk)
+        self.assertFalse(result.passed)
+        self.assertEqual(result.severity, SafetyLevel.CRITICAL)
+
+    def test_structural_stability_sharp_corners(self):
+        """Test desk with sharp corners fails stability validation"""
+        unsafe_desk = DeskSpecification(
+            name="Sharp Corner Desk",
+            height_cm=75,
+            width_cm=120,
+            depth_cm=70,
+            material=DeskMaterialType.BAMBOO,
+            has_cable_management=True,
+            has_raised_edges=True,
+            max_weight_kg=100,
+            is_adjustable=True,
+            has_cat_bed_space=True,
+            ventilation_slots=4,
+            stable_legs=4,
+            rounded_corners=False
+        )
+        result = self.validator.validate_structural_stability(unsafe_desk)
+        self.assertFalse(result.passed)
+        self.assertEqual(result.severity, SafetyLevel.CRITICAL)
+
+    def test_structural_stability_three_legs(self):
+        """Test desk with only 3 legs fails stability validation"""
+        unstable_desk = DeskSpecification(
+            name="Wobbly Desk",
+            height_cm=75,
+            width_cm=120,
+            depth_cm=70,
+            material=DeskMaterialType.BAMBOO,
+            has_cable_management=True,
+            has_raised_edges=True,
+            max_weight_kg=100,
+            is_adjustable=True,
+            has_cat_bed_space=True,
+            ventilation_slots=4,
+            stable_legs=3,
+            rounded_corners=True
+        )
+        result = self.validator.validate_structural_stability(unstable_desk)
+        self.assertFalse(result.passed)
+
+    def test_cable_management_validation(self):
+        """Test missing cable management fails validation"""
+        no_cable_desk = DeskSpecification(
+            name="Exposed Cable Desk",
+            height_cm=75,
+            width_cm=120,
+            depth_cm=70,
+            material=DeskMaterialType.BAMBOO,
+            has_cable_management=False,
+            has_raised_edges=True,
+            max_weight_kg=100,
+            is_adjustable=True,
+            has_cat_bed_space=True,
+            ventilation_slots=4,
+            stable_legs=4,
+            rounded_corners=True
+        )
+        result = self.validator.validate_cable_management(no_cable_desk)
+        self.assertFalse(result.passed)
+        self.assertEqual(result.severity, SafetyLevel.HIGH)
+
+    def test_cat_comfort_validation_minimal(self):
+        """Test desk with minimal cat comfort features"""
+        minimal_comfort_desk = DeskSpecification(
+            name="Minimal Comfort Desk",
+            height_cm=75,
+            width_cm=120,
+            depth_cm=70,
+            material=DeskMaterialType.BAMBOO,
+            has_cable_management=True,
+            has_raised_edges=False,
+            max_weight_kg=100,
+            is_adjustable=True,
+            has_cat_bed_space=False,
+            ventilation_slots=0,
+            stable_legs=4,
+            rounded_corners=True
+        )
+        result = self.validator.validate_cat_comfort(minimal_comfort_desk)
+        self.assertFalse(result.passed)
+
+    def test_cat_comfort_validation_excellent(self):
+        """Test desk with excellent cat comfort features"""
+        comfort_desk = DeskSpecification(
+            name="Comfort Desk",
+            height_cm=75,
+            width_cm=120,
+            depth_cm=70,
+            material=DeskMaterialType.BAMBOO,
+            has_cable_management=True,
+            has_raised_edges=True,
+            max_weight_kg=100,
+            is_adjustable=True,
+            has_cat_bed_space=True,
+            ventilation_slots=4,
+            stable_legs=4,
+            rounded_corners=True
+        )
+        result = self.validator.validate_cat_comfort(comfort_desk)
+        self.assertTrue(result.passed)
+
+    def test_adjustability_validation(self):
+        """Test adjustability validation"""
+        fixed_desk = DeskSpecification(
+            name="Fixed Desk",
+            height_cm=75,
+            width_cm=120,
+            depth_cm=70,
+            material=DeskMaterialType.BAMBOO,
+            has_cable_management=True,
+            has_raised_edges=True,
+            max_weight_kg=100,
+            is_adjustable=False,
+            has_cat_bed_space=True,
+            ventilation_slots=4,
+            stable_legs=4,
+            rounded_corners=True
+        )
+        result = self.validator.validate_adjustability(fixed_desk)
+        self.assertFalse(result.passed)
+        self.assertEqual(result.severity, SafetyLevel.LOW)
+
+    def test_report_structure(self):
+        """Test that validation report has correct structure"""
+        report = self.validator.validate_complete(self.ideal_desk)
+        
+        self.assertIn("desk_name", report)
+        self.assertIn("timestamp", report)
+        self.assertIn("overall_passed", report)
+        self.assertIn("critical_issues", report)
+        self.assertIn("high_priority_issues", report)
+        self.assertIn("total_checks", report)
+        self.assertIn("passed_checks", report)
+        self.assertIn("results", report)
+        
+        self.assertEqual(report["total_checks"], 6)
+        self.assertIsInstance(report["results"], list)
+
+    def test_multiple_issues_desk(self):
+        """Test desk with multiple safety issues"""
+        problem_desk = DeskSpecification(
+            name="Problem Desk",
+            height_cm=50,
+            width_cm=80,
+            depth_cm=40,
+            material=DeskMaterialType.LAMINATE,
+            has_cable_management=False,
+            has_raised_edges=False,
+            max_weight_kg=30,
+            is_adjustable=False,
+            has_cat_bed_space=False,
+            ventilation_slots=0,
+            stable_legs=3,
+            rounded_corners=False
+        )
+        report = self.validator.validate_complete(problem_desk)
+        
+        self.assertFalse(report["overall_passed"])
+        self.assertGreater(report["critical_issues"], 0)
+        self.assertGreater(report["high_priority_issues"], 0)
+
+    def test_validation_results_persistence(self):
+        """Test that validation results are stored"""
+        self.validator.validate_complete(self.ideal_desk)
+        self.assertEqual(len(self.validator.validation_results), 6)
+
+    def test_severity_levels(self):
+        """Test that correct severity levels are assigned"""
+        report = self.validator.validate_complete(self.ideal_desk)
+        
+        for result in report["results"]:
+            self.assertIn(result["severity"], [
+                SafetyLevel.CRITICAL.value,
+                SafetyLevel.HIGH.value,
+                SafetyLevel.MEDIUM.value,
+                SafetyLevel.LOW.value,
+                SafetyLevel.SAFE.value
+            ])
+
+
+def generate_test_desks() -> List[DeskSpecification]:
+    """Generate sample desks for demonstration"""
+    return [
+        DeskSpecification(
+            name="Premium PawPad",
+            height_cm=75,
+            width_cm=150,
+            depth_cm=80,
+            material=DeskMaterialType.SOLID_WOOD,
+            has_cable_management=True,
+            has_raised_edges=True,
+            max_weight_kg=120,
+            is_adjustable=True,
+            has_cat_bed_space=True,
+            ventilation_slots=6,
+            stable_legs=4,
+            rounded_corners=True
+        ),
+        DeskSpecification(
+            name="Budget Cat Desk",
+            height_cm=72,
+            width_cm=100,
+            depth_cm=60,
+            material=DeskMaterialType.BAMBOO,
+            has_cable_management=True,
+            has_raised_edges=False,
+            max_weight_kg=60,
+            is_adjustable=False,
+            has_cat_bed_space=True,
+            ventilation_slots=2,
+            stable_legs=4,
+            rounded_corners=True
+        ),
+        DeskSpecification(
+            name="Unsafe Laminate Desk",
+            height_cm=78,
+            width_cm=120,
+            depth_cm=65,
+            material=DeskMaterialType.LAMINATE,
+            has_cable_management=False,
+            has_raised_edges=False,
+            max_weight_km=80,
+            is_adjustable=False,
+            has_cat_bed_space=False,
+            ventilation_slots=1,
+            stable_legs=4,
+            rounded_corners=False
+        ),
+        DeskSpecification(
+            name="Metal Frame Desk",
+            height_cm=76,
+            width_cm=140,
+            depth_cm=75,
+            material=DeskMaterialType.METAL,
+            has_cable_management=True,
+            has_raised_edges=True,
+            max_weight_kg=110,
+            is_adjustable=True,
+            has_cat_bed_space=False,
+            ventilation_slots=3,
+            stable_legs=4,
+            rounded_corners=True
+        ),
+    ]
 
 
 def main():
-    """Main entry point with CLI."""
+    """Main entry point with CLI interface"""
     parser = argparse.ArgumentParser(
-        description="Validate home office desks for cat compatibility"
+        description="Validate cat-friendly work desk specifications",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --validate-all
+  %(prog)s --run-tests
+  %(prog)s --validate-all --output report.json
+        """
     )
+    
+    parser.add_argument(
+        "--validate-all",
+        action="store_true",
+        help="Validate all sample desks"
+    )
+    
     parser.add_argument(
         "--run-tests",
         action="store_true",
-        help="Run unit tests"
+        help="Run all unit tests"
     )
+    
     parser.add_argument(
-        "--demo",
-        action="store_true",
-        default=True,
-        help="Run demonstration with sample desks"
+        "--output",
+        type=str,
+        default=None,
+        help="Output file for validation reports (JSON)"
     )
-    parser.add_argument(
-        "--json-output",
-        action="store_true",
-        help="Output results as JSON"
-    )
+    
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -624,102 +651,42 @@ def main():
     args = parser.parse_args()
     
     if args.run_tests:
-        loader = unittest.TestLoader()
-        suite = loader.loadTestsFromTestCase(TestDeskValidator)
-        runner = unittest.TextTestRunner(verbosity=2)
+        suite = unittest.TestLoader().loadTestsFromTestCase(TestCatFriendlyDeskValidator)
+        runner = unittest.TextTestRunner(verbosity=2 if args.verbose else 1)
         result = runner.run(suite)
-        sys.exit(0 if result.wasSuccessful() else 1)
+        return 0 if result.wasSuccessful() else 1
     
-    if args.demo:
-        sample_desks = [
-            DeskSpecification(
-                name="CatFriendly Pro Max",
-                width_cm=120.0,
-                depth_cm=65.0,
-                height_cm=75.0,
-                material="natural_laminate",
-                weight_capacity_kg=60.0,
-                has_cable_management=True,
-                has_cat_shelf=True,
-                has_elevated_platform=True,
-                material_is_cat_safe=True,
-                edge_radius_mm=6.0,
-                max_cable_exposure_cm=3.0
-            ),
-            DeskSpecification(
-                name="Budget Office Desk",
-                width_cm=100.0,
-                depth_cm=50.0,
-                height_cm=74.0,
-                material="laminate",
-                weight_capacity_kg=30.0,
-                has_cable_management=False,
-                has_cat_shelf=False,
-                has_elevated_platform=False,
-                material_is_cat_safe=True,
-                edge_radius_mm=1.5,
-                max_cable_exposure_cm=8.0
-            ),
-            DeskSpecification(
-                name="Premium Wood Desk",
-                width_cm=140.0,
-                depth_cm=70.0,
-                height_cm=76.0,
-                material="untreated_wood",
-                weight_capacity_kg=75.0,
-                has_cable_management=True,
-                has_cat_shelf=True,
-                has_elevated_platform=True,
-                material_is_cat_safe=True,
-                edge_radius_mm=8.0,
-                max_cable_exposure_cm=2.0
-            ),
-            DeskSpecification(
-                name="Cheap Plastic Desk",
-                width_cm=95.0,
-                depth_cm=45.0,
-                height_cm=72.0,
-                material="untreated_plastic",
-                weight_capacity_kg=20.0,
-                has_cable_management=False,
-                has_cat_shelf=False,
-                has_elevated_platform=False,
-                material_is_cat_safe=False,
-                edge_radius_mm=0.5,
-                max_cable_exposure_cm=15.0
-            )
-        ]
+    if args.validate_all:
+        validator = CatFriendlyDeskValidator()
+        desks = generate_test_desks()
+        reports = []
         
-        results = []
-        for desk in sample_desks:
-            result = run_validation_suite(desk)
-            results.append(result)
+        for desk in desks:
+            report = validator.validate_complete(desk)
+            reports.append(report)
+            
+            if args.verbose:
+                print(f"\n{'='*60}")
+                print(f"Desk: {desk.name}")
+                print(f"{'='*60}")
+                print(json.dumps(report, indent=2))
+            else:
+                status = "✓ PASS" if report["overall_passed"] else "✗ FAIL"
+                print(f"{status} | {desk.name:30} | Issues: "
+                      f"Critical={report['critical_issues']}, "
+                      f"High={report['high_priority_issues']}")
         
-        if args.json_output:
-            print(json.dumps(results, indent=2))
-        else:
-            for result in results:
-                print("\n" + "="*70)
-                print(f"Desk: {result['desk_specification']['name']}")
-                print(f"Status: {result['summary']}")
-                print(f"Overall Pass: {result['overall_pass']}")
-                
-                if args.verbose:
-                    print("\nValidation Errors:")
-                    for error in result['validation']['errors']:
-                        print(f"  ✗ {error}")
-                    
-                    print("\nValidation Warnings:")
-                    for warning in result['validation']['warnings']:
-                        print(f"  ⚠ {warning}")
-                    
-                    print("\nCompliance Checks:")
-                    for standard, passed in result['compliance']['compliance_scores'].items():
-                        status = "✓" if passed else "✗"
-                        print(f"  {status} {standard}")
-                    
-                    print(f"\nCompliance: {result['compliance']['compliance_percentage']:.1f}%")
+        if args.output:
+            with open(args.output, "w") as f:
+                json.dump(reports, f, indent=2)
+            print(f"\nReports saved to {args.output}")
+        
+        return 0
+    
+    if not args.validate_all and not args.run_tests:
+        parser.print_help()
+        return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
