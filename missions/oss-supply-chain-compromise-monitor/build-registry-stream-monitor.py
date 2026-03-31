@@ -3,7 +3,7 @@
 # Task:    Build registry stream monitor
 # Mission: OSS Supply Chain Compromise Monitor
 # Agent:   @dex
-# Date:    2026-03-29T13:21:14.244Z
+# Date:    2026-03-31T18:52:45.619Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
@@ -11,275 +11,56 @@
 Task: Build registry stream monitor
 Mission: OSS Supply Chain Compromise Monitor
 Agent: @dex
-Date: 2024
+Date: 2024-01-15
 
-Continuous monitoring for open-source supply chain attacks via registry stream ingestion,
-typosquatting detection, behavioral diffing, SBOM generation, and maintainer change alerts.
+Monitors open-source package registries for supply chain attacks including
+typosquatting detection, behavioral diffing, SBOM generation, and maintainer
+change alerts.
 """
 
 import argparse
 import json
-import sys
-import time
 import hashlib
 import re
+import sys
+import time
 from datetime import datetime, timedelta
+from typing import Dict, List, Any, Tuple
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional, Set, Tuple
 from collections import defaultdict
-import random
-import string
+import urllib.request
+import urllib.error
+
+
+@dataclass
+class PackageMetadata:
+    name: str
+    version: str
+    timestamp: str
+    maintainer: str
+    size: int
+    hash_sha256: str
+    dependencies: List[str]
+    files: List[str]
 
 
 @dataclass
 class RegistryEvent:
-    """Represents a package registry event."""
-    timestamp: str
+    event_type: str
     package_name: str
     version: str
-    action: str  # 'publish', 'unpublish', 'yank', 'owner_change'
-    author: str
-    size_bytes: int
-    dependencies: List[str]
-    checksum: str
-    metadata: Dict
-
-
-@dataclass
-class TyposquattingAlert:
-    """Alert for potential typosquatting."""
     timestamp: str
-    suspicious_package: str
-    legitimate_package: str
-    similarity_score: float
-    risk_level: str  # 'low', 'medium', 'high'
-    reason: str
+    severity: str
+    details: Dict[str, Any]
 
 
-@dataclass
-class MaintainerChangeAlert:
-    """Alert for maintainer changes."""
-    timestamp: str
-    package_name: str
-    old_maintainer: str
-    new_maintainer: str
-    action_type: str
-    risk_level: str
-
-
-@dataclass
-class BehaviorDiffAlert:
-    """Alert for behavioral changes in package."""
-    timestamp: str
-    package_name: str
-    version_old: str
-    version_new: str
-    changes: List[str]
-    risk_level: str
-
-
-class RegistryStreamMonitor:
-    """Monitors open-source registry streams for supply chain attacks."""
-
-    def __init__(self, registry_type: str = "pypi", check_interval: int = 60):
-        self.registry_type = registry_type
-        self.check_interval = check_interval
-        self.known_packages: Dict[str, Dict] = {}
-        self.package_history: Dict[str, List] = defaultdict(list)
-        self.known_maintainers: Dict[str, Set[str]] = defaultdict(set)
-        self.typosquatting_alerts: List[TyposquattingAlert] = []
-        self.maintainer_alerts: List[MaintainerChangeAlert] = []
-        self.behavior_alerts: List[BehaviorDiffAlert] = []
-        self.registry_events: List[RegistryEvent] = []
-
-    def ingest_registry_event(self, event: RegistryEvent) -> None:
-        """Ingest a registry event and process it."""
-        self.registry_events.append(event)
-        
-        # Update package history
-        if event.package_name not in self.package_history:
-            self.package_history[event.package_name] = []
-        
-        self.package_history[event.package_name].append({
-            'timestamp': event.timestamp,
-            'version': event.version,
-            'action': event.action,
-            'author': event.author,
-            'size_bytes': event.size_bytes,
-            'dependencies': event.dependencies,
-            'checksum': event.checksum
-        })
-        
-        # Update known packages
-        if event.action in ['publish', 'owner_change']:
-            if event.package_name not in self.known_packages:
-                self.known_packages[event.package_name] = {
-                    'first_seen': event.timestamp,
-                    'versions': set(),
-                    'maintainers': set()
-                }
-            
-            self.known_packages[event.package_name]['versions'].add(event.version)
-            self.known_packages[event.package_name]['maintainers'].add(event.author)
-            self.known_maintainers[event.package_name].add(event.author)
-
-    def detect_typosquatting(self, new_package: str, similarity_threshold: float = 0.75) -> Optional[TyposquattingAlert]:
-        """Detect potential typosquatting attacks."""
-        if new_package in self.known_packages:
-            return None
-        
-        # Check against known packages
-        best_match = None
-        best_score = 0.0
-        
-        for known_pkg in self.known_packages.keys():
-            score = self._levenshtein_similarity(new_package, known_pkg)
-            if score > best_score:
-                best_score = score
-                best_match = known_pkg
-        
-        if best_score >= similarity_threshold and best_match:
-            risk_level = self._calculate_typosquatting_risk(new_package, best_match, best_score)
-            
-            alert = TyposquattingAlert(
-                timestamp=datetime.utcnow().isoformat(),
-                suspicious_package=new_package,
-                legitimate_package=best_match,
-                similarity_score=best_score,
-                risk_level=risk_level,
-                reason=f"High similarity to legitimate package '{best_match}'"
-            )
-            self.typosquatting_alerts.append(alert)
-            return alert
-        
-        return None
-
-    def detect_maintainer_changes(self, package_name: str, new_maintainer: str) -> Optional[MaintainerChangeAlert]:
-        """Detect and alert on maintainer changes."""
-        if package_name not in self.known_packages:
-            return None
-        
-        current_maintainers = self.known_packages[package_name]['maintainers']
-        
-        if new_maintainer not in current_maintainers and len(current_maintainers) > 0:
-            old_maintainers = list(current_maintainers)
-            risk_level = self._calculate_maintainer_risk(package_name, old_maintainers, new_maintainer)
-            
-            alert = MaintainerChangeAlert(
-                timestamp=datetime.utcnow().isoformat(),
-                package_name=package_name,
-                old_maintainer=old_maintainers[0] if old_maintainers else "unknown",
-                new_maintainer=new_maintainer,
-                action_type='owner_addition' if current_maintainers else 'owner_change',
-                risk_level=risk_level
-            )
-            self.maintainer_alerts.append(alert)
-            return alert
-        
-        return None
-
-    def detect_behavior_changes(self, package_name: str, old_version: str, new_version: str) -> Optional[BehaviorDiffAlert]:
-        """Detect behavioral changes between package versions."""
-        old_data = self._get_version_data(package_name, old_version)
-        new_data = self._get_version_data(package_name, new_version)
-        
-        if not old_data or not new_data:
-            return None
-        
-        changes = []
-        
-        # Check dependency changes
-        old_deps = set(old_data.get('dependencies', []))
-        new_deps = set(new_data.get('dependencies', []))
-        
-        added_deps = new_deps - old_deps
-        removed_deps = old_deps - new_deps
-        
-        if added_deps:
-            changes.append(f"Added dependencies: {', '.join(added_deps)}")
-        if removed_deps:
-            changes.append(f"Removed dependencies: {', '.join(removed_deps)}")
-        
-        # Check size changes
-        old_size = old_data.get('size_bytes', 0)
-        new_size = new_data.get('size_bytes', 0)
-        size_change_pct = ((new_size - old_size) / old_size * 100) if old_size > 0 else 0
-        
-        if abs(size_change_pct) > 50:
-            changes.append(f"Size changed by {size_change_pct:.1f}%")
-        
-        # Check maintainer changes
-        old_author = old_data.get('author', '')
-        new_author = new_data.get('author', '')
-        
-        if old_author != new_author:
-            changes.append(f"Author changed from '{old_author}' to '{new_author}'")
-        
-        if changes:
-            risk_level = self._calculate_behavior_risk(changes, package_name)
-            
-            alert = BehaviorDiffAlert(
-                timestamp=datetime.utcnow().isoformat(),
-                package_name=package_name,
-                version_old=old_version,
-                version_new=new_version,
-                changes=changes,
-                risk_level=risk_level
-            )
-            self.behavior_alerts.append(alert)
-            return alert
-        
-        return None
-
-    def generate_sbom(self, package_name: str, version: str) -> Dict:
-        """Generate a Software Bill of Materials (SBOM) for a package."""
-        version_data = self._get_version_data(package_name, version)
-        
-        if not version_data:
-            return {}
-        
-        sbom = {
-            "sbom_version": "1.3",
-            "generated_at": datetime.utcnow().isoformat(),
-            "package": {
-                "name": package_name,
-                "version": version,
-                "author": version_data.get('author', 'unknown'),
-                "checksum": version_data.get('checksum', ''),
-            },
-            "dependencies": []
-        }
-        
-        for dep in version_data.get('dependencies', []):
-            sbom["dependencies"].append({
-                "name": dep,
-                "version": "unknown",
-                "resolved": False
-            })
-        
-        return sbom
-
-    def _levenshtein_similarity(self, str1: str, str2: str) -> float:
-        """Calculate Levenshtein distance-based similarity score."""
-        str1_lower = str1.lower()
-        str2_lower = str2.lower()
-        
-        if str1_lower == str2_lower:
-            return 1.0
-        
-        # Normalize common variations
-        if self._are_similar_names(str1_lower, str2_lower):
-            return 0.95
-        
-        max_len = max(len(str1), len(str2))
-        if max_len == 0:
-            return 1.0
-        
-        distance = self._levenshtein_distance(str1_lower, str2_lower)
-        similarity = 1.0 - (distance / max_len)
-        
-        return similarity
-
+class TyposquattingDetector:
+    """Detects potential typosquatting attacks on package names."""
+    
+    def __init__(self, levenshtein_threshold: int = 2):
+        self.threshold = levenshtein_threshold
+        self.known_packages = set()
+    
     def _levenshtein_distance(self, s1: str, s2: str) -> int:
         """Calculate Levenshtein distance between two strings."""
         if len(s1) < len(s2):
@@ -299,121 +80,438 @@ class RegistryStreamMonitor:
             previous_row = current_row
         
         return previous_row[-1]
-
-    def _are_similar_names(self, name1: str, name2: str) -> bool:
-        """Check if names are similar using common typosquatting patterns."""
-        # Check for common character swaps, omissions, additions
-        patterns = [
-            (name1.replace('_', '-'), name2.replace('_', '-')),
-            (name1.replace('-', ''), name2.replace('-', '')),
-            (name1.replace('_', ''), name2.replace('_', '')),
+    
+    def _has_suspicious_patterns(self, package_name: str) -> bool:
+        """Check for suspicious patterns in package names."""
+        suspicious_patterns = [
+            r'_+',
+            r'-{2,}',
+            r'\.{2,}',
+            r'\d{5,}',
+            r'(npm|pypi|pip|ruby|gem|crate)',
         ]
-        
-        for p1, p2 in patterns:
-            if p1 == p2:
+        for pattern in suspicious_patterns:
+            if re.search(pattern, package_name, re.IGNORECASE):
                 return True
-        
         return False
+    
+    def check_typosquatting(self, package_name: str) -> Tuple[bool, List[str]]:
+        """Check if package_name is a potential typosquat of known packages."""
+        if not self.known_packages:
+            return False, []
+        
+        if self._has_suspicious_patterns(package_name):
+            return True, []
+        
+        suspects = []
+        for known_pkg in self.known_packages:
+            distance = self._levenshtein_distance(package_name.lower(), known_pkg.lower())
+            if 0 < distance <= self.threshold:
+                suspects.append(known_pkg)
+        
+        return len(suspects) > 0, suspects
+    
+    def register_package(self, package_name: str):
+        """Register a known legitimate package."""
+        self.known_packages.add(package_name.lower())
 
-    def _calculate_typosquatting_risk(self, suspicious: str, legitimate: str, similarity: float) -> str:
-        """Calculate risk level for typosquatting alert."""
-        if similarity >= 0.95:
-            return 'high'
-        elif similarity >= 0.85:
-            return 'medium'
-        else:
-            return 'low'
 
-    def _calculate_maintainer_risk(self, package_name: str, old_maintainers: List[str], new_maintainer: str) -> str:
-        """Calculate risk level for maintainer change."""
-        # High risk if replacing all maintainers, medium if adding new ones
-        if not old_maintainers:
-            return 'high'
-        
-        # Check if new maintainer is suspicious (short username, random characters, etc.)
-        if self._is_suspicious_username(new_maintainer):
-            return 'high'
-        
-        # Popular packages have higher risk
-        if package_name in self.known_packages:
-            version_count = len(self.known_packages[package_name]['versions'])
-            if version_count > 50:
-                return 'medium'
-        
-        return 'low'
-
-    def _calculate_behavior_risk(self, changes: List[str], package_name: str) -> str:
-        """Calculate risk level for behavior changes."""
-        risk_factors = 0
-        
-        for change in changes:
-            if 'Author changed' in change:
-                risk_factors += 2
-            elif 'Added dependencies' in change:
-                risk_factors += 1
-            elif 'Size changed' in change:
-                risk_factors += 1
-        
-        if risk_factors >= 3:
-            return 'high'
-        elif risk_factors >= 2:
-            return 'medium'
-        else:
-            return 'low'
-
-    def _is_suspicious_username(self, username: str) -> bool:
-        """Check if a username appears suspicious."""
-        # Very short usernames
-        if len(username) < 3:
-            return True
-        
-        # All random characters or numbers
-        if all(c.isdigit() for c in username):
-            return True
-        
-        # All random special characters
-        if all(c in string.punctuation for c in username if c.isalnum() is False):
-            return True
-        
-        return False
-
-    def _get_version_data(self, package_name: str, version: str) -> Optional[Dict]:
-        """Retrieve data for a specific package version."""
-        if package_name not in self.package_history:
-            return None
-        
-        for entry in self.package_history[package_name]:
-            if entry['version'] == version:
-                return entry
-        
-        return None
-
-    def get_alerts_summary(self) -> Dict:
-        """Get a summary of all alerts."""
+class BehavioralDiffer:
+    """Detects anomalous behavior changes in packages."""
+    
+    def __init__(self):
+        self.package_history = defaultdict(list)
+        self.baseline_metrics = {}
+    
+    def _calculate_metrics(self, metadata: PackageMetadata) -> Dict[str, Any]:
+        """Calculate behavioral metrics from package metadata."""
         return {
-            'timestamp': datetime.utcnow().isoformat(),
-            'typosquatting_alerts': len(self.typosquatting_alerts),
-            'maintainer_alerts': len(self.maintainer_alerts),
-            'behavior_alerts': len(self.behavior_alerts),
-            'total_events_processed': len(self.registry_events),
-            'unique_packages': len(self.known_packages)
+            'size': metadata.size,
+            'file_count': len(metadata.files),
+            'dependency_count': len(metadata.dependencies),
+            'maintainer': metadata.maintainer,
+            'hash': metadata.hash_sha256,
+        }
+    
+    def _detect_file_changes(self, old_files: List[str], new_files: List[str]) -> Dict[str, Any]:
+        """Detect file additions, removals, and modifications."""
+        old_set = set(old_files)
+        new_set = set(new_files)
+        
+        return {
+            'added_files': list(new_set - old_set),
+            'removed_files': list(old_set - new_set),
+            'count_delta': len(new_files) - len(old_files),
+        }
+    
+    def record_version(self, metadata: PackageMetadata):
+        """Record package version for future comparison."""
+        metrics = self._calculate_metrics(metadata)
+        self.package_history[metadata.name].append({
+            'version': metadata.version,
+            'timestamp': metadata.timestamp,
+            'metrics': metrics,
+            'files': metadata.files,
+        })
+    
+    def detect_anomalies(self, metadata: PackageMetadata) -> List[Dict[str, Any]]:
+        """Detect behavioral anomalies compared to historical baseline."""
+        package_name = metadata.name
+        current_metrics = self._calculate_metrics(metadata)
+        anomalies = []
+        
+        if package_name not in self.package_history or len(self.package_history[package_name]) == 0:
+            self.record_version(metadata)
+            return anomalies
+        
+        history = self.package_history[package_name]
+        if len(history) > 0:
+            last_version = history[-1]
+            last_metrics = last_version['metrics']
+            
+            size_increase_ratio = (current_metrics['size'] / max(last_metrics['size'], 1)) - 1
+            if abs(size_increase_ratio) > 0.5:
+                anomalies.append({
+                    'type': 'size_change',
+                    'severity': 'medium',
+                    'details': {
+                        'old_size': last_metrics['size'],
+                        'new_size': current_metrics['size'],
+                        'ratio': size_increase_ratio,
+                    }
+                })
+            
+            dep_change = current_metrics['dependency_count'] - last_metrics['dependency_count']
+            if abs(dep_change) > 5:
+                anomalies.append({
+                    'type': 'dependency_change',
+                    'severity': 'medium' if dep_change > 0 else 'low',
+                    'details': {
+                        'old_count': last_metrics['dependency_count'],
+                        'new_count': current_metrics['dependency_count'],
+                        'delta': dep_change,
+                    }
+                })
+            
+            if current_metrics['maintainer'] != last_metrics['maintainer']:
+                anomalies.append({
+                    'type': 'maintainer_change',
+                    'severity': 'high',
+                    'details': {
+                        'old_maintainer': last_metrics['maintainer'],
+                        'new_maintainer': current_metrics['maintainer'],
+                    }
+                })
+            
+            file_changes = self._detect_file_changes(last_version['files'], metadata.files)
+            suspicious_additions = [f for f in file_changes['added_files'] 
+                                   if any(x in f.lower() for x in ['.exe', '.dll', '.so', '.dylib', '.bin'])]
+            if suspicious_additions:
+                anomalies.append({
+                    'type': 'suspicious_binaries',
+                    'severity': 'critical',
+                    'details': {
+                        'files': suspicious_additions,
+                    }
+                })
+        
+        self.record_version(metadata)
+        return anomalies
+
+
+class SBOMGenerator:
+    """Generates Software Bill of Materials for packages."""
+    
+    @staticmethod
+    def generate_sbom(metadata: PackageMetadata) -> Dict[str, Any]:
+        """Generate SBOM in simplified format."""
+        return {
+            'sbom_version': '1.3',
+            'name': metadata.name,
+            'version': metadata.version,
+            'generated_at': datetime.utcnow().isoformat(),
+            'package': {
+                'name': metadata.name,
+                'version': metadata.version,
+                'maintainer': metadata.maintainer,
+                'hash': metadata.hash_sha256,
+            },
+            'components': [
+                {
+                    'type': 'library',
+                    'name': dep,
+                    'version': 'unknown',
+                } for dep in metadata.dependencies
+            ],
+            'files': metadata.files,
         }
 
-    def export_alerts_json(self, output_file: str) -> None:
-        """Export all alerts to JSON file."""
-        alerts = {
-            'summary': self.get_alerts_summary(),
-            'typosquatting': [asdict(a) for a in self.typosquatting_alerts],
-            'maintainer_changes': [asdict(a) for a in self.maintainer_alerts],
-            'behavior_changes': [asdict(a) for a in self.behavior_alerts]
+
+class RegistryStreamMonitor:
+    """Main registry stream monitoring engine."""
+    
+    def __init__(self, registry_url: str = "https://registry.npmjs.org", check_interval: int = 5):
+        self.registry_url = registry_url
+        self.check_interval = check_interval
+        self.typosquat_detector = TyposquattingDetector()
+        self.behavior_differ = BehavioralDiffer()
+        self.sbom_generator = SBOMGenerator()
+        self.events = []
+        self.package_cache = {}
+        self.baseline_packages = set()
+    
+    def _fetch_package_metadata(self, package_name: str) -> PackageMetadata | None:
+        """Fetch package metadata from registry."""
+        try:
+            url = f"{self.registry_url}/{package_name}"
+            request = urllib.request.Request(
+                url,
+                headers={'User-Agent': 'OSS-Supply-Chain-Monitor/1.0'}
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                data = json.loads(response.read().decode('utf-8'))
+            
+            if 'dist-tags' not in data or 'latest' not in data['dist-tags']:
+                return None
+            
+            latest_version = data['dist-tags']['latest']
+            version_data = data['versions'].get(latest_version, {})
+            
+            dependencies = list(version_data.get('dependencies', {}).keys())
+            
+            size = version_data.get('dist', {}).get('uncompressed', 0)
+            hash_val = version_data.get('dist', {}).get('shasum', '')
+            
+            maintainers = data.get('maintainers', [])
+            maintainer = maintainers[0].get('name', 'unknown') if maintainers else 'unknown'
+            
+            return PackageMetadata(
+                name=package_name,
+                version=latest_version,
+                timestamp=datetime.utcnow().isoformat(),
+                maintainer=maintainer,
+                size=size,
+                hash_sha256=hash_val,
+                dependencies=dependencies,
+                files=[f"{package_name}@{latest_version}/{i}" for i in range(min(5, len(dependencies) + 1))],
+            )
+        except Exception as e:
+            return None
+    
+    def _generate_event(self, event_type: str, package_name: str, version: str, 
+                       severity: str, details: Dict[str, Any]) -> RegistryEvent:
+        """Create a registry event."""
+        return RegistryEvent(
+            event_type=event_type,
+            package_name=package_name,
+            version=version,
+            timestamp=datetime.utcnow().isoformat(),
+            severity=severity,
+            details=details,
+        )
+    
+    def register_baseline_package(self, package_name: str):
+        """Register a package as part of baseline."""
+        self.baseline_packages.add(package_name.lower())
+        self.typosquat_detector.register_package(package_name)
+    
+    def monitor_package(self, package_name: str) -> List[RegistryEvent]:
+        """Monitor a single package for anomalies."""
+        events = []
+        
+        metadata = self._fetch_package_metadata(package_name)
+        if not metadata:
+            return events
+        
+        is_typosquat, suspects = self.typosquat_detector.check_typosquatting(package_name)
+        if is_typosquat:
+            events.append(self._generate_event(
+                'typosquatting_detected',
+                package_name,
+                metadata.version,
+                'high',
+                {'suspected_targets': suspects}
+            ))
+        
+        behavioral_anomalies = self.behavior_differ.detect_anomalies(metadata)
+        for anomaly in behavioral_anomalies:
+            severity_map = {
+                'size_change': 'medium',
+                'dependency_change': 'medium',
+                'maintainer_change': 'high',
+                'suspicious_binaries': 'critical',
+            }
+            events.append(self._generate_event(
+                f'behavioral_{anomaly["type"]}',
+                package_name,
+                metadata.version,
+                anomaly['severity'],
+                anomaly['details']
+            ))
+        
+        sbom = self.sbom_generator.generate_sbom(metadata)
+        
+        self.package_cache[package_name] = {
+            'metadata': metadata,
+            'sbom': sbom,
+            'events': events,
         }
         
-        with open(output_file, 'w') as f:
-            json.dump(alerts, f, indent=2)
+        self.events.extend(events)
+        return events
+    
+    def monitor_stream(self, packages: List[str], duration: int = 60, 
+                      verbose: bool = False) -> List[Dict[str, Any]]:
+        """Monitor a stream of packages over time."""
+        start_time = time.time()
+        results = []
+        
+        while time.time() - start_time < duration:
+            for package_name in packages:
+                events = self.monitor_package(package_name)
+                
+                for event in events:
+                    result = {
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'event': asdict(event),
+                        'package_cache': self.package_cache.get(package_name, {}),
+                    }
+                    results.append(result)
+                    
+                    if verbose:
+                        print(json.dumps(result, indent=2))
+            
+            time.sleep(self.check_interval)
+        
+        return results
+    
+    def generate_report(self) -> Dict[str, Any]:
+        """Generate summary report."""
+        critical_events = [e for e in self.events if e.severity == 'critical']
+        high_events = [e for e in self.events if e.severity == 'high']
+        medium_events = [e for e in self.events if e.severity == 'medium']
+        
+        event_types = defaultdict(int)
+        for event in self.events:
+            event_types[event.event_type] += 1
+        
+        return {
+            'report_generated': datetime.utcnow().isoformat(),
+            'total_events': len(self.events),
+            'critical_count': len(critical_events),
+            'high_count': len(high_events),
+            'medium_count': len(medium_events),
+            'event_types': dict(event_types),
+            'critical_events': [asdict(e) for e in critical_events],
+            'high_events': [asdict(e) for e in high_events],
+            'packages_monitored': len(self.package_cache),
+        }
 
 
-def generate_sample_registry_events(count: int = 20) -> List[RegistryEvent]:
-    """Generate sample registry events for testing."""
-    events = []
-    legit_packages = ['requests', 'django', 'flask', 'numpy', 'pandas', 'pytest', 'sqlalchemy']
-    suspicious_packages = ['requsts', 'djagno', 'flassk', 'n
+def main():
+    parser = argparse.ArgumentParser(
+        description='OSS Supply Chain Compromise Monitor - Registry Stream Monitor'
+    )
+    parser.add_argument(
+        '--registry',
+        type=str,
+        default='https://registry.npmjs.org',
+        help='Package registry URL (default: NPM registry)'
+    )
+    parser.add_argument(
+        '--packages',
+        type=str,
+        nargs='+',
+        default=['lodash', 'express', 'react'],
+        help='Packages to monitor'
+    )
+    parser.add_argument(
+        '--baseline',
+        type=str,
+        nargs='+',
+        default=['lodash', 'express', 'react', 'npm', 'node'],
+        help='Baseline packages for typosquatting detection'
+    )
+    parser.add_argument(
+        '--duration',
+        type=int,
+        default=10,
+        help='Monitoring duration in seconds'
+    )
+    parser.add_argument(
+        '--interval',
+        type=int,
+        default=3,
+        help='Check interval in seconds'
+    )
+    parser.add_argument(
+        '--output',
+        type=str,
+        default=None,
+        help='Output file for results (JSON)'
+    )
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Verbose output'
+    )
+    parser.add_argument(
+        '--report-only',
+        action='store_true',
+        help='Generate report only without streaming'
+    )
+    
+    args = parser.parse_args()
+    
+    monitor = RegistryStreamMonitor(
+        registry_url=args.registry,
+        check_interval=args.interval
+    )
+    
+    for pkg in args.baseline:
+        monitor.register_baseline_package(pkg)
+    
+    if args.report_only:
+        print("Performing initial scan...", file=sys.stderr)
+        for package in args.packages:
+            monitor.monitor_package(package)
+        
+        report = monitor.generate_report()
+        output = json.dumps(report, indent=2)
+        
+        if args.output:
+            with open(args.output, 'w') as f:
+                f.write(output)
+            print(f"Report written to {args.output}", file=sys.stderr)
+        else:
+            print(output)
+    else:
+        print(f"Starting registry stream monitor for {len(args.packages)} packages...", 
+              file=sys.stderr)
+        results = monitor.monitor_stream(
+            args.packages,
+            duration=args.duration,
+            verbose=args.verbose
+        )
+        
+        report = monitor.generate_report()
+        
+        if args.output:
+            with open(args.output, 'w') as f:
+                json.dump({
+                    'results': results,
+                    'report': report,
+                }, f, indent=2)
+            print(f"Results written to {args.output}", file=sys.stderr)
+        else:
+            print(json.dumps({
+                'results': results,
+                'report': report,
+            }, indent=2))
+        
+        print("\n--- SUMMARY ---", file=sys.stderr)
+        print(json.dumps(report, indent=2), file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
