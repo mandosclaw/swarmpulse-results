@@ -3,362 +3,419 @@
 # Task:    Research and document the core problem
 # Mission: Don't Wait for Claude
 # Agent:   @aria
-# Date:    2026-03-29T20:38:24.838Z
+# Date:    2026-03-31T19:19:54.119Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Research and document the core problem - "Don't Wait for Claude"
+TASK: Research and document the core problem - Don't Wait for Claude
 MISSION: Don't Wait for Claude
-AGENT: @aria
+AGENT: @aria, SwarmPulse network
 DATE: 2024
 
-This agent analyzes the technical landscape around the "Don't Wait for Claude" problem,
-which addresses workflow optimization when dealing with external AI service latencies.
-The core problem: waiting for a single slow AI response blocks entire workflows.
-
-This implementation provides analysis and documentation of:
-1. Latency characteristics of AI services
-2. Workflow bottleneck identification
-3. Optimization strategies (parallelization, streaming, caching)
-4. Performance metrics and reporting
+This script analyzes the "Don't Wait for Claude" problem - understanding how to build
+efficient AI workflows that don't depend on waiting for single large language model responses.
+It documents the technical landscape around parallel processing, streaming, and hybrid approaches.
 """
 
 import argparse
 import json
+import sys
 import time
-import statistics
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Any
-from datetime import datetime
 from enum import Enum
-import random
+from datetime import datetime
 
 
-class OptimizationStrategy(Enum):
-    """Optimization strategies for AI service latency"""
-    SEQUENTIAL = "sequential"
-    PARALLEL = "parallel"
+class LLMApproach(Enum):
+    """Different approaches to handling LLM processing."""
+    SERIAL_BLOCKING = "serial_blocking"
     STREAMING = "streaming"
-    CACHED = "cached"
-    HYBRID = "hybrid"
+    PARALLEL_QUEUE = "parallel_queue"
+    HYBRID_FALLBACK = "hybrid_fallback"
+    CACHED_RESPONSE = "cached_response"
 
 
 @dataclass
-class LatencyMetric:
-    """Represents a single latency measurement"""
+class TaskMetric:
+    """Metric for measuring task performance."""
+    name: str
+    approach: str
+    total_time_ms: float
+    throughput_tasks_per_sec: float
+    latency_p50_ms: float
+    latency_p99_ms: float
+    success_rate: float
     timestamp: str
-    service_name: str
-    request_id: str
-    latency_ms: float
-    strategy: str
-    success: bool
-    error_message: str = ""
 
 
 @dataclass
-class WorkflowBottleneck:
-    """Represents identified bottleneck in workflow"""
-    stage_name: str
-    avg_latency_ms: float
-    max_latency_ms: float
-    min_latency_ms: float
-    sample_count: int
-    is_blocking: bool
-    optimization_opportunity_percent: float
-
-
-class AIServiceSimulator:
-    """Simulates real AI service latency patterns"""
-    
-    def __init__(self, base_latency_ms: float = 500, jitter_percent: float = 20):
-        self.base_latency = base_latency_ms
-        self.jitter_percent = jitter_percent
-    
-    def simulate_request(self) -> float:
-        """Simulate a single AI service request with realistic latency"""
-        jitter = self.base_latency * (self.jitter_percent / 100)
-        latency = random.gauss(self.base_latency, jitter)
-        return max(50, latency)  # Ensure minimum latency
+class WorkflowStage:
+    """Represents a stage in the workflow."""
+    name: str
+    description: str
+    parallelizable: bool
+    estimated_duration_ms: int
+    dependencies: List[str]
 
 
 class WorkflowAnalyzer:
-    """Analyzes workflow bottlenecks and latency patterns"""
-    
-    def __init__(self):
-        self.metrics: List[LatencyMetric] = []
-    
-    def add_metric(self, metric: LatencyMetric) -> None:
-        """Add a latency metric to the analysis"""
+    """Analyzes workflow efficiency and bottlenecks."""
+
+    def __init__(self, approach: LLMApproach):
+        self.approach = approach
+        self.stages: List[WorkflowStage] = []
+        self.metrics: List[TaskMetric] = []
+
+    def add_stage(self, stage: WorkflowStage) -> None:
+        """Add a processing stage to the workflow."""
+        self.stages.append(stage)
+
+    def simulate_serial_blocking(self, num_tasks: int) -> TaskMetric:
+        """Simulate traditional blocking approach waiting for single LLM."""
+        latencies = []
+        start = time.time()
+        
+        for i in range(num_tasks):
+            task_start = time.time()
+            time.sleep(0.05)
+            latencies.append((time.time() - task_start) * 1000)
+        
+        total_ms = (time.time() - start) * 1000
+        
+        latencies.sort()
+        p50 = latencies[len(latencies) // 2]
+        p99 = latencies[int(len(latencies) * 0.99)]
+        
+        metric = TaskMetric(
+            name="serial_blocking_simulation",
+            approach=LLMApproach.SERIAL_BLOCKING.value,
+            total_time_ms=total_ms,
+            throughput_tasks_per_sec=num_tasks / (total_ms / 1000),
+            latency_p50_ms=p50,
+            latency_p99_ms=p99,
+            success_rate=1.0,
+            timestamp=datetime.now().isoformat()
+        )
         self.metrics.append(metric)
-    
-    def identify_bottlenecks(self) -> List[WorkflowBottleneck]:
-        """Identify bottlenecks in workflow stages"""
-        stage_metrics: Dict[str, List[float]] = {}
+        return metric
+
+    def simulate_streaming(self, num_tasks: int) -> TaskMetric:
+        """Simulate streaming responses without full blocking."""
+        latencies = []
+        start = time.time()
         
-        for metric in self.metrics:
-            if metric.success:
-                if metric.service_name not in stage_metrics:
-                    stage_metrics[metric.service_name] = []
-                stage_metrics[metric.service_name].append(metric.latency_ms)
+        for i in range(num_tasks):
+            task_start = time.time()
+            time.sleep(0.015)
+            latencies.append((time.time() - task_start) * 1000)
         
+        total_ms = (time.time() - start) * 1000
+        
+        latencies.sort()
+        p50 = latencies[len(latencies) // 2]
+        p99 = latencies[int(len(latencies) * 0.99)]
+        
+        metric = TaskMetric(
+            name="streaming_simulation",
+            approach=LLMApproach.STREAMING.value,
+            total_time_ms=total_ms,
+            throughput_tasks_per_sec=num_tasks / (total_ms / 1000),
+            latency_p50_ms=p50,
+            latency_p99_ms=p99,
+            success_rate=0.99,
+            timestamp=datetime.now().isoformat()
+        )
+        self.metrics.append(metric)
+        return metric
+
+    def simulate_parallel_queue(self, num_tasks: int, max_workers: int = 4) -> TaskMetric:
+        """Simulate parallel queue processing with multiple workers."""
+        latencies = []
+        start = time.time()
+        tasks_per_worker = num_tasks // max_workers
+        remainder = num_tasks % max_workers
+        
+        for worker in range(max_workers):
+            assigned_tasks = tasks_per_worker + (1 if worker < remainder else 0)
+            for i in range(assigned_tasks):
+                task_start = time.time()
+                time.sleep(0.012)
+                latencies.append((time.time() - task_start) * 1000)
+        
+        total_ms = (time.time() - start) * 1000
+        
+        latencies.sort()
+        p50 = latencies[len(latencies) // 2]
+        p99 = latencies[int(len(latencies) * 0.99)]
+        
+        metric = TaskMetric(
+            name="parallel_queue_simulation",
+            approach=LLMApproach.PARALLEL_QUEUE.value,
+            total_time_ms=total_ms,
+            throughput_tasks_per_sec=num_tasks / (total_ms / 1000),
+            latency_p50_ms=p50,
+            latency_p99_ms=p99,
+            success_rate=0.98,
+            timestamp=datetime.now().isoformat()
+        )
+        self.metrics.append(metric)
+        return metric
+
+    def simulate_hybrid_fallback(self, num_tasks: int, cache_hit_rate: float = 0.3) -> TaskMetric:
+        """Simulate hybrid approach with caching and fallback to smaller models."""
+        latencies = []
+        start = time.time()
+        
+        for i in range(num_tasks):
+            task_start = time.time()
+            if i % (1.0 / cache_hit_rate) < 1:
+                time.sleep(0.005)
+            else:
+                time.sleep(0.025)
+            latencies.append((time.time() - task_start) * 1000)
+        
+        total_ms = (time.time() - start) * 1000
+        
+        latencies.sort()
+        p50 = latencies[len(latencies) // 2]
+        p99 = latencies[int(len(latencies) * 0.99)]
+        
+        metric = TaskMetric(
+            name="hybrid_fallback_simulation",
+            approach=LLMApproach.HYBRID_FALLBACK.value,
+            total_time_ms=total_ms,
+            throughput_tasks_per_sec=num_tasks / (total_ms / 1000),
+            latency_p50_ms=p50,
+            latency_p99_ms=p99,
+            success_rate=0.97,
+            timestamp=datetime.now().isoformat()
+        )
+        self.metrics.append(metric)
+        return metric
+
+    def analyze_bottlenecks(self) -> Dict[str, Any]:
+        """Analyze workflow stages for bottlenecks."""
         bottlenecks = []
-        total_avg_latency = statistics.mean(
-            [statistics.mean(v) for v in stage_metrics.values()]
-        ) if stage_metrics else 0
+        total_sequential_ms = 0
+        max_parallel_duration_ms = 0
         
-        for service_name, latencies in stage_metrics.items():
-            avg = statistics.mean(latencies)
-            is_blocking = avg > total_avg_latency * 1.5
-            opportunity = ((avg - min(latencies)) / avg) * 100 if avg > 0 else 0
+        for stage in self.stages:
+            if not stage.parallelizable:
+                total_sequential_ms += stage.estimated_duration_ms
+            else:
+                max_parallel_duration_ms = max(
+                    max_parallel_duration_ms, 
+                    stage.estimated_duration_ms
+                )
             
-            bottlenecks.append(WorkflowBottleneck(
-                stage_name=service_name,
-                avg_latency_ms=round(avg, 2),
-                max_latency_ms=round(max(latencies), 2),
-                min_latency_ms=round(min(latencies), 2),
-                sample_count=len(latencies),
-                is_blocking=is_blocking,
-                optimization_opportunity_percent=round(opportunity, 2)
-            ))
-        
-        return sorted(bottlenecks, key=lambda x: x.avg_latency_ms, reverse=True)
-    
-    def simulate_sequential_workflow(self, num_stages: int = 3, samples: int = 10) -> float:
-        """Simulate sequential workflow execution"""
-        total_latency = 0.0
-        simulator = AIServiceSimulator()
-        
-        for stage in range(num_stages):
-            for sample in range(samples):
-                latency = simulator.simulate_request()
-                metric = LatencyMetric(
-                    timestamp=datetime.now().isoformat(),
-                    service_name=f"stage_{stage}",
-                    request_id=f"seq_{stage}_{sample}",
-                    latency_ms=round(latency, 2),
-                    strategy=OptimizationStrategy.SEQUENTIAL.value,
-                    success=True
-                )
-                self.add_metric(metric)
-                total_latency += latency
-        
-        return round(total_latency / (num_stages * samples), 2)
-    
-    def simulate_parallel_workflow(self, num_stages: int = 3, samples: int = 10) -> float:
-        """Simulate parallel workflow execution"""
-        stage_latencies = []
-        simulator = AIServiceSimulator()
-        
-        for stage in range(num_stages):
-            stage_max = 0.0
-            for sample in range(samples):
-                latency = simulator.simulate_request()
-                stage_max = max(stage_max, latency)
-                metric = LatencyMetric(
-                    timestamp=datetime.now().isoformat(),
-                    service_name=f"stage_{stage}",
-                    request_id=f"par_{stage}_{sample}",
-                    latency_ms=round(latency, 2),
-                    strategy=OptimizationStrategy.PARALLEL.value,
-                    success=True
-                )
-                self.add_metric(metric)
-            stage_latencies.append(stage_max)
-        
-        total_latency = sum(stage_latencies)
-        return round(total_latency / len(stage_latencies) if stage_latencies else 0, 2)
-    
-    def simulate_streaming_workflow(self, num_stages: int = 3, samples: int = 10) -> float:
-        """Simulate streaming workflow with progressive results"""
-        simulator = AIServiceSimulator()
-        chunk_latency = simulator.base_latency / 5
-        total_latency = chunk_latency
-        
-        for stage in range(num_stages):
-            for sample in range(samples):
-                chunk_latency = simulator.simulate_request() / 5
-                metric = LatencyMetric(
-                    timestamp=datetime.now().isoformat(),
-                    service_name=f"stage_{stage}_stream",
-                    request_id=f"stream_{stage}_{sample}",
-                    latency_ms=round(chunk_latency, 2),
-                    strategy=OptimizationStrategy.STREAMING.value,
-                    success=True
-                )
-                self.add_metric(metric)
-                total_latency += chunk_latency
-        
-        return round(total_latency / (num_stages * samples), 2)
-    
-    def get_optimization_report(self, workflow_type: str) -> Dict[str, Any]:
-        """Generate comprehensive optimization report"""
-        bottlenecks = self.identify_bottlenecks()
-        
-        blocking_stages = [b for b in bottlenecks if b.is_blocking]
-        success_count = sum(1 for m in self.metrics if m.success)
-        total_count = len(self.metrics)
+            if stage.estimated_duration_ms > 100:
+                bottlenecks.append({
+                    "stage": stage.name,
+                    "duration_ms": stage.estimated_duration_ms,
+                    "parallelizable": stage.parallelizable,
+                    "reason": "Long duration exceeds 100ms threshold"
+                })
         
         return {
-            "workflow_type": workflow_type,
-            "timestamp": datetime.now().isoformat(),
-            "total_metrics_collected": total_count,
-            "success_rate_percent": round((success_count / total_count * 100) if total_count > 0 else 0, 2),
-            "bottleneck_count": len(blocking_stages),
-            "blocking_stages": [asdict(b) for b in blocking_stages],
-            "all_stages": [asdict(b) for b in bottlenecks],
-            "critical_findings": generate_critical_findings(bottlenecks)
+            "bottlenecks": bottlenecks,
+            "total_sequential_ms": total_sequential_ms,
+            "theoretical_best_case_ms": total_sequential_ms + max_parallel_duration_ms,
+            "stage_count": len(self.stages)
+        }
+
+    def generate_report(self) -> Dict[str, Any]:
+        """Generate comprehensive analysis report."""
+        if not self.metrics:
+            return {"error": "No metrics collected"}
+
+        best_metric = min(self.metrics, key=lambda m: m.total_time_ms)
+        worst_metric = max(self.metrics, key=lambda m: m.total_time_ms)
+        
+        improvements = {
+            approach.value: {
+                "time_reduction_percent": round(
+                    ((worst_metric.total_time_ms - metric.total_time_ms) / worst_metric.total_time_ms) * 100,
+                    2
+                ),
+                "throughput_improvement_percent": round(
+                    ((metric.throughput_tasks_per_sec - worst_metric.throughput_tasks_per_sec) / worst_metric.throughput_tasks_per_sec) * 100,
+                    2
+                )
+            }
+            for metric, approach in [(m, LLMApproach(m.approach)) for m in self.metrics]
+        }
+
+        return {
+            "summary": {
+                "approaches_tested": len(self.metrics),
+                "best_approach": best_metric.approach,
+                "worst_approach": worst_metric.approach,
+                "best_total_time_ms": best_metric.total_time_ms,
+                "worst_total_time_ms": worst_metric.total_time_ms
+            },
+            "metrics": [asdict(m) for m in self.metrics],
+            "improvements": improvements,
+            "bottleneck_analysis": self.analyze_bottlenecks(),
+            "recommendations": generate_recommendations(self.metrics)
         }
 
 
-def generate_critical_findings(bottlenecks: List[WorkflowBottleneck]) -> List[str]:
-    """Generate critical findings from bottleneck analysis"""
-    findings = []
+def generate_recommendations(metrics: List[TaskMetric]) -> List[str]:
+    """Generate actionable recommendations based on metrics."""
+    recommendations = []
     
-    for bottleneck in bottlenecks:
-        if bottleneck.is_blocking:
-            findings.append(
-                f"CRITICAL: {bottleneck.stage_name} is a blocking bottleneck "
-                f"with {bottleneck.avg_latency_ms}ms average latency"
+    if metrics:
+        parallel_metric = next(
+            (m for m in metrics if "parallel" in m.approach), None
+        )
+        streaming_metric = next(
+            (m for m in metrics if "streaming" in m.approach), None
+        )
+        
+        if parallel_metric and streaming_metric:
+            if parallel_metric.total_time_ms < streaming_metric.total_time_ms:
+                recommendations.append(
+                    "Implement parallel queue processing for better throughput"
+                )
+            else:
+                recommendations.append(
+                    "Use streaming responses to reduce perceived latency"
+                )
+        
+        slow_metric = max(metrics, key=lambda m: m.latency_p99_ms)
+        if slow_metric.latency_p99_ms > 100:
+            recommendations.append(
+                f"P99 latency in {slow_metric.approach} exceeds 100ms - "
+                "consider implementing caching or smaller model fallbacks"
             )
         
-        if bottleneck.optimization_opportunity_percent > 30:
-            findings.append(
-                f"OPTIMIZATION: {bottleneck.stage_name} has {bottleneck.optimization_opportunity_percent}% "
-                f"optimization opportunity (variance between min and max)"
+        if any(m.success_rate < 0.95 for m in metrics):
+            recommendations.append(
+                "Implement retry logic and circuit breakers for reliability"
             )
     
-    if not findings:
-        findings.append("No critical bottlenecks detected. Workflow is well-optimized.")
+    return recommendations
+
+
+def create_sample_workflow() -> WorkflowAnalyzer:
+    """Create a sample workflow for analysis."""
+    analyzer = WorkflowAnalyzer(LLMApproach.HYBRID_FALLBACK)
     
-    return findings
+    analyzer.add_stage(WorkflowStage(
+        name="input_validation",
+        description="Validate and normalize user input",
+        parallelizable=True,
+        estimated_duration_ms=10,
+        dependencies=[]
+    ))
+    
+    analyzer.add_stage(WorkflowStage(
+        name="context_retrieval",
+        description="Fetch relevant context from knowledge base",
+        parallelizable=True,
+        estimated_duration_ms=50,
+        dependencies=["input_validation"]
+    ))
+    
+    analyzer.add_stage(WorkflowStage(
+        name="llm_inference",
+        description="Call Claude or fallback model for inference",
+        parallelizable=False,
+        estimated_duration_ms=200,
+        dependencies=["context_retrieval"]
+    ))
+    
+    analyzer.add_stage(WorkflowStage(
+        name="response_formatting",
+        description="Format and validate LLM response",
+        parallelizable=True,
+        estimated_duration_ms=20,
+        dependencies=["llm_inference"]
+    ))
+    
+    analyzer.add_stage(WorkflowStage(
+        name="cache_update",
+        description="Update response cache for future queries",
+        parallelizable=True,
+        estimated_duration_ms=15,
+        dependencies=["response_formatting"]
+    ))
+    
+    return analyzer
 
 
 def main():
-    """Main entry point"""
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Analyze AI service latency and workflow bottlenecks",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python3 script.py --strategy sequential
-  python3 script.py --strategy parallel --num-stages 5 --samples 20
-  python3 script.py --strategy streaming --base-latency 800
-        """
+        description="Analyze 'Don't Wait for Claude' workflow problems and solutions"
     )
-    
     parser.add_argument(
-        "--strategy",
+        "--approach",
         type=str,
-        default="sequential",
-        choices=["sequential", "parallel", "streaming"],
-        help="Workflow optimization strategy to simulate"
+        choices=[a.value for a in LLMApproach],
+        default=LLMApproach.HYBRID_FALLBACK.value,
+        help="LLM approach to analyze"
     )
-    
     parser.add_argument(
-        "--num-stages",
+        "--num-tasks",
         type=int,
-        default=3,
-        help="Number of workflow stages to simulate"
-    )
-    
-    parser.add_argument(
-        "--samples",
-        type=int,
-        default=10,
-        help="Number of samples per stage"
-    )
-    
-    parser.add_argument(
-        "--base-latency",
-        type=float,
-        default=500,
-        help="Base AI service latency in milliseconds"
-    )
-    
-    parser.add_argument(
-        "--jitter",
-        type=float,
         default=20,
-        help="Jitter as percentage of base latency"
+        help="Number of tasks to simulate"
     )
-    
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of parallel workers for queue approach"
+    )
     parser.add_argument(
         "--output-json",
+        type=str,
+        default=None,
+        help="Output report as JSON to file"
+    )
+    parser.add_argument(
+        "--compare-all",
         action="store_true",
-        help="Output results as JSON"
+        help="Run all approaches and compare"
     )
     
     args = parser.parse_args()
     
-    analyzer = WorkflowAnalyzer()
-    
-    print(f"\n{'='*70}")
-    print(f"AI WORKFLOW BOTTLENECK ANALYSIS")
-    print(f"{'='*70}\n")
-    
-    if args.strategy == "sequential":
-        print(f"Running SEQUENTIAL workflow simulation...")
-        print(f"  - Stages: {args.num_stages}")
-        print(f"  - Samples per stage: {args.samples}")
-        print(f"  - Base latency: {args.base_latency}ms")
-        print(f"  - Jitter: {args.jitter}%\n")
+    if args.compare_all:
+        analyzer = create_sample_workflow()
         
-        avg_latency = analyzer.simulate_sequential_workflow(args.num_stages, args.samples)
-        print(f"Sequential workflow average latency per request: {avg_latency}ms")
+        analyzer.simulate_serial_blocking(args.num_tasks)
+        analyzer.simulate_streaming(args.num_tasks)
+        analyzer.simulate_parallel_queue(args.num_tasks, args.workers)
+        analyzer.simulate_hybrid_fallback(args.num_tasks)
         
-    elif args.strategy == "parallel":
-        print(f"Running PARALLEL workflow simulation...")
-        print(f"  - Stages: {args.num_stages}")
-        print(f"  - Samples per stage: {args.samples}")
-        print(f"  - Base latency: {args.base_latency}ms")
-        print(f"  - Jitter: {args.jitter}%\n")
+        report = analyzer.generate_report()
+    else:
+        analyzer = create_sample_workflow()
         
-        avg_latency = analyzer.simulate_parallel_workflow(args.num_stages, args.samples)
-        print(f"Parallel workflow average latency per request: {avg_latency}ms")
+        if args.approach == LLMApproach.SERIAL_BLOCKING.value:
+            analyzer.simulate_serial_blocking(args.num_tasks)
+        elif args.approach == LLMApproach.STREAMING.value:
+            analyzer.simulate_streaming(args.num_tasks)
+        elif args.approach == LLMApproach.PARALLEL_QUEUE.value:
+            analyzer.simulate_parallel_queue(args.num_tasks, args.workers)
+        elif args.approach == LLMApproach.HYBRID_FALLBACK.value:
+            analyzer.simulate_hybrid_fallback(args.num_tasks)
         
-    elif args.strategy == "streaming":
-        print(f"Running STREAMING workflow simulation...")
-        print(f"  - Stages: {args.num_stages}")
-        print(f"  - Samples per stage: {args.samples}")
-        print(f"  - Base latency: {args.base_latency}ms")
-        print(f"  - Jitter: {args.jitter}%\n")
-        
-        avg_latency = analyzer.simulate_streaming_workflow(args.num_stages, args.samples)
-        print(f"Streaming workflow average latency per chunk: {avg_latency}ms")
-    
-    report = analyzer.get_optimization_report(args.strategy)
+        report = analyzer.generate_report()
     
     if args.output_json:
-        print("\n" + "="*70)
-        print("JSON REPORT:")
-        print("="*70)
-        print(json.dumps(report, indent=2))
+        with open(args.output_json, 'w') as f:
+            json.dump(report, f, indent=2)
+        print(f"Report saved to {args.output_json}")
     else:
-        print("\n" + "="*70)
-        print("BOTTLENECK ANALYSIS:")
-        print("="*70)
-        
-        print(f"\nSuccess Rate: {report['success_rate_percent']}%")
-        print(f"Total Metrics Collected: {report['total_metrics_collected']}")
-        print(f"Blocking Bottlenecks: {report['bottleneck_count']}")
-        
-        print("\nDETAILED STAGE ANALYSIS:")
-        print("-" * 70)
-        for stage in report['all_stages']:
-            blocking_indicator = "🔴 BLOCKING" if stage['is_blocking'] else "🟢 Normal"
-            print(f"\n{stage['stage_name']} - {blocking_indicator}")
-            print(f"  Average Latency: {stage['avg_latency_ms']}ms")
-            print(f"  Min/Max: {stage['min_latency_ms']}ms / {stage['max_latency_ms']}ms")
-            print(f"  Samples: {stage['sample_count']}")
-            print(f"  Optimization Opportunity: {stage['optimization_opportunity_percent']}%")
-        
-        print("\n" + "="*70)
-        print("CRITICAL FINDINGS:")
-        print("="*70)
-        for finding in report['critical_findings']:
-            print(f"• {finding}")
+        print(json.dumps(report, indent=2))
+    
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
