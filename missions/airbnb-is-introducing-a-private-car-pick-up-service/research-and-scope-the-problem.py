@@ -3,444 +3,446 @@
 # Task:    Research and scope the problem
 # Mission: Airbnb is introducing a private car pick-up service
 # Agent:   @aria
-# Date:    2026-03-31T09:28:29.808Z
+# Date:    2026-03-31T09:28:56.047Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 TASK: Research and scope the problem - Airbnb private car pick-up service
 MISSION: Airbnb is introducing a private car pick-up service
-AGENT: @aria (SwarmPulse network)
+AGENT: @aria (SwarmPulse)
 DATE: 2026-03-31
-CATEGORY: AI/ML - Technical landscape analysis
-
-This script analyzes the technical landscape for Airbnb's private car pick-up service
-partnership with Welcome Pickups, identifying key technical requirements, integration
-points, scalability concerns, and implementation considerations.
+CATEGORY: AI/ML - Technical Landscape Analysis
 """
 
 import argparse
 import json
 import sys
-from datetime import datetime
-from typing import Dict, List, Any
 from dataclasses import dataclass, asdict
+from enum import Enum
+from typing import List, Dict, Any
+from datetime import datetime
+from collections import defaultdict
+import re
+
+
+class ServiceType(Enum):
+    ECONOMY = "economy"
+    COMFORT = "comfort"
+    PREMIUM = "premium"
+    SHARED = "shared"
+
+
+class RiskLevel(Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
 
 
 @dataclass
 class TechnicalComponent:
-    """Represents a technical component in the system."""
     name: str
-    category: str
-    criticality: str  # high, medium, low
     description: str
+    technology_stack: List[str]
+    criticality: str
+    risk_level: RiskLevel
+    implementation_complexity: str
+    estimated_timeline_weeks: int
+
+
+@dataclass
+class StakeholderAnalysis:
+    entity: str
+    role: str
+    interests: List[str]
+    potential_friction: List[str]
     dependencies: List[str]
-    challenges: List[str]
-    estimated_complexity: int  # 1-10
 
 
 @dataclass
-class IntegrationPoint:
-    """Represents an integration point between systems."""
-    source_system: str
-    target_system: str
-    data_flow: str
-    frequency: str
-    authentication_required: bool
-    latency_sla_ms: int
+class MarketOpportunity:
+    segment: str
+    size_estimate: str
+    growth_rate: str
+    target_users: str
+    revenue_potential: str
 
 
 @dataclass
-class ScalabilityMetric:
-    """Represents scalability analysis for a component."""
-    component: str
-    current_capacity: int
-    expected_growth_6months: int
-    expected_growth_12months: int
-    bottleneck_risk: str  # low, medium, high
-    recommendation: str
+class CompetitiveAnalysis:
+    competitor: str
+    offering: str
+    strengths: List[str]
+    weaknesses: List[str]
+    market_share_estimate: str
+
+
+@dataclass
+class RegulatoryRequirement:
+    jurisdiction: str
+    requirement: str
+    compliance_status: str
+    timeline: str
+    risk_if_non_compliant: str
 
 
 class AirbnbCarServiceAnalyzer:
-    """Analyzes the technical landscape for Airbnb's car pick-up service."""
-
-    def __init__(self, market_region: str = "US", expected_daily_bookings: int = 10000):
-        self.market_region = market_region
-        self.expected_daily_bookings = expected_daily_bookings
+    def __init__(self):
         self.analysis_timestamp = datetime.now().isoformat()
         self.technical_components: List[TechnicalComponent] = []
-        self.integration_points: List[IntegrationPoint] = []
-        self.scalability_metrics: List[ScalabilityMetric] = []
+        self.stakeholder_map: List[StakeholderAnalysis] = []
+        self.market_opportunities: List[MarketOpportunity] = []
+        self.competitive_landscape: List[CompetitiveAnalysis] = []
+        self.regulatory_requirements: List[RegulatoryRequirement] = []
+        self.technical_risks: Dict[str, Any] = {}
+        self.integration_points: List[Dict[str, str]] = []
 
-    def identify_technical_components(self) -> List[TechnicalComponent]:
-        """Identify all required technical components."""
+    def analyze_technical_components(self) -> List[TechnicalComponent]:
+        """Analyze core technical components required for the service."""
         components = [
             TechnicalComponent(
-                name="Real-time Location Tracking",
-                category="Backend Service",
-                criticality="high",
-                description="GPS tracking and real-time location updates for drivers and passengers",
-                dependencies=["GPS API", "WebSocket Server", "Database"],
-                challenges=[
-                    "Handling high-frequency location updates (1 update/second per user)",
-                    "Ensuring privacy and compliance with location data regulations",
-                    "Managing battery drain on mobile devices",
-                    "Handling poor GPS signal in urban areas"
-                ],
-                estimated_complexity=8
+                name="Real-time Booking Engine",
+                description="Core system for handling car requests and availability",
+                technology_stack=["Node.js", "PostgreSQL", "Redis", "WebSocket"],
+                criticality="critical",
+                risk_level=RiskLevel.HIGH,
+                implementation_complexity="high",
+                estimated_timeline_weeks=12
             ),
             TechnicalComponent(
-                name="Booking and Reservation Engine",
-                category="Backend Service",
-                criticality="high",
-                description="System for reserving rides, managing availability, and booking confirmation",
-                dependencies=["Database", "Payment Service", "Notification Service"],
-                challenges=[
-                    "Preventing double-bookings during high demand",
-                    "Real-time availability synchronization",
-                    "Handling cancellations and rebooking",
-                    "Managing surge pricing algorithms"
-                ],
-                estimated_complexity=7
+                name="GPS/Location Services",
+                description="Real-time vehicle tracking and route optimization",
+                technology_stack=["Google Maps API", "Mapbox", "OSRM"],
+                criticality="critical",
+                risk_level=RiskLevel.MEDIUM,
+                implementation_complexity="high",
+                estimated_timeline_weeks=10
             ),
             TechnicalComponent(
                 name="Payment Processing",
-                category="Backend Service",
-                criticality="high",
-                description="Secure payment processing integrated with Airbnb wallet and external providers",
-                dependencies=["Stripe/Square API", "PCI Compliance", "Fraud Detection"],
-                challenges=[
-                    "PCI DSS compliance requirements",
-                    "Multi-currency support",
-                    "Handling payment failures and retries",
-                    "Fraud detection and prevention"
-                ],
-                estimated_complexity=9
-            ),
-            TechnicalComponent(
-                name="Driver Management Platform",
-                category="Backend Service",
-                criticality="high",
-                description="Onboarding, verification, and management of driver partners",
-                dependencies=["Background Check Service", "Document Verification", "Insurance Management"],
-                challenges=[
-                    "Background check automation and compliance",
-                    "License verification across regions",
-                    "Insurance policy management",
-                    "Performance tracking and ratings"
-                ],
-                estimated_complexity=8
-            ),
-            TechnicalComponent(
-                name="Route Optimization Engine",
-                category="ML/Optimization",
-                criticality="high",
-                description="ML-based route optimization and ETA prediction",
-                dependencies=["Maps API", "Traffic Data Service", "ML Model Server"],
-                challenges=[
-                    "Real-time traffic data integration",
-                    "Accurate ETA prediction under various conditions",
-                    "Multi-stop routing optimization",
-                    "Model training and deployment pipeline"
-                ],
-                estimated_complexity=8
-            ),
-            TechnicalComponent(
-                name="Notification and Messaging",
-                category="Backend Service",
-                criticality="medium",
-                description="Push notifications, SMS, and in-app messaging for ride updates",
-                dependencies=["Firebase/APNs", "Twilio/SMS Service", "Message Queue"],
-                challenges=[
-                    "Low-latency delivery requirements",
-                    "Handling message ordering",
-                    "Rate limiting and throttling",
-                    "Multi-language support"
-                ],
-                estimated_complexity=6
-            ),
-            TechnicalComponent(
-                name="Rating and Review System",
-                category="Backend Service",
-                criticality="medium",
-                description="Post-ride rating, feedback, and review management",
-                dependencies=["Database", "Moderation Service", "Analytics"],
-                challenges=[
-                    "Handling fake or biased reviews",
-                    "Rating algorithm fairness",
-                    "Handling dispute resolution",
-                    "Privacy-preserving feedback collection"
-                ],
-                estimated_complexity=6
-            ),
-            TechnicalComponent(
-                name="Mobile Applications",
-                category="Frontend",
-                criticality="high",
-                description="iOS and Android apps for passengers and drivers",
-                dependencies=["React Native/Flutter", "Backend APIs", "Maps SDK"],
-                challenges=[
-                    "Cross-platform compatibility",
-                    "Performance optimization for low-end devices",
-                    "Offline functionality",
-                    "Regular updates and version management"
-                ],
-                estimated_complexity=7
-            ),
-            TechnicalComponent(
-                name="Integration with Welcome Pickups",
-                category="Third-party Integration",
+                description="Secure payment integration with multiple providers",
+                technology_stack=["Stripe", "PayPal", "Local payment gateways"],
                 criticality="critical",
-                description="API integration with Welcome Pickups' existing infrastructure",
-                dependencies=["Welcome Pickups API", "Authentication", "Data Sync"],
-                challenges=[
-                    "API reliability and uptime",
-                    "Data consistency between systems",
-                    "Handling API rate limits",
-                    "Fallback mechanisms for API failures"
-                ],
-                estimated_complexity=7
+                risk_level=RiskLevel.HIGH,
+                implementation_complexity="high",
+                estimated_timeline_weeks=14
+            ),
+            TechnicalComponent(
+                name="Driver Management System",
+                description="Background checks, ratings, and driver lifecycle management",
+                technology_stack=["Custom backend", "Document verification APIs"],
+                criticality="critical",
+                risk_level=RiskLevel.HIGH,
+                implementation_complexity="very_high",
+                estimated_timeline_weeks=16
+            ),
+            TechnicalComponent(
+                name="Insurance and Liability",
+                description="Comprehensive coverage and claim management",
+                technology_stack=["Insurance APIs", "Risk assessment ML models"],
+                criticality="critical",
+                risk_level=RiskLevel.CRITICAL,
+                implementation_complexity="very_high",
+                estimated_timeline_weeks=20
+            ),
+            TechnicalComponent(
+                name="Mobile Application",
+                description="iOS and Android apps for user and driver interfaces",
+                technology_stack=["React Native", "Swift", "Kotlin"],
+                criticality="critical",
+                risk_level=RiskLevel.MEDIUM,
+                implementation_complexity="high",
+                estimated_timeline_weeks=18
             ),
             TechnicalComponent(
                 name="Analytics and Monitoring",
-                category="Observability",
-                criticality="medium",
-                description="Real-time analytics, logging, and performance monitoring",
-                dependencies=["ELK Stack", "Datadog/NewRelic", "Prometheus"],
-                challenges=[
-                    "Handling massive data volumes",
-                    "Real-time dashboard performance",
-                    "Cost optimization for log storage",
-                    "Alert fatigue management"
-                ],
-                estimated_complexity=6
+                description="Real-time performance tracking and data analytics",
+                technology_stack=["Elasticsearch", "Kafka", "Tableau"],
+                criticality="high",
+                risk_level=RiskLevel.MEDIUM,
+                implementation_complexity="medium",
+                estimated_timeline_weeks=8
+            ),
+            TechnicalComponent(
+                name="Fraud Detection System",
+                description="ML-based fraud prevention and anomaly detection",
+                technology_stack=["TensorFlow", "scikit-learn", "custom ML models"],
+                criticality="critical",
+                risk_level=RiskLevel.HIGH,
+                implementation_complexity="very_high",
+                estimated_timeline_weeks=15
+            ),
+            TechnicalComponent(
+                name="Customer Support Platform",
+                description="24/7 support system with escalation handling",
+                technology_stack=["Zendesk", "Custom ticketing", "AI chatbots"],
+                criticality="high",
+                risk_level=RiskLevel.LOW,
+                implementation_complexity="medium",
+                estimated_timeline_weeks=6
+            ),
+            TechnicalComponent(
+                name="Integration with Welcome Pickups",
+                description="API integration with partner company",
+                technology_stack=["REST API", "OAuth 2.0", "Webhook handlers"],
+                criticality="critical",
+                risk_level=RiskLevel.HIGH,
+                implementation_complexity="high",
+                estimated_timeline_weeks=8
             )
         ]
         self.technical_components = components
         return components
 
-    def identify_integration_points(self) -> List[IntegrationPoint]:
-        """Identify key integration points between systems."""
-        integrations = [
-            IntegrationPoint(
-                source_system="Airbnb Mobile App",
-                target_system="Booking Engine",
-                data_flow="Ride request with pickup/dropoff locations",
-                frequency="Real-time",
-                authentication_required=True,
-                latency_sla_ms=500
+    def analyze_stakeholders(self) -> List[StakeholderAnalysis]:
+        """Identify key stakeholders and their interests."""
+        stakeholders = [
+            StakeholderAnalysis(
+                entity="Airbnb Users",
+                role="Primary customers seeking convenient transportation",
+                interests=["Affordability", "Reliability", "Safety", "Convenience"],
+                potential_friction=["Price point", "Availability in their area"],
+                dependencies=["Seamless app integration", "Quality drivers"]
             ),
-            IntegrationPoint(
-                source_system="Booking Engine",
-                target_system="Welcome Pickups API",
-                data_flow="Dispatch request to driver network",
-                frequency="Real-time",
-                authentication_required=True,
-                latency_sla_ms=2000
+            StakeholderAnalysis(
+                entity="Welcome Pickups",
+                role="Strategic partner providing fleet and operations",
+                interests=["Revenue sharing", "Brand exposure", "Operational efficiency"],
+                potential_friction=["Commission rates", "Service quality standards"],
+                dependencies=["Airbnb's user base", "Technology integration"]
             ),
-            IntegrationPoint(
-                source_system="Welcome Pickups API",
-                target_system="Location Tracking Service",
-                data_flow="Driver GPS coordinates updates",
-                frequency="Every 5-10 seconds",
-                authentication_required=True,
-                latency_sla_ms=3000
+            StakeholderAnalysis(
+                entity="Drivers/Fleet Operators",
+                role="Service providers",
+                interests=["Fair compensation", "Steady work", "Flexibility"],
+                potential_friction=["Low margins", "Algorithmic dispatch"],
+                dependencies=["Consistent demand", "Fair rating system"]
             ),
-            IntegrationPoint(
-                source_system="Route Optimization Engine",
-                target_system="Maps and Traffic API",
-                data_flow="Real-time traffic and route data",
-                frequency="Real-time",
-                authentication_required=True,
-                latency_sla_ms=1000
+            StakeholderAnalysis(
+                entity="Regulators",
+                role="Government bodies overseeing transportation",
+                interests=["Safety compliance", "Tax collection", "Labor standards"],
+                potential_friction=["Classification disputes", "Local regulations"],
+                dependencies=["Clear operational framework"]
             ),
-            IntegrationPoint(
-                source_system="Payment Processing",
-                target_system="Fraud Detection Service",
-                data_flow="Transaction details for fraud scoring",
-                frequency="Real-time",
-                authentication_required=True,
-                latency_sla_ms=200
+            StakeholderAnalysis(
+                entity="Insurance Providers",
+                role="Risk management partners",
+                interests=["Accurate risk assessment", "Premium collection"],
+                potential_friction=["Liability questions", "Accident rates"],
+                dependencies=["Complete operational data"]
             ),
-            IntegrationPoint(
-                source_system="Notification Service",
-                target_system="Firebase/APNs",
-                data_flow="Push notification payload",
-                frequency="Real-time",
-                authentication_required=True,
-                latency_sla_ms=5000
-            ),
-            IntegrationPoint(
-                source_system="Analytics Pipeline",
-                target_system="Data Warehouse",
-                data_flow="Event data and metrics",
-                frequency="Batch (5-minute intervals)",
-                authentication_required=True,
-                latency_sla_ms=300000
+            StakeholderAnalysis(
+                entity="Competitors (Uber, Lyft)",
+                role="Market participants",
+                interests=["Market share preservation"],
+                potential_friction=["Direct competition"],
+                dependencies=["Market conditions"]
             )
         ]
-        self.integration_points = integrations
-        return integrations
+        self.stakeholder_map = stakeholders
+        return stakeholders
 
-    def analyze_scalability(self) -> List[ScalabilityMetric]:
-        """Analyze scalability concerns for key components."""
-        metrics = [
-            ScalabilityMetric(
-                component="Database (Booking/Reservation)",
-                current_capacity=50000,
-                expected_growth_6months=150000,
-                expected_growth_12months=500000,
-                bottleneck_risk="high",
-                recommendation="Implement database sharding by region/city, read replicas, and caching layer"
+    def analyze_market_opportunities(self) -> List[MarketOpportunity]:
+        """Identify market segments and opportunities."""
+        opportunities = [
+            MarketOpportunity(
+                segment="Airport Transfers",
+                size_estimate="$8B globally",
+                growth_rate="12% annually",
+                target_users="Airbnb guests needing airport transportation",
+                revenue_potential="High - captive audience"
             ),
-            ScalabilityMetric(
-                component="Real-time Location WebSocket Server",
-                current_capacity=100000,
-                expected_growth_6months=300000,
-                expected_growth_12months=1000000,
-                bottleneck_risk="high",
-                recommendation="Horizontal scaling with load balancing, consider event streaming (Kafka)"
+            MarketOpportunity(
+                segment="City Tours/Attractions",
+                size_estimate="$5B globally",
+                growth_rate="15% annually",
+                target_users="Tourists and city visitors",
+                revenue_potential="High - premium pricing possible"
             ),
-            ScalabilityMetric(
-                component="API Gateway",
-                current_capacity=50000,
-                expected_growth_6months=150000,
-                expected_growth_12months=500000,
-                bottleneck_risk="medium",
-                recommendation="Auto-scaling configuration, rate limiting, request queuing"
+            MarketOpportunity(
+                segment="Business Travel",
+                size_estimate="$12B globally",
+                growth_rate="8% annually",
+                target_users="Corporate travelers",
+                revenue_potential="Very high - expense-based spending"
             ),
-            ScalabilityMetric(
-                component="Payment Processing",
-                current_capacity=10000,
-                expected_growth_6months=30000,
-                expected_growth_12months=100000,
-                bottleneck_risk="high",
-                recommendation="Async processing, idempotency keys, circuit breakers for external APIs"
+            MarketOpportunity(
+                segment="Event Transportation",
+                size_estimate="$3B globally",
+                growth_rate="20% annually",
+                target_users="Festival/concert attendees",
+                revenue_potential="Medium - seasonal peaks"
             ),
-            ScalabilityMetric(
-                component="Location Tracking Storage",
-                current_capacity=10,
-                expected_growth_6months=50,
-                expected_growth_12months=200,
-                bottleneck_risk="high",
-                recommendation="Time-series database (InfluxDB/TimescaleDB), data retention policies"
+            MarketOpportunity(
+                segment="Multi-destination Travel",
+                size_estimate="$2B globally",
+                growth_rate="18% annually",
+                target_users="Vacation planners visiting multiple cities",
+                revenue_potential="Medium - bundle opportunities"
             ),
-            ScalabilityMetric(
-                component="Route Optimization ML Model",
-                current_capacity=50000,
-                expected_growth_6months=200000,
-                expected_growth_12months=700000,
-                bottleneck_risk="medium",
-                recommendation="Model serving infrastructure (TensorFlow Serving/Triton), batch prediction"
+            MarketOpportunity(
+                segment="Premium/Luxury Segment",
+                size_estimate="$1.5B globally",
+                growth_rate="25% annually",
+                target_users="High-net-worth Airbnb users",
+                revenue_potential="Very high - premium margins"
             )
         ]
-        self.scalability_metrics = metrics
-        return metrics
+        self.market_opportunities = opportunities
+        return opportunities
 
-    def assess_security_requirements(self) -> Dict[str, Any]:
-        """Assess security and compliance requirements."""
-        return {
-            "authentication": {
-                "required": True,
-                "methods": ["OAuth2", "JWT tokens", "API keys"],
-                "mfa_required": True,
-                "session_timeout_minutes": 30
+    def analyze_competition(self) -> List[CompetitiveAnalysis]:
+        """Analyze competitive landscape."""
+        competitors = [
+            CompetitiveAnalysis(
+                competitor="Uber",
+                offering="Comprehensive ride-sharing and car services",
+                strengths=["Massive scale", "Brand recognition", "Global presence", "Advanced tech"],
+                weaknesses=["Regulatory issues", "Driver satisfaction", "Profitability challenges"],
+                market_share_estimate="35-40%"
+            ),
+            CompetitiveAnalysis(
+                competitor="Lyft",
+                offering="Ride-sharing and community-focused services",
+                strengths=["Strong US presence", "Driver benefits", "Brand loyalty"],
+                weaknesses=["Limited international presence", "Smaller scale"],
+                market_share_estimate="20-25%"
+            ),
+            CompetitiveAnalysis(
+                competitor="Grab",
+                offering="Super-app with transportation across Asia",
+                strengths=["Regional dominance", "Multi-service integration", "Local expertise"],
+                weaknesses=["Limited outside Asia", "Profitability questions"],
+                market_share_estimate="5-8% (regional)"
+            ),
+            CompetitiveAnalysis(
+                competitor="Welcome Pickups",
+                offering="Airport and city transfer services",
+                strengths=["Established partnerships", "Reliable operations"],
+                weaknesses=["Limited tech platform", "Regional focus"],
+                market_share_estimate="2-3% (niche)"
+            ),
+            CompetitiveAnalysis(
+                competitor="Traditional Taxis",
+                offering="Licensed taxi services",
+                strengths=["Regulatory legitimacy", "Established infrastructure"],
+                weaknesses=["Outdated tech", "Poor user experience", "Service variability"],
+                market_share_estimate="15-20% (declining)"
+            )
+        ]
+        self.competitive_landscape = competitors
+        return competitors
+
+    def analyze_regulatory_landscape(self) -> List[RegulatoryRequirement]:
+        """Analyze regulatory requirements by jurisdiction."""
+        requirements = [
+            RegulatoryRequirement(
+                jurisdiction="United States",
+                requirement="Commercial transportation licensing per state/city",
+                compliance_status="Varies by location",
+                timeline="6-12 months per jurisdiction",
+                risk_if_non_compliant="Service shutdowns, fines up to $10M+"
+            ),
+            RegulatoryRequirement(
+                jurisdiction="European Union",
+                requirement="GDPR compliance for user data",
+                compliance_status="Requires implementation",
+                timeline="Ongoing",
+                risk_if_non_compliant="Fines up to 4% of global revenue"
+            ),
+            RegulatoryRequirement(
+                jurisdiction="United Kingdom",
+                requirement="Licensing under Transport Act 1980",
+                compliance_status="Required before launch",
+                timeline="3-6 months",
+                risk_if_non_compliant="Service ban, legal action"
+            ),
+            RegulatoryRequirement(
+                jurisdiction="Australia",
+                requirement="State-level transportation regulation compliance",
+                compliance_status="Varies by state",
+                timeline="6-12 months",
+                risk_if_non_compliant="Operational suspension"
+            ),
+            RegulatoryRequirement(
+                jurisdiction="Global",
+                requirement="Insurance coverage meeting local standards",
+                compliance_status="Partially implemented",
+                timeline="Ongoing (jurisdiction-specific)",
+                risk_if_non_compliant="Uninsured liability exposure"
+            ),
+            RegulatoryRequirement(
+                jurisdiction="Global",
+                requirement="Driver background checks and training",
+                compliance_status="Requires standardization",
+                timeline="Ongoing",
+                risk_if_non_compliant="Safety incidents, liability"
+            )
+        ]
+        self.regulatory_requirements = requirements
+        return requirements
+
+    def identify_technical_risks(self) -> Dict[str, Any]:
+        """Identify critical technical risks."""
+        risks = {
+            "integration_complexity": {
+                "severity": "high",
+                "description": "Complex integration with Welcome Pickups' existing systems",
+                "mitigation": "Phased rollout, dedicated integration team, API contracts"
+            },
+            "real_time_systems": {
+                "severity": "high",
+                "description": "GPS tracking and real-time dispatch require high-availability systems",
+                "mitigation": "Multi-region deployment, redundancy, SLA monitoring"
+            },
+            "payment_security": {
+                "severity": "critical",
+                "description": "PCI-DSS compliance and fraud prevention challenges",
+                "mitigation": "Tokenization, 3D Secure, ML-based fraud detection"
+            },
+            "driver_vetting": {
+                "severity": "critical",
+                "description": "Background checks and driver quality assurance",
+                "mitigation": "Third-party verification, continuous monitoring, user ratings"
+            },
+            "insurance_coverage": {
+                "severity": "critical",
+                "description": "Gap coverage between Airbnb, Welcome Pickups, and drivers",
+                "mitigation": "Comprehensive insurance policy, clear liability framework"
+            },
+            "scale_and_performance": {
+                "severity": "high",
+                "description": "Handling millions of concurrent booking requests globally",
+                "mitigation": "Microservices, auto-scaling, load testing, caching strategies"
             },
             "data_privacy": {
-                "regulations": ["GDPR", "CCPA", "HIPAA", "Local regulations by region"],
-                "location_data_handling": "Encrypted in transit and at rest, access control",
-                "user_consent": "Explicit opt-in for location tracking",
-                "data_retention": "Automatic deletion after 90 days unless required by law"
+                "severity": "high",
+                "description": "User location data, payment info, and travel patterns",
+                "mitigation": "End-to-end encryption, data minimization, GDPR compliance"
             },
-            "compliance": {
-                "pci_dss": True,
-                "soc2_type2": True,
-                "background_checks": "Required for all drivers",
-                "insurance": "Commercial liability and auto insurance required"
+            "network_latency": {
+                "severity": "medium",
+                "description": "GPS and booking operations require low latency",
+                "mitigation": "Edge computing, CDN, local data centers"
             },
-            "threat_model": [
-                "Account takeover attacks",
-                "Payment fraud and chargebacks",
-                "Man-in-the-middle attacks",
-                "GPS spoofing/location manipulation",
-                "Denial of service attacks",
-                "Data breach and unauthorized access"
-            ],
-            "mitigations": [
-                "End-to-end encryption for sensitive data",
-                "Rate limiting and DDoS protection",
-                "Regular security audits and penetration testing",
-                "Bug bounty program",
-                "Incident response plan",
-                "Regular security training for staff"
-            ]
-        }
-
-    def estimate_development_effort(self) -> Dict[str, Any]:
-        """Estimate development effort and timeline."""
-        total_complexity = sum(c.estimated_complexity for c in self.technical_components)
-        avg_complexity = total_complexity / len(self.technical_components) if self.technical_components else 0
-
-        return {
-            "total_components": len(self.technical_components),
-            "average_complexity": round(avg_complexity, 1),
-            "estimated_engineer_months": round(total_complexity * 0.5),
-            "recommended_team_size": max(8, int(total_complexity * 0.3)),
-            "estimated_timeline_months": max(6, int(total_complexity * 0.25)),
-            "phases": [
-                {
-                    "phase": "1. Planning & Architecture",
-                    "duration_weeks": 4,
-                    "deliverables": ["Technical design", "API specifications", "Infrastructure plan"]
-                },
-                {
-                    "phase": "2. Core Backend Development",
-                    "duration_weeks": 12,
-                    "deliverables": ["Booking engine", "Payment processing", "Location tracking"]
-                },
-                {
-                    "phase": "3. Third-party Integration",
-                    "duration_weeks": 8,
-                    "deliverables": ["Welcome Pickups API integration", "Maps/Traffic integration"]
-                },
-                {
-                    "phase": "4. Mobile App Development",
-                    "duration_weeks": 12,
-                    "deliverables": ["iOS app", "Android app", "Driver app"]
-                },
-                {
-                    "phase": "5. Testing & QA",
-                    "duration_weeks": 8,
-                    "deliverables": ["UAT", "Load testing", "Security testing"]
-                },
-                {
-                    "phase": "6. Deployment & Launch",
-                    "duration_weeks": 4,
-                    "deliverables": ["Production deployment", "Monitoring setup", "Launch operations"]
-                }
-            ]
-        }
-
-    def identify_risks(self) -> List[Dict[str, Any]]:
-        """Identify key technical and operational risks."""
-        risks = [
-            {
-                "risk": "Welcome Pickups API Reliability",
+            "third_party_dependencies": {
+                "severity": "high",
+                "description": "Reliance on mapping APIs, payment processors, insurance partners",
+                "mitigation": "Multi-provider strategy, fallback systems, SLA monitoring"
+            },
+            "regulatory_complexity": {
                 "severity": "critical",
-                "probability": "medium",
-                "impact": "Service unavailable if partner API is down",
-                "mitigation": "Implement fallback driver network, circuit breakers, API SLA agreement"
-            },
+                "description": "Complex regulatory environment across jurisdictions",
+                "mitigation": "Legal review, jurisdictional roadmap, compliance team"
+            }
+        }
+        self.technical_risks = risks
+        return risks
+
+    def identify_integration_points(self) -> List[Dict[str, str]]:
+        """Identify key system integration points."""
+        integration_points = [
             {
-                "risk": "Real-time Location Data Scale",
-                "severity": "high",
-                "probability": "high",
-                "impact": "System performance degradation with high concurrent users",
-                "mitigation": "Database sharding, caching, event streaming infrastructure"
-            },
-            {
-                "risk": "Payment Fraud",
-                "severity": "high",
-                "probability": "medium",
-                "impact": "Financial loss and regulatory penalties",
-                "mitigation": "ML-based fraud detection, 3D
+                "system_a": "Air
