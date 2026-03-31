@@ -3,571 +3,542 @@
 # Task:    Design dashboard UI wireframes
 # Mission: Competitive Analysis Dashboard
 # Agent:   @sue
-# Date:    2026-03-31T19:07:20.405Z
+# Date:    2026-03-31T19:13:33.742Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Design dashboard UI wireframes
-MISSION: Competitive Analysis Dashboard
-AGENT: @sue
-DATE: 2024
-
-This module creates interactive ASCII and SVG wireframes for an analytics dashboard
-that visualizes competitor data, trends, and key metrics. It generates structured
-wireframe layouts that can be exported for design tools and provides a visual preview.
+Task: Design dashboard UI wireframes
+Mission: Competitive Analysis Dashboard
+Agent: @sue
+Date: 2025-01-16
+Context: Create wireframes for the analytics dashboard that visualizes competitor data trends.
 """
 
 import argparse
 import json
 import sys
-from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Any, Tuple
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional
 from enum import Enum
-import math
 
 
 class ComponentType(Enum):
-    """Enumeration of dashboard component types."""
+    """Dashboard component types."""
     HEADER = "header"
     SIDEBAR = "sidebar"
     METRIC_CARD = "metric_card"
-    CHART = "chart"
-    TABLE = "table"
-    TIMELINE = "timeline"
+    LINE_CHART = "line_chart"
+    BAR_CHART = "bar_chart"
+    COMPETITOR_TABLE = "competitor_table"
     HEATMAP = "heatmap"
+    TIME_SERIES = "time_series"
+    FILTER_PANEL = "filter_panel"
     FOOTER = "footer"
 
 
+class LayoutType(Enum):
+    """Dashboard layout types."""
+    GRID_12 = "grid_12"
+    FLEX = "flex"
+    ABSOLUTE = "absolute"
+
+
 @dataclass
-class Position:
-    """Represents position and dimensions of a wireframe component."""
-    x: int
-    y: int
+class Dimension:
+    """Component dimensions."""
     width: int
     height: int
+    x: int
+    y: int
 
-    def overlaps(self, other: 'Position') -> bool:
-        """Check if this position overlaps with another."""
-        return not (self.x + self.width <= other.x or 
-                    other.x + other.width <= self.x or
-                    self.y + self.height <= other.y or
-                    other.y + other.height <= self.y)
+    def to_dict(self) -> Dict[str, int]:
+        return asdict(self)
 
 
 @dataclass
-class WireframeComponent:
-    """Represents a single wireframe component."""
-    component_id: str
-    component_type: ComponentType
+class DataField:
+    """Data field definition."""
+    name: str
+    type: str
     label: str
-    position: Position
-    content: str = ""
-    priority: int = 0
-    interactive: bool = False
-    data_fields: List[str] = None
-
-    def __post_init__(self):
-        if self.data_fields is None:
-            self.data_fields = []
+    required: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert component to dictionary."""
+        return asdict(self)
+
+
+@dataclass
+class DashboardComponent:
+    """Dashboard wireframe component."""
+    id: str
+    type: ComponentType
+    title: str
+    dimension: Dimension
+    data_fields: List[DataField]
+    description: str
+    interactive_elements: List[str]
+    refresh_interval: int = 300
+
+    def to_dict(self) -> Dict[str, Any]:
         return {
-            "id": self.component_id,
-            "type": self.component_type.value,
-            "label": self.label,
-            "position": asdict(self.position),
-            "content": self.content,
-            "priority": self.priority,
-            "interactive": self.interactive,
-            "data_fields": self.data_fields
+            "id": self.id,
+            "type": self.type.value,
+            "title": self.title,
+            "dimension": self.dimension.to_dict(),
+            "data_fields": [field.to_dict() for field in self.data_fields],
+            "description": self.description,
+            "interactive_elements": self.interactive_elements,
+            "refresh_interval": self.refresh_interval
         }
 
 
-class DashboardWireframeGenerator:
-    """Generates dashboard UI wireframes for competitive analysis."""
+@dataclass
+class DashboardLayout:
+    """Dashboard layout specification."""
+    name: str
+    layout_type: LayoutType
+    components: List[DashboardComponent]
+    refresh_strategy: str
+    target_breakpoints: List[str]
+    theme: str = "light"
 
-    DASHBOARD_WIDTH = 120
-    DASHBOARD_HEIGHT = 40
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "layout_type": self.layout_type.value,
+            "components": [comp.to_dict() for comp in self.components],
+            "refresh_strategy": self.refresh_strategy,
+            "target_breakpoints": self.target_breakpoints,
+            "theme": self.theme
+        }
 
-    def __init__(self, layout_type: str = "default"):
-        """Initialize wireframe generator with specified layout."""
+
+class WireframeBuilder:
+    """Builder for creating dashboard wireframes."""
+
+    def __init__(self, dashboard_name: str, layout_type: LayoutType = LayoutType.GRID_12):
+        self.dashboard_name = dashboard_name
         self.layout_type = layout_type
-        self.components: List[WireframeComponent] = []
-        self.grid = [[' ' for _ in range(self.DASHBOARD_WIDTH)] 
-                     for _ in range(self.DASHBOARD_HEIGHT)]
+        self.components: List[DashboardComponent] = []
+        self.refresh_strategy = "progressive"
+        self.target_breakpoints = ["mobile", "tablet", "desktop"]
+        self.theme = "light"
 
-    def add_component(self, component: WireframeComponent) -> bool:
-        """Add a component to the wireframe, checking for overlaps."""
-        for existing in self.components:
-            if component.position.overlaps(existing.position):
-                return False
+    def add_header(self, height: int = 80) -> "WireframeBuilder":
+        """Add header component."""
+        component = DashboardComponent(
+            id="header-main",
+            type=ComponentType.HEADER,
+            title="Dashboard Header",
+            dimension=Dimension(width=1200, height=height, x=0, y=0),
+            data_fields=[
+                DataField("company_name", "string", "Company Name"),
+                DataField("last_updated", "datetime", "Last Updated")
+            ],
+            description="Main header with company branding and last update timestamp",
+            interactive_elements=["settings", "notifications", "user_menu"],
+            refresh_interval=0
+        )
         self.components.append(component)
-        return True
+        return self
 
-    def generate_default_layout(self) -> List[WireframeComponent]:
-        """Generate the default dashboard layout."""
-        components = []
-
-        header = WireframeComponent(
-            component_id="header_1",
-            component_type=ComponentType.HEADER,
-            label="Competitive Analysis Dashboard",
-            position=Position(0, 0, 120, 3),
-            content="Dashboard Title | Last Updated: 2024-01-15 | Export",
-            priority=10,
-            interactive=True
+    def add_sidebar(self, width: int = 240) -> "WireframeBuilder":
+        """Add sidebar navigation component."""
+        component = DashboardComponent(
+            id="sidebar-nav",
+            type=ComponentType.SIDEBAR,
+            title="Navigation Sidebar",
+            dimension=Dimension(width=width, height=800, x=0, y=80),
+            data_fields=[
+                DataField("menu_items", "array", "Menu Items"),
+                DataField("active_section", "string", "Active Section")
+            ],
+            description="Left sidebar with navigation menu and quick filters",
+            interactive_elements=["menu_toggle", "section_navigation", "favorites"],
+            refresh_interval=0
         )
-        components.append(header)
+        self.components.append(component)
+        return self
 
-        sidebar = WireframeComponent(
-            component_id="sidebar_1",
-            component_type=ComponentType.SIDEBAR,
-            label="Navigation",
-            position=Position(0, 3, 20, 37),
-            content="[Menu]\n- Overview\n- Competitors\n- Trends\n- Reports\n- Settings",
-            priority=9,
-            interactive=True
+    def add_filter_panel(self, x: int = 240, y: int = 80) -> "WireframeBuilder":
+        """Add filter panel component."""
+        component = DashboardComponent(
+            id="filter-panel-main",
+            type=ComponentType.FILTER_PANEL,
+            title="Filter Controls",
+            dimension=Dimension(width=960, height=60, x=x, y=y),
+            data_fields=[
+                DataField("date_range", "date_range", "Date Range"),
+                DataField("competitors", "multiselect", "Competitors"),
+                DataField("metrics", "multiselect", "Metrics"),
+                DataField("regions", "multiselect", "Regions")
+            ],
+            description="Filter controls for dashboard data",
+            interactive_elements=["date_picker", "competitor_selector", "metric_selector", 
+                                 "region_selector", "apply_filters", "reset_filters"],
+            refresh_interval=0
         )
-        components.append(sidebar)
+        self.components.append(component)
+        return self
 
-        metrics_area_y = 3
+    def add_metric_cards(self, x: int = 240, y: int = 140) -> "WireframeBuilder":
+        """Add key metric cards component."""
         metrics = [
-            ("market_share", "Market Share", 20),
-            ("price_change", "Price Change", 50),
-            ("feature_count", "Feature Count", 80)
+            ("market_share", "Market Share", 220),
+            ("revenue_trend", "Revenue Trend", 460),
+            ("product_count", "Product Count", 700),
+            ("growth_rate", "Growth Rate", 940)
         ]
-
-        for idx, (mid, label, x) in enumerate(metrics):
-            metric = WireframeComponent(
-                component_id=f"metric_{idx}",
-                component_type=ComponentType.METRIC_CARD,
-                label=label,
-                position=Position(x, metrics_area_y, 28, 6),
-                content=f"[{label}]\n+12.5% | 67.3%",
-                priority=8,
-                interactive=False,
-                data_fields=["value", "change_percentage", "trend"]
-            )
-            components.append(metric)
-
-        competitors_chart = WireframeComponent(
-            component_id="chart_competitors",
-            component_type=ComponentType.CHART,
-            label="Competitor Market Position",
-            position=Position(20, 9, 50, 12),
-            content="[Line Chart]\nCompetitor A ----+\nCompetitor B ------\nCompetitor C ---",
-            priority=7,
-            interactive=True,
-            data_fields=["series", "values", "dates"]
-        )
-        components.append(competitors_chart)
-
-        pricing_heatmap = WireframeComponent(
-            component_id="heatmap_pricing",
-            component_type=ComponentType.HEATMAP,
-            label="Pricing Heatmap",
-            position=Position(70, 9, 48, 12),
-            content="[Heatmap Grid]\nFeature A  ▓▓░░▓\nFeature B  ▒▒▒░░\nFeature C  ░░▒▒▒",
-            priority=7,
-            interactive=True,
-            data_fields=["features", "competitors", "values"]
-        )
-        components.append(pricing_heatmap)
-
-        trends_chart = WireframeComponent(
-            component_id="chart_trends",
-            component_type=ComponentType.CHART,
-            label="Trend Analysis (6 months)",
-            position=Position(20, 21, 50, 10),
-            content="[Area Chart]\n   ╱╲\n ╱  ╲╱╲\n╱      ╲",
-            priority=6,
-            interactive=True,
-            data_fields=["metric", "historical_data", "forecast"]
-        )
-        components.append(trends_chart)
-
-        activity_timeline = WireframeComponent(
-            component_id="timeline_activity",
-            component_type=ComponentType.TIMELINE,
-            label="Recent Competitor Activity",
-            position=Position(70, 21, 48, 10),
-            content="[Timeline]\n2024-01-15: Competitor A launched v2.1\n2024-01-12: Price update\n2024-01-10: Feature release",
-            priority=6,
-            interactive=True,
-            data_fields=["date", "competitor", "event", "impact"]
-        )
-        components.append(activity_timeline)
-
-        features_table = WireframeComponent(
-            component_id="table_features",
-            component_type=ComponentType.TABLE,
-            label="Feature Comparison Matrix",
-            position=Position(20, 31, 98, 6),
-            content="[Table]\nFeature      | Our Product | Comp A | Comp B | Comp C\n" +
-                    "─────────────┼─────────────┼────────┼────────┼────────\n" +
-                    "API Support  | ✓           | ✓      | ✗      | ✓\n" +
-                    "Real-time    | ✓           | ✓      | ✓      | ✗",
-            priority=5,
-            interactive=True,
-            data_fields=["features", "products", "capabilities"]
-        )
-        components.append(features_table)
-
-        footer = WireframeComponent(
-            component_id="footer_1",
-            component_type=ComponentType.FOOTER,
-            label="Footer",
-            position=Position(0, 37, 120, 3),
-            content="Data Sources: Web Scraping | Last Sync: 2024-01-15 10:30 UTC | Status: All Systems Operational",
-            priority=1,
-            interactive=False
-        )
-        components.append(footer)
-
-        return components
-
-    def generate_mobile_layout(self) -> List[WireframeComponent]:
-        """Generate a mobile-optimized dashboard layout."""
-        components = []
-
-        header = WireframeComponent(
-            component_id="header_mobile",
-            component_type=ComponentType.HEADER,
-            label="Competitive Analysis",
-            position=Position(0, 0, 120, 3),
-            content="≡ Menu | Competitors | ⟳",
-            priority=10,
-            interactive=True
-        )
-        components.append(header)
-
-        metrics = [
-            ("metric_1", "Market Share", 0),
-            ("metric_2", "Price Trend", 0),
-            ("metric_3", "Activity", 0)
-        ]
-
-        for idx, (mid, label, _) in enumerate(metrics):
-            y_pos = 3 + (idx * 7)
-            metric = WireframeComponent(
-                component_id=mid,
-                component_type=ComponentType.METRIC_CARD,
-                label=label,
-                position=Position(0, y_pos, 120, 6),
-                content=f"[{label}]\nValue: 65.2% | Change: +2.3%",
-                priority=8,
-                interactive=False,
-                data_fields=["value", "change"]
-            )
-            components.append(metric)
-
-        chart = WireframeComponent(
-            component_id="chart_main",
-            component_type=ComponentType.CHART,
-            label="Competitors Overview",
-            position=Position(0, 24, 120, 10),
-            content="[Mobile Chart]\n╭─────────────┬──────────╮\n│ Comp A: 45% │\n│ Comp B: 35% │\n╰─────────────┴──────────╯",
-            priority=7,
-            interactive=True,
-            data_fields=["competitors", "values"]
-        )
-        components.append(chart)
-
-        footer = WireframeComponent(
-            component_id="footer_mobile",
-            component_type=ComponentType.FOOTER,
-            label="Mobile Footer",
-            position=Position(0, 34, 120, 6),
-            content="Last Update: 10:30 AM\nTap to refresh • Settings",
-            priority=1,
-            interactive=False
-        )
-        components.append(footer)
-
-        return components
-
-    def generate_detailed_layout(self) -> List[WireframeComponent]:
-        """Generate a detailed, information-rich layout."""
-        components = []
-
-        header = WireframeComponent(
-            component_id="header_detailed",
-            component_type=ComponentType.HEADER,
-            label="Detailed Competitive Analysis",
-            position=Position(0, 0, 120, 4),
-            content="┌─ Competitive Analysis Dashboard ─────────────────────────────────────────────────────────────────────┐\n" +
-                    "│ Last Sync: 2024-01-15 10:30 UTC | Data Quality: 98.5% | 127 Competitors Tracked                   │",
-            priority=10,
-            interactive=True
-        )
-        components.append(header)
-
-        overview_metrics = [
-            ("avg_price", "Avg Price", 20, 4),
-            ("feature_gap", "Feature Gap", 45, 4),
-            ("growth_rate", "Growth Rate", 70, 4),
-            ("market_volatility", "Volatility", 95, 4)
-        ]
-
-        for mid, label, x, y in overview_metrics:
-            metric = WireframeComponent(
-                component_id=mid,
-                component_type=ComponentType.METRIC_CARD,
-                label=label,
-                position=Position(x, y, 23, 5),
-                content=f"[{label}]\n$4,250 | ↑12%",
-                priority=9,
-                interactive=False,
-                data_fields=["metric", "value", "trend"]
-            )
-            components.append(metric)
-
-        market_chart = WireframeComponent(
-            component_id="chart_market",
-            component_type=ComponentType.CHART,
-            label="Market Share Evolution",
-            position=Position(20, 9, 48, 11),
-            content="[Multi-line Chart]\nYear 2023-2024 Market Share Trends\nCompetitor A ↗ 45% → 48%\nCompetitor B ↘ 35% → 32%\nUs ↗ 20% → 22%",
-            priority=8,
-            interactive=True,
-            data_fields=["period", "competitors", "percentages"]
-        )
-        components.append(market_chart)
-
-        feature_comparison = WireframeComponent(
-            component_id="chart_features",
-            component_type=ComponentType.CHART,
-            label="Feature Maturity Matrix",
-            position=Position(68, 9, 50, 11),
-            content="[Bubble Chart]\nX: Market Adoption\nY: Feature Maturity\n● Competitor A (large)\n● Competitor B (medium)\n● Our Features (scattered)",
-            priority=8,
-            interactive=True,
-            data_fields=["feature", "adoption", "maturity"]
-        )
-        components.append(feature_comparison)
-
-        detailed_table = WireframeComponent(
-            component_id="table_detailed",
-            component_type=ComponentType.TABLE,
-            label="Comprehensive Product Comparison",
-            position=Position(20, 20, 98, 12),
-            content="[Detailed Comparison Table]\n" +
-                    "Criteria           │ Our Product │ Competitor A │ Competitor B │ Competitor C\n" +
-                    "───────────────────┼─────────────┼──────────────┼──────────────┼──────────────\n" +
-                    "Pricing Model      │ SaaS        │ SaaS         │ On-Premise   │ Freemium\n" +
-                    "API Availability   │ REST/GraphQL│ REST Only    │ REST/SOAP    │ REST\n" +
-                    "Support Level      │ 24/7 Premium│ Business Hours│ Community   │ Paid Support\n" +
-                    "Data Retention     │ Unlimited   │ 12 months    │ Unlimited    │ 6 months\n" +
-                    "Integrations       │ 150+        │ 80+          │ 120+         │ 45+",
-            priority=7,
-            interactive=True,
-            data_fields=["criteria", "products", "values"]
-        )
-        components.append(detailed_table)
-
-        footer = WireframeComponent(
-            component_id="footer_detailed",
-            component_type=ComponentType.FOOTER,
-            label="Detailed Footer",
-            position=Position(0, 32, 120, 8),
-            content="═══════════════════════════════════════════════════════════════════════════════════════════════════════════\n" +
-                    "Data Sources: SEC Filings, Web Analysis, Community Reports | Update Frequency: Every 6 hours\n" +
-                    "Confidence Level: High (95%+) | Next Scheduled Update: 2024-01-15 16:30 UTC\n" +
-                    "Export Formats Available: PDF, CSV, JSON | Report Builder | Custom Alerts",
-            priority=1,
-            interactive=False
-        )
-        components.append(footer)
-
-        return components
-
-    def render_ascii_wireframe(self, components: List[WireframeComponent]) -> str:
-        """Render wireframe as ASCII art."""
-        output = []
         
-        for row in self.grid:
-            output.append(''.join(row))
+        for metric_id, label, x_pos in metrics:
+            component = DashboardComponent(
+                id=f"metric-{metric_id}",
+                type=ComponentType.METRIC_CARD,
+                title=label,
+                dimension=Dimension(width=200, height=100, x=x_pos, y=y),
+                data_fields=[
+                    DataField("current_value", "float", "Current Value"),
+                    DataField("previous_value", "float", "Previous Value"),
+                    DataField("change_percent", "float", "Change %"),
+                    DataField("trend_direction", "string", "Trend")
+                ],
+                description=f"Key metric card for {label}",
+                interactive_elements=["drill_down", "detail_view"],
+                refresh_interval=300
+            )
+            self.components.append(component)
+        
+        return self
 
-        for component in sorted(components, key=lambda c: c.position.y):
-            y = component.position.y
-            x = component.position.x
-            w = component.position.width
-            h = component.position.height
+    def add_competitor_comparison_table(self, x: int = 240, y: int = 260) -> "WireframeBuilder":
+        """Add competitor comparison table."""
+        component = DashboardComponent(
+            id="competitor-table-main",
+            type=ComponentType.COMPETITOR_TABLE,
+            title="Competitor Comparison",
+            dimension=Dimension(width=960, height=300, x=x, y=y),
+            data_fields=[
+                DataField("competitor_name", "string", "Competitor"),
+                DataField("market_share", "float", "Market Share %"),
+                DataField("products", "integer", "Products"),
+                DataField("avg_price", "float", "Avg Price"),
+                DataField("customer_rating", "float", "Rating"),
+                DataField("last_update", "datetime", "Last Updated")
+            ],
+            description="Detailed competitor comparison table with sortable and filterable columns",
+            interactive_elements=["sort", "filter", "column_toggle", "export", "detailed_view"],
+            refresh_interval=600
+        )
+        self.components.append(component)
+        return self
 
-            if y < len(self.grid) and x < len(self.grid[0]):
-                title_box = f"┌─ {component.label[:w-4]} ─┐"
-                if x + len(title_box) <= self.DASHBOARD_WIDTH:
-                    for i, char in enumerate(title_box[:w]):
-                        if i < len(title_box):
-                            if x + i < self.DASHBOARD_WIDTH:
-                                self.grid[y][x + i] = char
+    def add_trend_chart(self, chart_id: str, title: str, x: int, y: int) -> "WireframeBuilder":
+        """Add trend line chart."""
+        component = DashboardComponent(
+            id=f"chart-{chart_id}",
+            type=ComponentType.LINE_CHART,
+            title=title,
+            dimension=Dimension(width=470, height=300, x=x, y=y),
+            data_fields=[
+                DataField("date", "date", "Date"),
+                DataField("competitor_name", "string", "Competitor"),
+                DataField("value", "float", "Value")
+            ],
+            description=f"Trend visualization for {title}",
+            interactive_elements=["zoom", "pan", "legend_toggle", "export", "compare_view"],
+            refresh_interval=600
+        )
+        self.components.append(component)
+        return self
 
-        ascii_output = []
-        ascii_output.append("╔" + "═" * (self.DASHBOARD_WIDTH - 2) + "╗")
-        for row in self.grid:
-            ascii_output.append("║" + ''.join(row) + "║")
-        ascii_output.append("╚" + "═" * (self.DASHBOARD_WIDTH - 2) + "╝")
+    def add_heatmap(self, x: int = 240, y: int = 580) -> "WireframeBuilder":
+        """Add competitor activity heatmap."""
+        component = DashboardComponent(
+            id="heatmap-activity",
+            type=ComponentType.HEATMAP,
+            title="Competitor Activity Heatmap",
+            dimension=Dimension(width=960, height=280, x=x, y=y),
+            data_fields=[
+                DataField("competitor_name", "string", "Competitor"),
+                DataField("activity_type", "string", "Activity Type"),
+                DataField("frequency", "float", "Frequency"),
+                DataField("time_period", "date", "Time Period")
+            ],
+            description="Heatmap showing competitor activity intensity across different categories",
+            interactive_elements=["color_scale", "legend", "tooltip", "drill_down"],
+            refresh_interval=600
+        )
+        self.components.append(component)
+        return self
 
-        return '\n'.join(ascii_output)
+    def add_footer(self, height: int = 60) -> "WireframeBuilder":
+        """Add footer component."""
+        component = DashboardComponent(
+            id="footer-main",
+            type=ComponentType.FOOTER,
+            title="Dashboard Footer",
+            dimension=Dimension(width=1200, height=height, x=0, y=900),
+            data_fields=[
+                DataField("status", "string", "System Status"),
+                DataField("last_refresh", "datetime", "Last Refresh Time")
+            ],
+            description="Footer with system status and refresh information",
+            interactive_elements=["refresh_button", "status_details"],
+            refresh_interval=0
+        )
+        self.components.append(component)
+        return self
 
-    def generate_svg_wireframe(self, components: List[WireframeComponent], 
-                              filename: str = "wireframe.svg") -> str:
-        """Generate SVG representation of wireframe."""
-        scale = 6
-        width = self.DASHBOARD_WIDTH * scale
-        height = self.DASHBOARD_HEIGHT * scale
+    def set_theme(self, theme: str) -> "WireframeBuilder":
+        """Set dashboard theme."""
+        self.theme = theme
+        return self
 
-        svg_lines = [
-            f'<?xml version="1.0" encoding="UTF-8"?>',
-            f'<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg">',
-            f'  <defs>',
-            f'    <style>',
-            f'      .component {{ fill: #f5f5f5; stroke: #333; stroke-width: 1; }}',
-            f'      .header {{ fill: #2c3e50; }}',
-            f'      .sidebar {{ fill: #ecf0f1; }}',
-            f'      .metric {{ fill: #3498db; }}',
-            f'      .chart {{ fill: #e8f4f8; }}',
-            f'      .table {{ fill: #fef5e7; }}',
-            f'      .footer {{ fill: #34495e; }}',
-            f'      .label {{ font-family: Arial, sans-serif; font-size: 12px; font-weight: bold; }}',
-            f'      .text {{ font-family: Arial, sans-serif; font-size: 10px; }}',
-            f'    </style>',
-            f'  </defs>',
-            f'  <rect width="{width}" height="{height}" fill="#ffffff" stroke="#ccc" stroke-width="2"/>',
-        ]
+    def set_refresh_strategy(self, strategy: str) -> "WireframeBuilder":
+        """Set data refresh strategy."""
+        self.refresh_strategy = strategy
+        return self
 
-        color_map = {
-            ComponentType.HEADER: "#2c3e50",
-            ComponentType.SIDEBAR: "#ecf0f1",
-            ComponentType.METRIC_CARD: "#3498db",
-            ComponentType.CHART: "#e8f4f8",
-            ComponentType.TABLE: "#fef5e7",
-            ComponentType.TIMELINE: "#f0f3f4",
-            ComponentType.HEATMAP: "#fdeef4",
-            ComponentType.FOOTER: "#34495e"
-        }
+    def build(self) -> DashboardLayout:
+        """Build the dashboard layout."""
+        return DashboardLayout(
+            name=self.dashboard_name,
+            layout_type=self.layout_type,
+            components=self.components,
+            refresh_strategy=self.refresh_strategy,
+            target_breakpoints=self.target_breakpoints,
+            theme=self.theme
+        )
 
-        for component in components:
-            x = component.position.x * scale
-            y = component.position.y * scale
-            w = component.position.width * scale
-            h = component.position.height * scale
 
-            color = color_map.get(component.component_type, "#e0e0e0")
-            text_color = "#ffffff" if component.component_type in [ComponentType.HEADER, ComponentType.FOOTER] else "#000000"
+class WireframeExporter:
+    """Export wireframes in various formats."""
 
-            svg_lines.append(f'  <rect x="{x}" y="{y}" width="{w}" height="{h}" fill="{color}" stroke="#666" stroke-width="1.5" rx="4"/>')
-            svg_lines.append(f'  <text x="{x + 10}" y="{y + 20}" class="label" fill="{text_color}">{component.label}</text>')
+    @staticmethod
+    def to_json(layout: DashboardLayout) -> str:
+        """Export layout as JSON."""
+        return json.dumps(layout.to_dict(), indent=2)
+
+    @staticmethod
+    def to_ascii_wireframe(layout: DashboardLayout) -> str:
+        """Generate ASCII art wireframe visualization."""
+        lines = []
+        lines.append("=" * 120)
+        lines.append(f"DASHBOARD: {layout.name} ({layout.layout_type.value})".center(120))
+        lines.append(f"Theme: {layout.theme} | Refresh: {layout.refresh_strategy}".center(120))
+        lines.append("=" * 120)
+        
+        # Create a 2D grid for visualization
+        grid_width = 120
+        grid_height = 40
+        grid = [['.' for _ in range(grid_width)] for _ in range(grid_height)]
+        
+        # Scale factor
+        scale_x = grid_width / 1200
+        scale_y = grid_height / 960
+        
+        # Place components on grid
+        for component in layout.components:
+            dim = component.dimension
+            x1 = max(0, int(dim.x * scale_x))
+            y1 = max(0, int(dim.y * scale_y))
+            x2 = min(grid_width - 1, int((dim.x + dim.width) * scale_x))
+            y2 = min(grid_height - 1, int((dim.y + dim.height) * scale_y))
             
-            if component.data_fields:
-                field_text = ", ".join(component.data_fields[:3])
-                svg_lines.append(f'  <text x="{x + 10}" y="{y + h - 10}" class="text" fill="{text_color}">Fields: {field_text}</text>')
+            # Fill grid with component marker
+            marker = component.type.value[0].upper()
+            for y in range(y1, y2 + 1):
+                for x in range(x1, x2 + 1):
+                    if 0 <= y < grid_height and 0 <= x < grid_width:
+                        grid[y][x] = marker
+        
+        # Convert grid to string
+        for row in grid:
+            lines.append(''.join(row))
+        
+        lines.append("=" * 120)
+        lines.append("\nComponent Legend:")
+        legend_map = {ct.value[0].upper(): ct.value for ct in ComponentType}
+        for marker, name in sorted(legend_map.items()):
+            lines.append(f"  {marker} = {name}")
+        
+        return '\n'.join(lines)
 
-        svg_lines.append('</svg>')
+    @staticmethod
+    def to_html_mockup(layout: DashboardLayout) -> str:
+        """Generate basic HTML mockup."""
+        html_parts = []
+        html_parts.append('<!DOCTYPE html>')
+        html_parts.append('<html lang="en">')
+        html_parts.append('<head>')
+        html_parts.append('  <meta charset="UTF-8">')
+        html_parts.append('  <meta name="viewport" content="width=device-width, initial-scale=1.0">')
+        html_parts.append(f'  <title>{layout.name}</title>')
+        html_parts.append('  <style>')
+        html_parts.append('    * { margin: 0; padding: 0; box-sizing: border-box; }')
+        html_parts.append(f'    body {{ font-family: Arial, sans-serif; background: #{"f0f0f0" if layout.theme == "light" else "1a1a1a"}; }}')
+        html_parts.append('    .dashboard { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }')
+        html_parts.append('    .header { grid-column: 1 / -1; background: #333; color: white; padding: 20px; }')
+        html_parts.append('    .sidebar { background: #f9f9f9; padding: 20px; border-right: 1px solid #ddd; }')
+        html_parts.append('    .main { padding: 20px; overflow-y: auto; }')
+        html_parts.append('    .component { ')
+        html_parts.append('      background: white; border: 2px dashed #ccc; border-radius: 4px;')
+        html_parts.append('      padding: 15px; margin: 10px 0; min-height: 100px; }')
+        html_parts.append('    .component h3 { color: #333; margin-bottom: 10px; }')
+        html_parts.append('    .component p { color: #666; font-size: 12px; }')
+        html_parts.append('    .footer { grid-column: 1 / -1; background: #333; color: white; padding: 20px; text-align: center; }')
+        html_parts.append('  </style>')
+        html_parts.append('</head>')
+        html_parts.append('<body>')
+        html_parts.append('<div class="dashboard">')
+        
+        # Header
+        for comp in layout.components:
+            if comp.type == ComponentType.HEADER:
+                html_parts.append('<div class="header">')
+                html_parts.append(f'  <h1>{comp.title}</h1>')
+                html_parts.append('</div>')
+        
+        # Sidebar
+        for comp in layout.components:
+            if comp.type == ComponentType.SIDEBAR:
+                html_parts.append('<div class="sidebar">')
+                html_parts.append(f'  <h3>{comp.title}</h3>')
+                html_parts.append('  <ul>')
+                html_parts.append('    <li>Overview</li>')
+                html_parts.append('    <li>Competitors</li>')
+                html_parts.append('    <li>Market Analysis</li>')
+                html_parts.append('    <li>Reports</li>')
+                html_parts.append('  </ul>')
+                html_parts.append('</div>')
+        
+        # Main content
+        html_parts.append('<div class="main">')
+        for comp in layout.components:
+            if comp.type not in [ComponentType.HEADER, ComponentType.SIDEBAR, ComponentType.FOOTER]:
+                html_parts.append('<div class="component">')
+                html_parts.append(f'  <h3>{comp.title}</h3>')
+                html_parts.append(f'  <p>{comp.description}</p>')
+                html_parts.append(f'  <small>Type: {comp.type.value} | Refresh: {comp.refresh_interval}s</small>')
+                html_parts.append('</div>')
+        html_parts.append('</div>')
+        
+        # Footer
+        for comp in layout.components:
+            if comp.type == ComponentType.FOOTER:
+                html_parts.append('<div class="footer">')
+                html_parts.append(f'  <p>{comp.title}</p>')
+                html_parts.append('</div>')
+        
+        html_parts.append('</div>')
+        html_parts.append('</body>')
+        html_parts.append('</html>')
+        
+        return '\n'.join(html_parts)
 
-        return '\n'.join(svg_lines)
 
-    def generate_wireframe_report(self, components: List[WireframeComponent]) -> Dict[str, Any]:
-        """Generate a comprehensive wireframe report."""
-        return {
-            "layout_type": self.layout_type,
-            "generated_at": datetime.now().isoformat(),
-            "total_components": len(components),
-            "dashboard_dimensions": {
-                "width": self.DASHBOARD_WIDTH,
-                "height": self.DASHBOARD_HEIGHT
-            },
-            "components": [c.to_dict() for c in components],
-            "layout_stats": {
-                "total_area_used": sum(c.position.width * c.position.height for c in components),
-                "total_area_available": self.DASHBOARD_WIDTH * self.DASHBOARD_HEIGHT,
-                "interactive_components": sum(1 for c in components if c.interactive),
-                "component_types": {
-                    t.value: sum(1 for c in components if c.component_type == t)
-                    for t in ComponentType
-                }
-            }
-        }
+def generate_sample_wireframe() -> DashboardLayout:
+    """Generate a sample competitive analysis dashboard wireframe."""
+    builder = WireframeBuilder(
+        "Competitive Analysis Dashboard",
+        layout_type=LayoutType.GRID_12
+    )
+    
+    builder.add_header(height=80) \
+           .add_sidebar(width=240) \
+           .add_filter_panel() \
+           .add_metric_cards() \
+           .add_competitor_comparison_table(y=260) \
+           .add_trend_chart("market_share", "Market Share Trend", 240, 580) \
+           .add_trend_chart("pricing", "Pricing Trend", 730, 580) \
+           .add_heatmap(y=900) \
+           .add_footer()
+    
+    builder.set_theme("light")
+    builder.set_refresh_strategy("progressive")
+    
+    return builder.build()
 
 
 def main():
-    """Main entry point for wireframe generation."""
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Generate competitive analysis dashboard wireframes"
-    )
-    parser.add_argument(
-        "--layout-type",
-        choices=["default", "mobile", "detailed"],
-        default="default",
-        help="Dashboard layout type"
+        description="Dashboard UI Wireframe Designer for Competitive Analysis"
     )
     parser.add_argument(
         "--output-format",
-        choices=["ascii", "svg", "json", "all"],
-        default="all",
-        help="Output format for wireframe"
+        choices=["json", "ascii", "html"],
+        default="json",
+        help="Output format for wireframes (default: json)"
     )
     parser.add_argument(
         "--output-file",
         type=str,
         default=None,
-        help="Output file path (without extension)"
+        help="Save output to file (if not specified, prints to stdout)"
     )
     parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Verbose output with detailed information"
+        "--include-components",
+        type=str,
+        default="all",
+        help="Comma-separated list of component types to include (default: all)"
     )
-
+    parser.add_argument(
+        "--theme",
+        choices=["light", "dark"],
+        default="light",
+        help="Dashboard theme (default: light)"
+    )
+    parser.add_argument(
+        "--refresh-strategy",
+        choices=["progressive", "full", "manual"],
+        default="progressive",
+        help="Data refresh strategy (default: progressive)"
+    )
+    parser.add_argument(
+        "--generate-sample",
+        action="store_true",
+        default=True,
+        help="Generate sample wireframe (default: True)"
+    )
+    
     args = parser.parse_args()
-
-    generator = DashboardWireframeGenerator(layout_type=args.layout_type)
-
-    if args.layout_type == "default":
-        components = generator.generate_default_layout()
-    elif args.layout_type == "mobile":
-        components = generator.generate_mobile_layout()
+    
+    # Generate wireframe
+    layout = generate_sample_wireframe()
+    
+    # Apply theme and strategy
+    layout.theme = args.theme
+    layout.refresh_strategy = args.refresh_strategy
+    
+    # Filter components if requested
+    if args.include_components != "all":
+        requested_types = set(args.include_components.split(","))
+        filtered_components = [
+            c for c in layout.components
+            if c.type.value in requested_types
+        ]
+        layout.components = filtered_components
+    
+    # Generate output
+    if args.output_format == "json":
+        output = WireframeExporter.to_json(layout)
+    elif args.output_format == "ascii":
+        output = WireframeExporter.to_ascii_wireframe(layout)
+    elif args.output_format == "html":
+        output = WireframeExporter.to_html_mockup(layout)
     else:
-        components = generator.generate_detailed_layout()
-
-    if args.verbose:
-        print(f"Generated {len(components)} wireframe components")
-        print(f"Layout type: {args.layout_type}")
-
-    if args.output_format in ["ascii", "all"]:
-        ascii_wireframe = generator.render_ascii_wireframe(components)
-        print("\n" + "="*120)
-        print("ASCII WIREFRAME")
-        print("="*120)
-        print(ascii_wireframe)
-        if args.output_file:
-            with open(f"{args.output_file}_ascii.txt", "w") as f:
-                f.write(ascii_wireframe)
-
-    if args.output_format in ["svg", "all"]:
-        svg_wireframe = generator.generate_svg_wireframe(components)
-        print("\n" + "="*120)
-        print("SVG WIREFRAME GENERATED")
-        print("="*120)
-        if args.output_file:
-            with open(f"{args.output_file}.svg", "w") as f:
-                f.write(svg_wireframe)
-            print(f"SVG saved to {args.output_file}.svg")
-        if args.verbose:
-            print(svg_wireframe[:500] + "..." if len(svg_wireframe) > 500 else svg_wireframe)
-
-    if args.output_format in ["json", "all"]:
-        report = generator.generate_wireframe_report(components)
-        print("\n" + "="*120)
-        print("WIREFRAME REPORT (JSON)")
-        print("="*120)
-        print(json.dumps(report, indent=2))
-        if args.output_file:
-            with open(f"{args.output_file}.json", "w") as f:
-                json.dump(report, f, indent=2)
+        output = WireframeExporter.to_json(layout)
+    
+    # Output result
+    if args.output_file:
+        with open(args.output_file, 'w') as f:
+            f.write(output)
+        print(f"Wireframe saved to {args.output_file}")
+    else:
+        print(output)
 
 
 if __name__ == "__main__":
