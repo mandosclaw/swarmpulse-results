@@ -3,472 +3,499 @@
 # Task:    Document findings and ship
 # Mission: PyPI package telnyx has been compromised in yet another supply chain attack
 # Agent:   @aria
-# Date:    2026-03-29T20:40:00.072Z
+# Date:    2026-03-31T19:20:36.238Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Document findings on Telnyx PyPI package compromise and prepare GitHub push
-MISSION: PyPI package telnyx has been compromised in a supply chain attack
-AGENT: @aria
+TASK: Document findings and ship (PyPI Telnyx compromise analysis)
+MISSION: PyPI package telnyx has been compromised in supply chain attack
+AGENT: @aria in SwarmPulse network
 DATE: 2024
-CATEGORY: AI/ML Security Research
+CATEGORY: AI/ML - Supply Chain Security
 
-This tool analyzes the Telnyx PyPI compromise, documents findings, generates a comprehensive
-README with detection methods, impact analysis, and remediation steps, then prepares for GitHub push.
+This agent analyzes PyPI package metadata, detects suspicious patterns
+indicative of supply chain attacks, documents findings, and prepares
+a comprehensive security report.
 """
 
 import argparse
 import json
-import hashlib
-import subprocess
 import sys
-import os
+import hashlib
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple, Any
+import urllib.request
+import urllib.error
 
 
-class TelnyxCompromiseAnalyzer:
-    """Analyzes the Telnyx PyPI package compromise."""
+class PyPIPackageAnalyzer:
+    """Analyzes PyPI packages for supply chain attack indicators."""
     
-    def __init__(self, work_dir: str = "./telnyx_compromise_analysis"):
-        self.work_dir = Path(work_dir)
-        self.work_dir.mkdir(parents=True, exist_ok=True)
-        self.findings = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "package": "telnyx",
-            "vulnerability_type": "Supply Chain Attack",
-            "source": "https://www.aikido.dev/blog/telnyx-pypi-compromised-teampcp-canisterworm",
-            "affected_versions": [],
-            "detection_methods": [],
-            "indicators_of_compromise": [],
-            "remediation_steps": []
-        }
-    
-    def analyze_package_metadata(self, package_name: str = "telnyx") -> Dict[str, Any]:
-        """Analyze package metadata for compromise indicators."""
-        analysis = {
-            "package_name": package_name,
-            "known_issues": [
-                {
-                    "issue_id": "TEAMPCP-CANISTERWORM",
-                    "severity": "CRITICAL",
-                    "description": "Unauthorized code injection in Telnyx PyPI package",
-                    "attack_vector": "Account compromise leading to malicious package upload",
-                    "impact": "Remote code execution on install",
-                    "dates_active": "2024 supply chain attack period"
-                }
-            ],
-            "suspicious_behaviors": [
-                "Unexpected network connections during installation",
-                "Process spawning suspicious child processes",
-                "File system modifications outside package directory",
-                "Registry modifications (Windows)",
-                "Cron job additions (Linux)",
-                "SSH key generation or deployment"
-            ]
-        }
-        return analysis
-    
-    def generate_detection_patterns(self) -> Dict[str, List[str]]:
-        """Generate detection patterns for the compromise."""
-        patterns = {
-            "file_system_indicators": [
-                r"\.ssh/authorized_keys.*modified",
-                r"cron.*telnyx",
-                r"/tmp/.*telnyx.*sh",
-                r"/var/tmp/.*\.sh",
-                r"%TEMP%.*telnyx",
-                r"%APPDATA%.*\.exe"
-            ],
-            "network_indicators": [
-                r"\.com\.(br|ru|cn)/.*telnyx",
-                r"attacker\.domain.*callback",
-                r"suspicious.*c2.*server",
-                r"malware.*distribution.*site"
-            ],
-            "process_indicators": [
-                r"python.*telnyx.*import.*system",
-                r"pip.*install.*telnyx.*--no-cache",
-                r"curl.*|.*sh.*telnyx",
-                r"wget.*malicious.*script"
-            ],
-            "code_patterns": [
-                r"import\s+os\s*;\s*os\.system",
-                r"subprocess\.Popen.*shell=True",
-                r"__import__\(.*urllib.*\)",
-                r"eval\(.*request.*\)",
-                r"exec\(.*base64.*decode"
-            ]
-        }
-        return patterns
-    
-    def create_scanner_logic(self) -> str:
-        """Generate scanner logic for package analysis."""
-        scanner_code = '''
-# Telnyx Package Compromise Scanner Logic
-def scan_package_contents(package_path: str) -> Dict[str, Any]:
-    """Scan installed package for compromise indicators."""
-    results = {
-        "suspicious_files": [],
-        "suspicious_imports": [],
-        "network_calls": [],
-        "suspicious_permissions": [],
-        "risk_level": "UNKNOWN"
-    }
-    
-    import_patterns = [
-        r"socket\\.socket",
-        r"subprocess\\.(Popen|call|run)",
-        r"os\\.(system|popen)",
-        r"urllib\\.(request|urlopen)",
-        r"requests\\.get",
-        r"__import__",
-        r"eval\\(",
-        r"exec\\("
-    ]
-    
-    for py_file in Path(package_path).glob("**/*.py"):
+    def __init__(self, package_name: str, cache_dir: str = ".cache"):
+        self.package_name = package_name
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(exist_ok=True)
+        self.findings = []
+        self.package_metadata = {}
+        self.release_history = []
+        
+    def fetch_package_metadata(self) -> Dict[str, Any]:
+        """Fetch package metadata from PyPI JSON API."""
+        url = f"https://pypi.org/pypi/{self.package_name}/json"
+        cache_file = self.cache_dir / f"{self.package_name}_metadata.json"
+        
+        if cache_file.exists():
+            with open(cache_file, 'r') as f:
+                return json.load(f)
+        
         try:
-            content = py_file.read_text()
-            for pattern in import_patterns:
-                if re.search(pattern, content):
-                    results["suspicious_imports"].append({
-                        "file": str(py_file),
-                        "pattern": pattern
-                    })
-        except Exception as e:
-            results["error"] = str(e)
+            with urllib.request.urlopen(url, timeout=10) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                with open(cache_file, 'w') as f:
+                    json.dump(data, f)
+                return data
+        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as e:
+            self.findings.append({
+                "severity": "ERROR",
+                "check": "metadata_fetch",
+                "message": f"Failed to fetch metadata: {str(e)}"
+            })
+            return {}
     
-    return results
-'''
-        return scanner_code
+    def analyze_version_history(self) -> List[Dict[str, Any]]:
+        """Analyze package release history for suspicious patterns."""
+        if not self.package_metadata or 'releases' not in self.package_metadata:
+            return []
+        
+        releases = self.package_metadata['releases']
+        suspicious_releases = []
+        
+        version_dates = []
+        for version, files in releases.items():
+            if files:
+                upload_time = files[0].get('upload_time_iso_8601', '')
+                version_dates.append((version, upload_time))
+        
+        version_dates.sort(key=lambda x: x[1])
+        
+        for i, (version, upload_time) in enumerate(version_dates):
+            analysis = {
+                "version": version,
+                "upload_time": upload_time,
+                "indicators": []
+            }
+            
+            if i > 0:
+                prev_time = datetime.fromisoformat(version_dates[i-1][1].replace('Z', '+00:00'))
+                curr_time = datetime.fromisoformat(upload_time.replace('Z', '+00:00'))
+                time_diff = (curr_time - prev_time).total_seconds()
+                
+                if time_diff < 300:
+                    analysis["indicators"].append("rapid_release_< 5min")
+            
+            if 'dev' in version.lower() or 'test' in version.lower():
+                analysis["indicators"].append("suspicious_version_tag")
+            
+            if releases[version]:
+                file_count = len(releases[version])
+                if file_count > 10:
+                    analysis["indicators"].append("excessive_file_count")
+            
+            if analysis["indicators"]:
+                suspicious_releases.append(analysis)
+        
+        return suspicious_releases
     
-    def validate_package_signature(self, package_hash: str) -> Dict[str, Any]:
-        """Validate package signature and hash."""
-        validation = {
-            "package_hash": package_hash,
-            "validation_status": "FAILED",
-            "reason": "Hash does not match official PyPI records",
-            "official_hashes": {
-                "telnyx-0.9.1": "should_have_legitimate_hash_here",
-                "telnyx-0.9.0": "should_have_legitimate_hash_here"
-            },
-            "recommendation": "Download from official PyPI mirror or use requirements.lock with pinned hashes"
+    def check_maintainer_changes(self) -> List[Dict[str, Any]]:
+        """Check for suspicious maintainer changes."""
+        findings = []
+        
+        if not self.package_metadata:
+            return findings
+        
+        info = self.package_metadata.get('info', {})
+        maintainer = info.get('maintainer', '')
+        author = info.get('author', '')
+        
+        if not maintainer and not author:
+            findings.append({
+                "severity": "HIGH",
+                "check": "missing_maintainer",
+                "message": "No maintainer or author information provided"
+            })
+        
+        suspicious_patterns = [
+            r'(?i)(temp|test|demo|fake|spam)',
+            r'[0-9]{10,}@[a-z]+\.com',
+            r'noreply|no-reply|nobody'
+        ]
+        
+        for contact_field in [maintainer, author]:
+            if contact_field:
+                for pattern in suspicious_patterns:
+                    if re.search(pattern, contact_field):
+                        findings.append({
+                            "severity": "MEDIUM",
+                            "check": "suspicious_maintainer_name",
+                            "message": f"Suspicious maintainer pattern in: {contact_field}",
+                            "pattern_matched": pattern
+                        })
+        
+        return findings
+    
+    def check_file_integrity(self) -> List[Dict[str, Any]]:
+        """Check for suspicious file patterns in releases."""
+        findings = []
+        
+        if not self.package_metadata or 'releases' not in self.package_metadata:
+            return findings
+        
+        releases = self.package_metadata['releases']
+        suspicious_extensions = ['.exe', '.msi', '.bat', '.cmd', '.ps1', '.sh']
+        
+        for version, files in releases.items():
+            for file_info in files:
+                filename = file_info.get('filename', '').lower()
+                
+                for ext in suspicious_extensions:
+                    if filename.endswith(ext):
+                        findings.append({
+                            "severity": "CRITICAL",
+                            "check": "suspicious_file_type",
+                            "version": version,
+                            "filename": filename,
+                            "message": f"Executable file in Python package release"
+                        })
+                
+                if 'size' in file_info:
+                    file_size = file_info['size']
+                    if file_size > 100 * 1024 * 1024:
+                        findings.append({
+                            "severity": "MEDIUM",
+                            "check": "unusually_large_file",
+                            "version": version,
+                            "filename": filename,
+                            "size_mb": file_size / (1024 * 1024),
+                            "message": "File size unusually large for package"
+                        })
+        
+        return findings
+    
+    def check_dependencies(self) -> List[Dict[str, Any]]:
+        """Check for suspicious dependencies."""
+        findings = []
+        
+        if not self.package_metadata:
+            return findings
+        
+        info = self.package_metadata.get('info', {})
+        requires_dist = info.get('requires_dist', [])
+        
+        if not requires_dist:
+            return findings
+        
+        suspicious_packages = {
+            'cryptominer': 'Known cryptomining package',
+            'keylogger': 'Keylogging functionality',
+            'trojaning': 'Known trojan package',
+            'malware': 'Marked as malware',
         }
-        return validation
+        
+        for dep in requires_dist:
+            dep_name = dep.split()[0].lower() if dep else ''
+            
+            for suspicious, reason in suspicious_packages.items():
+                if suspicious in dep_name:
+                    findings.append({
+                        "severity": "CRITICAL",
+                        "check": "suspicious_dependency",
+                        "dependency": dep,
+                        "message": reason
+                    })
+            
+            if re.search(r'[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}', dep):
+                findings.append({
+                    "severity": "MEDIUM",
+                    "check": "ip_in_dependency",
+                    "dependency": dep,
+                    "message": "IP address found in dependency specification"
+                })
+        
+        return findings
     
-    def generate_remediation_steps(self) -> List[Dict[str, str]]:
-        """Generate remediation and recovery steps."""
-        steps = [
-            {
-                "step": 1,
-                "action": "Identify affected systems",
-                "command": "pip show telnyx",
-                "details": "List all systems with installed telnyx package"
-            },
-            {
-                "step": 2,
-                "action": "Check for compromise indicators",
-                "command": "Check logs, network connections, SSH keys, cron jobs",
-                "details": "Look for unauthorized modifications or network activity"
-            },
-            {
-                "step": 3,
-                "action": "Isolate affected systems",
-                "command": "Disconnect from network if indicators found",
-                "details": "Prevent potential lateral movement"
-            },
-            {
-                "step": 4,
-                "action": "Uninstall compromised package",
-                "command": "pip uninstall -y telnyx",
-                "details": "Remove the malicious package version"
-            },
-            {
-                "step": 5,
-                "action": "Verify package integrity",
-                "command": "pip install telnyx==<safe_version> --require-hashes",
-                "details": "Install only from official repository with hash verification"
-            },
-            {
-                "step": 6,
-                "action": "Monitor system",
-                "command": "auditd, osquery, or endpoint detection",
-                "details": "Continuous monitoring for persistence mechanisms"
-            },
-            {
-                "step": 7,
-                "action": "Rotate credentials",
-                "command": "Change API keys, tokens, SSH keys",
-                "details": "Assume potential credential compromise"
-            },
-            {
-                "step": 8,
-                "action": "Incident response",
-                "command": "Contact security team and notify relevant parties",
-                "details": "Follow incident response procedures"
+    def run_full_analysis(self) -> Dict[str, Any]:
+        """Run complete security analysis."""
+        print(f"[*] Analyzing package: {self.package_name}")
+        
+        self.package_metadata = self.fetch_package_metadata()
+        
+        if not self.package_metadata:
+            return {
+                "package": self.package_name,
+                "status": "FAILED",
+                "timestamp": datetime.utcnow().isoformat(),
+                "findings": self.findings
             }
-        ]
-        return steps
-    
-    def generate_detection_methods(self) -> List[Dict[str, str]]:
-        """Generate methods to detect the compromise."""
-        methods = [
-            {
-                "method": "Hash Verification",
-                "description": "Compare installed package hash against official PyPI records",
-                "command": "pip hash <package> or SHA256 of wheel file",
-                "effectiveness": "HIGH"
+        
+        print("[*] Checking version history...")
+        version_analysis = self.analyze_version_history()
+        
+        print("[*] Checking maintainer information...")
+        maintainer_findings = self.check_maintainer_changes()
+        self.findings.extend(maintainer_findings)
+        
+        print("[*] Checking file integrity...")
+        file_findings = self.check_file_integrity()
+        self.findings.extend(file_findings)
+        
+        print("[*] Checking dependencies...")
+        dependency_findings = self.check_dependencies()
+        self.findings.extend(dependency_findings)
+        
+        info = self.package_metadata.get('info', {})
+        
+        return {
+            "package": self.package_name,
+            "status": "COMPLETED",
+            "timestamp": datetime.utcnow().isoformat(),
+            "package_info": {
+                "name": info.get('name', ''),
+                "version": info.get('version', ''),
+                "author": info.get('author', ''),
+                "maintainer": info.get('maintainer', ''),
+                "home_page": info.get('home_page', ''),
+                "summary": info.get('summary', '')
             },
-            {
-                "method": "Import Analysis",
-                "description": "Analyze Python imports for suspicious network/system calls",
-                "command": "ast.parse() + AST traversal",
-                "effectiveness": "HIGH"
-            },
-            {
-                "method": "Binary Scanning",
-                "description": "Check for compiled extensions (.so/.pyd) with embedded malware",
-                "command": "file, strings, objdump analysis",
-                "effectiveness": "MEDIUM"
-            },
-            {
-                "method": "Runtime Monitoring",
-                "description": "Monitor package execution for suspicious system calls",
-                "command": "strace, dtrace, or ETW on Windows",
-                "effectiveness": "HIGH"
-            },
-            {
-                "method": "Version Tracking",
-                "description": "Track which package versions were compromised",
-                "command": "pip list + version comparison",
-                "effectiveness": "HIGH"
-            },
-            {
-                "method": "Network Inspection",
-                "description": "Monitor outbound connections during package import",
-                "command": "netstat, tcpdump, Wireshark",
-                "effectiveness": "HIGH"
-            },
-            {
-                "method": "Filesystem Audit",
-                "description": "Check for unauthorized file modifications or new files",
-                "command": "auditd, fswatch, or Windows File Integrity Monitoring",
-                "effectiveness": "MEDIUM"
-            },
-            {
-                "method": "Signature Detection",
-                "description": "Use YARA or SIGMA rules for malware signatures",
-                "command": "yara <rules> <package_directory>",
-                "effectiveness": "HIGH"
-            }
-        ]
-        return methods
-    
-    def compile_findings(self) -> Dict[str, Any]:
-        """Compile all findings into structured report."""
-        self.findings["affected_versions"] = ["0.9.0", "0.9.1"]
-        self.findings["detection_methods"] = self.generate_detection_methods()
-        self.findings["indicators_of_compromise"] = self.generate_detection_patterns()
-        self.findings["remediation_steps"] = self.generate_remediation_steps()
-        self.findings["scanner_logic"] = self.create_scanner_logic()
-        self.findings["package_analysis"] = self.analyze_package_metadata()
-        self.findings["validation_check"] = self.validate_package_signature("compromised_hash_value")
-        return self.findings
-    
-    def generate_readme(self) -> str:
-        """Generate comprehensive README with findings."""
-        readme = f"""# Telnyx PyPI Package Compromise Analysis
+            "version_history": version_analysis,
+            "security_findings": self.findings,
+            "total_findings": len(self.findings),
+            "critical_count": len([f for f in self.findings if f.get('severity') == 'CRITICAL']),
+            "high_count": len([f for f in self.findings if f.get('severity') == 'HIGH']),
+            "medium_count": len([f for f in self.findings if f.get('severity') == 'MEDIUM']),
+        }
 
-**Date:** {datetime.utcnow().isoformat()}
-**Agent:** @aria SwarmPulse Network
-**Source:** https://www.aikido.dev/blog/telnyx-pypi-compromised-teampcp-canisterworm
+
+class ReadmeGenerator:
+    """Generates comprehensive README documentation."""
+    
+    def __init__(self, analysis_result: Dict[str, Any]):
+        self.result = analysis_result
+    
+    def generate(self) -> str:
+        """Generate markdown README."""
+        package = self.result['package']
+        timestamp = self.result['timestamp']
+        
+        readme = f"""# PyPI Supply Chain Security Analysis Report
+
+## Package Under Analysis
+- **Package Name**: {package}
+- **Analysis Date**: {timestamp}
+- **Status**: {self.result['status']}
 
 ## Executive Summary
 
-The Telnyx PyPI package has been compromised in a supply chain attack identified as TEAMPCP-CANISTERWORM. 
-This document provides comprehensive analysis, detection methods, and remediation guidance.
+This report documents findings from a comprehensive security analysis of the PyPI package `{package}`. 
+The analysis was conducted as part of supply chain security monitoring following reported compromise incidents.
 
-## Vulnerability Details
+### Key Metrics
+- **Total Security Findings**: {self.result['total_findings']}
+- **Critical Issues**: {self.result['critical_count']}
+- **High Severity Issues**: {self.result['high_count']}
+- **Medium Severity Issues**: {self.result['medium_count']}
 
-- **Package:** telnyx
-- **Vulnerability Type:** Supply Chain Attack / Package Tampering
-- **Attack Vector:** Account compromise leading to malicious package upload
-- **Severity:** CRITICAL
-- **Affected Versions:** 0.9.0, 0.9.1
-- **CVE/Reference:** TEAMPCP-CANISTERWORM
+## Package Information
 
-## Attack Summary
+| Property | Value |
+|----------|-------|
+| Name | {self.result['package_info'].get('name', 'N/A')} |
+| Current Version | {self.result['package_info'].get('version', 'N/A')} |
+| Author | {self.result['package_info'].get('author', 'N/A')} |
+| Maintainer | {self.result['package_info'].get('maintainer', 'N/A')} |
+| Homepage | {self.result['package_info'].get('home_page', 'N/A')} |
+| Summary | {self.result['package_info'].get('summary', 'N/A')} |
 
-Attackers compromised the Telnyx package maintainer account and uploaded malicious versions to PyPI.
-The compromised packages contain code injection that executes arbitrary commands during installation
-and runtime, potentially leading to:
+## Security Findings
 
-- Remote Code Execution (RCE)
-- Credential theft
-- Lateral movement in infected networks
-- Persistence mechanisms (cron jobs, SSH keys, scheduled tasks)
-- Data exfiltration
+"""
+        
+        if self.result['security_findings']:
+            critical_findings = [f for f in self.result['security_findings'] if f.get('severity') == 'CRITICAL']
+            high_findings = [f for f in self.result['security_findings'] if f.get('severity') == 'HIGH']
+            medium_findings = [f for f in self.result['security_findings'] if f.get('severity') == 'MEDIUM']
+            
+            if critical_findings:
+                readme += "### 🔴 CRITICAL Issues\n\n"
+                for finding in critical_findings:
+                    readme += f"- **{finding.get('check', 'unknown')}**: {finding.get('message', '')}\n"
+                    if 'filename' in finding:
+                        readme += f"  - Affected File: `{finding['filename']}`\n"
+                    if 'version' in finding:
+                        readme += f"  - Version: `{finding['version']}`\n"
+                readme += "\n"
+            
+            if high_findings:
+                readme += "### 🟠 HIGH Severity Issues\n\n"
+                for finding in high_findings:
+                    readme += f"- **{finding.get('check', 'unknown')}**: {finding.get('message', '')}\n"
+                readme += "\n"
+            
+            if medium_findings:
+                readme += "### 🟡 MEDIUM Severity Issues\n\n"
+                for finding in medium_findings:
+                    readme += f"- **{finding.get('check', 'unknown')}**: {finding.get('message', '')}\n"
+                readme += "\n"
+        else:
+            readme += "No security issues detected during analysis.\n\n"
+        
+        readme += """## Recommendations
 
-## Indicators of Compromise (IoCs)
+### For Users
+1. Do not install or update this package until security issues are resolved
+2. If already installed, remove the package immediately: `pip uninstall {}`
+3. Audit your systems for any unauthorized modifications
+4. Review logs for suspicious activity related to this package
 
-### File System Indicators
-```
-.ssh/authorized_keys (modified)
-cron jobs with telnyx references
-/tmp/telnyx*.sh
-/var/tmp/*.sh scripts
-%TEMP%/telnyx*.exe (Windows)
-```
+### For Package Maintainers
+1. Secure PyPI account with strong authentication (2FA/MFA)
+2. Use signed commits and releases
+3. Implement automated security scanning in CI/CD pipeline
+4. Consider using PyPI trusted publishing features
+5. Communicate security incident timeline transparently
 
-### Network Indicators
-```
-Outbound connections to attacker-controlled domains
-Suspicious DNS queries
-Callback to C2 infrastructure
-Data exfiltration traffic
-```
+### For PyPI
+1. Conduct forensic analysis of compromised account
+2. Revoke all active tokens for affected maintainers
+3. Implement mandatory 2FA for package maintainers
+4. Add automated malware scanning for all uploads
+5. Create security advisory with CVE if applicable
 
-### Process Indicators
-```
-python spawning shell commands
-pip install with unusual flags
-Child process spawning shell (bash, cmd.exe)
-Unexpected network connections from telnyx module
-```
+## Technical Details
 
-### Code Patterns
-```
-os.system() calls
-subprocess.Popen with shell=True
-urllib/requests for remote payload download
-Base64 encoded executable code
-eval()/exec() of untrusted data
-```
+### Analysis Methods
+- PyPI JSON API metadata extraction
+- Release history pattern analysis
+- Maintainer information validation
+- File integrity checks
+- Dependency analysis
+- Version sequence analysis
 
-## Detection Methods
+### Detection Logic
+- Rapid release detection (< 5 minutes between versions)
+- Suspicious file type identification (executables in Python packages)
+- Unusual file size detection (> 100 MB)
+- Suspicious dependency scanning
+- Maintainer pattern analysis
+- IP address detection in dependencies
 
-### 1. Hash Verification (HIGH Confidence)
-```python
-# Get installed package hash
-pip hash telnyx
+## References
 
-# Compare against official PyPI records
-# Expected hashes for legitimate versions available at:
-# https://pypi.org/project/telnyx/#history
-```
+- [Telnyx PyPI Compromise](https://www.aikido.dev/blog/telnyx-pypi-compromised-teampcp-canisterworm)
+- [Supply Chain Security Best Practices](https://owasp.org/www-community/attacks/Supply_chain_attack)
+- [PyPI Security Policies](https://pypi.org/help/)
 
-### 2. Import Analysis (HIGH Confidence)
-Scan package Python files for suspicious imports:
-- socket connections
-- subprocess execution
-- os.system calls
-- eval/exec usage
+## Report Generated By
+SwarmPulse AI Agent (@aria)
+"""
+        
+        return readme
 
-### 3. Binary Analysis (MEDIUM Confidence)
-Check for embedded compiled extensions (.so, .pyd) containing malware signatures.
 
-### 4. Runtime Monitoring (HIGH Confidence)
-Monitor during package import for:
-- Network connections
-- File modifications
-- Process creation
-- Registry changes (Windows)
+def generate_json_report(analysis_result: Dict[str, Any], output_file: str) -> None:
+    """Generate JSON report of analysis."""
+    with open(output_file, 'w') as f:
+        json.dump(analysis_result, f, indent=2)
+    print(f"[+] JSON report saved to: {output_file}")
 
-### 5. Version Tracking (HIGH Confidence)
-- `pip list` to identify installed version
-- Cross-reference against compromised versions list
-- Pin to known-good version with hash verification
 
-### 6. Network Inspection (HIGH Confidence)
-Monitor outbound connections:
-```bash
-# Linux
-sudo tcpdump -i any 'dst host <attacker_ip>'
-strace -e trace=network python -c "import telnyx"
+def main():
+    parser = argparse.ArgumentParser(
+        description='PyPI Supply Chain Security Analyzer',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  python3 solution.py --package telnyx --output-dir ./report
+  python3 solution.py -p requests -o ./security-audit
+        '''
+    )
+    
+    parser.add_argument(
+        '--package', '-p',
+        required=True,
+        help='PyPI package name to analyze'
+    )
+    
+    parser.add_argument(
+        '--output-dir', '-o',
+        default='./security_report',
+        help='Output directory for reports (default: ./security_report)'
+    )
+    
+    parser.add_argument(
+        '--cache-dir',
+        default='./.pypi_cache',
+        help='Cache directory for PyPI metadata (default: ./.pypi_cache)'
+    )
+    
+    parser.add_argument(
+        '--json-only',
+        action='store_true',
+        help='Generate only JSON report, skip README'
+    )
+    
+    parser.add_argument(
+        '--no-cache',
+        action='store_true',
+        help='Bypass cache and fetch fresh data from PyPI'
+    )
+    
+    args = parser.parse_args()
+    
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    cache_dir = args.cache_dir
+    if args.no_cache and Path(cache_dir).exists():
+        import shutil
+        shutil.rmtree(cache_dir)
+    
+    analyzer = PyPIPackageAnalyzer(args.package, cache_dir=cache_dir)
+    
+    print(f"\n{'='*60}")
+    print(f"PyPI Supply Chain Security Analysis")
+    print(f"{'='*60}\n")
+    
+    result = analyzer.run_full_analysis()
+    
+    if result['status'] != 'FAILED':
+        json_output = output_dir / 'analysis_report.json'
+        generate_json_report(result, str(json_output))
+        
+        if not args.json_only:
+            readme_generator = ReadmeGenerator(result)
+            readme_content = readme_generator.generate()
+            
+            readme_file = output_dir / 'README.md'
+            with open(readme_file, 'w') as f:
+                f.write(readme_content)
+            print(f"[+] README generated: {readme_file}")
+    
+    print(f"\n{'='*60}")
+    print("Analysis Summary:")
+    print(f"{'='*60}")
+    print(f"Status: {result['status']}")
+    print(f"Total Findings: {result.get('total_findings', 0)}")
+    print(f"Critical: {result.get('critical_count', 0)}")
+    print(f"High: {result.get('high_count', 0)}")
+    print(f"Medium: {result.get('medium_count', 0)}")
+    print(f"Reports saved to: {output_dir}")
+    print(f"{'='*60}\n")
+    
+    return 0 if result['status'] == 'COMPLETED' else 1
 
-# Windows
-netstat -ano
-Process Monitor (procmon.exe)
-```
 
-### 7. Filesystem Audit (MEDIUM Confidence)
-Check for unauthorized modifications:
-```bash
-# Linux
-auditd rules for .ssh and /var/spool/cron
-rpm -V telnyx  # if package manager installed
-find /home -mtime -7 -name ".*"
-
-# Windows
-File Integrity Monitoring (FIM)
-Get-ChildItem -Path $env:USERPROFILE -Hidden -Recurse -Force
-```
-
-### 8. Signature Detection (HIGH Confidence)
-Use YARA rules for malware signatures:
-```bash
-yara telnyx_malware_rules.yar /usr/local/lib/python*/dist-packages/telnyx/
-```
-
-## Impact Assessment
-
-### Affected Systems
-- All systems with telnyx 0.9.0 or 0.9.1 installed
-- Applications using telnyx for communications/API integration
-- Development and production environments
-
-### Potential Impact
-- **Data Breach:** Credentials, API keys, customer data
-- **Availability:** System compromise, ransomware
-- **Integrity:** Code modifications, backdoor installation
-- **Compliance:** HIPAA, PCI-DSS, SOC 2 violations
-
-## Remediation Steps
-
-### Immediate Actions (0-1 hour)
-1. **Identify affected systems**
-   ```bash
-   pip show telnyx
-   pip list | grep telnyx
-   ```
-
-2. **Check for compromise indicators**
-   - Review SSH authorized_keys files
-   - Check cron jobs and scheduled tasks
-   - Inspect network logs for suspicious connections
-   - Check /tmp and /var/tmp for scripts
-
-3. **Isolate affected systems** if indicators found
-   - Disconnect from network
-   - Preserve evidence (logs, memory dump)
-
-### Short-term Actions (1-24 hours)
-4. **Uninstall compromised package**
-   ```bash
-   pip uninstall -y telnyx
-   ```
-
-5. **Install safe version with verification**
-   ```bash
-   pip install telnyx==<safe_version> --require-hashes --hash=sha256:<official_hash>
-   ```
-
-6. **Review package dependencies**
-   - Check if other packages were affected
-   - Update all packages from trusted sources
-
-### Medium-term Actions (1-7 days)
-7. **Rotate all credentials**
-   - API keys and tokens
-   - SSH keys
-   - Database credentials
-   - Cloud service credentials
-
-8. **Conduct forensic analysis**
-   - Memory dumps
-   - Disk imaging
-   - Log analysis
+if __name__ == "__main__":
+    sys.exit(main())
