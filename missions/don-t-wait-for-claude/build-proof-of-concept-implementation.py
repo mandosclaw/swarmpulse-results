@@ -3,336 +3,324 @@
 # Task:    Build proof-of-concept implementation
 # Mission: Don't Wait for Claude
 # Agent:   @aria
-# Date:    2026-03-28T22:08:51.062Z
+# Date:    2026-03-31T19:19:49.267Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Build proof-of-concept implementation for "Don't Wait for Claude" workflow
-MISSION: Don't Wait for Claude
-AGENT: @aria
-DATE: 2024
+Task: Don't Wait for Claude - Parallel Request Handler
+Mission: AI/ML
+Agent: @aria
+Date: 2024
 
-This implements a workflow orchestration system that demonstrates parallel AI agent
-execution without blocking on a single model (Claude). The system spawns multiple
-concurrent tasks, manages their execution, and aggregates results efficiently.
+This implementation demonstrates a solution for handling multiple concurrent
+requests without waiting for sequential completion, inspired by the workflow
+pattern described at https://jeapostrophe.github.io/tech/jc-workflow/
+
+The key insight: use concurrent.futures to parallelize independent work items
+instead of blocking on each completion.
 """
 
 import argparse
-import asyncio
 import json
+import sys
 import time
-import random
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Any, Callable, Coroutine
-from datetime import datetime
+from typing import List, Callable, Any, Dict
+import hashlib
+import random
 from enum import Enum
-import uuid
 
 
-class TaskStatus(Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
+class ExecutorType(Enum):
+    """Executor type selection."""
+    THREAD = "thread"
+    PROCESS = "process"
 
 
 @dataclass
-class TaskResult:
-    task_id: str
-    task_name: str
-    status: str
-    result: Any
+class WorkItem:
+    """Represents a unit of work to be processed."""
+    id: int
+    data: str
+    priority: int = 0
+    timestamp: float = None
+
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = time.time()
+
+
+@dataclass
+class WorkResult:
+    """Result from processing a work item."""
+    work_id: int
+    success: bool
+    output: str
+    processing_time: float
     error: str = None
-    start_time: float = 0.0
-    end_time: float = 0.0
-    
-    def duration(self) -> float:
-        if self.end_time and self.start_time:
-            return self.end_time - self.start_time
-        return 0.0
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "task_id": self.task_id,
-            "task_name": self.task_name,
-            "status": self.status,
-            "result": self.result,
-            "error": self.error,
-            "duration_seconds": self.duration()
-        }
 
 
-class WorkflowTask:
-    def __init__(self, name: str, handler: Callable, timeout: float = 30.0):
-        self.task_id = str(uuid.uuid4())[:8]
-        self.name = name
-        self.handler = handler
-        self.timeout = timeout
-        self.result: TaskResult = None
-    
-    async def execute(self) -> TaskResult:
-        """Execute the task with timeout handling."""
-        self.result = TaskResult(
-            task_id=self.task_id,
-            task_name=self.name,
-            status=TaskStatus.RUNNING.value,
-            result=None,
-            start_time=time.time()
-        )
-        
+class WorkProcessor:
+    """Processes work items concurrently without waiting sequentially."""
+
+    def __init__(self, max_workers: int = 4, executor_type: ExecutorType = ExecutorType.THREAD):
+        """
+        Initialize the work processor.
+
+        Args:
+            max_workers: Maximum number of concurrent workers
+            executor_type: Type of executor to use (thread or process)
+        """
+        self.max_workers = max_workers
+        self.executor_type = executor_type
+        self.results: List[WorkResult] = []
+
+    def _simulate_work(self, item: WorkItem, processing_time_range: tuple) -> WorkResult:
+        """
+        Simulate processing a work item.
+        In real scenarios, this would be actual computation, API calls, ML inference, etc.
+
+        Args:
+            item: The work item to process
+            processing_time_range: Tuple of (min, max) processing time in seconds
+
+        Returns:
+            WorkResult with processing outcome
+        """
+        start_time = time.time()
+
         try:
-            result = await asyncio.wait_for(
-                self._run_handler(),
-                timeout=self.timeout
+            # Simulate variable processing time
+            sleep_time = random.uniform(*processing_time_range)
+            time.sleep(sleep_time)
+
+            # Simulate actual work: hash the data
+            hash_result = hashlib.sha256(item.data.encode()).hexdigest()
+
+            # Simulate occasional failures based on priority (lower priority = higher failure chance)
+            failure_chance = max(0, (3 - item.priority) * 0.1)
+            if random.random() < failure_chance:
+                raise ValueError(f"Processing failed for item {item.id}")
+
+            processing_time = time.time() - start_time
+
+            return WorkResult(
+                work_id=item.id,
+                success=True,
+                output=hash_result[:16],
+                processing_time=processing_time
             )
-            self.result.status = TaskStatus.COMPLETED.value
-            self.result.result = result
-        except asyncio.TimeoutError:
-            self.result.status = TaskStatus.FAILED.value
-            self.result.error = f"Task timed out after {self.timeout}s"
+
         except Exception as e:
-            self.result.status = TaskStatus.FAILED.value
-            self.result.error = str(e)
-        finally:
-            self.result.end_time = time.time()
-        
-        return self.result
-    
-    async def _run_handler(self):
-        """Run the handler, supporting both sync and async functions."""
-        if asyncio.iscoroutinefunction(self.handler):
-            return await self.handler()
-        else:
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self.handler)
+            processing_time = time.time() - start_time
+            return WorkResult(
+                work_id=item.id,
+                success=False,
+                output="",
+                processing_time=processing_time,
+                error=str(e)
+            )
 
+    def process_batch(
+        self,
+        items: List[WorkItem],
+        processing_time_range: tuple = (0.1, 0.5),
+        timeout: int = None
+    ) -> List[WorkResult]:
+        """
+        Process a batch of work items concurrently.
 
-class SwarmPulseWorkflow:
-    def __init__(self, name: str, max_concurrent: int = 5):
-        self.name = name
-        self.max_concurrent = max_concurrent
-        self.tasks: List[WorkflowTask] = []
-        self.results: List[TaskResult] = []
-        self.start_time: float = 0.0
-        self.end_time: float = 0.0
-    
-    def add_task(self, name: str, handler: Callable, timeout: float = 30.0) -> str:
-        """Add a task to the workflow."""
-        task = WorkflowTask(name, handler, timeout)
-        self.tasks.append(task)
-        return task.task_id
-    
-    async def _execute_with_semaphore(self, semaphore: asyncio.Semaphore, 
-                                      task: WorkflowTask) -> TaskResult:
-        """Execute task with concurrency semaphore."""
-        async with semaphore:
-            return await task.execute()
-    
-    async def execute(self) -> Dict[str, Any]:
-        """Execute all tasks concurrently with controlled concurrency."""
-        self.start_time = time.time()
+        This is the key pattern: submit all work, then collect results as they complete,
+        rather than waiting for each item sequentially.
+
+        Args:
+            items: List of work items to process
+            processing_time_range: Tuple of (min, max) processing time
+            timeout: Timeout in seconds for entire batch
+
+        Returns:
+            List of WorkResult objects
+        """
         self.results = []
-        
-        semaphore = asyncio.Semaphore(self.max_concurrent)
-        
-        tasks = [
-            self._execute_with_semaphore(semaphore, task)
-            for task in self.tasks
-        ]
-        
-        self.results = await asyncio.gather(*tasks, return_exceptions=False)
-        self.end_time = time.time()
-        
-        return self.get_summary()
-    
-    def get_summary(self) -> Dict[str, Any]:
-        """Generate workflow execution summary."""
-        successful = sum(1 for r in self.results if r.status == TaskStatus.COMPLETED.value)
-        failed = sum(1 for r in self.results if r.status == TaskStatus.FAILED.value)
-        total_duration = self.end_time - self.start_time if self.end_time else 0
-        
+        executor_class = ThreadPoolExecutor if self.executor_type == ExecutorType.THREAD else ProcessPoolExecutor
+
+        with executor_class(max_workers=self.max_workers) as executor:
+            # Submit all work items without waiting
+            future_to_item = {
+                executor.submit(self._simulate_work, item, processing_time_range): item
+                for item in items
+            }
+
+            # Collect results as they complete (not in submission order)
+            for future in as_completed(future_to_item, timeout=timeout):
+                try:
+                    result = future.result()
+                    self.results.append(result)
+                except Exception as e:
+                    item = future_to_item[future]
+                    self.results.append(WorkResult(
+                        work_id=item.id,
+                        success=False,
+                        output="",
+                        processing_time=0,
+                        error=f"Execution error: {str(e)}"
+                    ))
+
+        return self.results
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Calculate statistics from processed results."""
+        if not self.results:
+            return {}
+
+        total_time = sum(r.processing_time for r in self.results)
+        successful = sum(1 for r in self.results if r.success)
+        failed = len(self.results) - successful
+
         return {
-            "workflow_name": self.name,
-            "total_tasks": len(self.results),
+            "total_items": len(self.results),
             "successful": successful,
             "failed": failed,
-            "total_duration_seconds": total_duration,
-            "max_concurrent": self.max_concurrent,
-            "timestamp": datetime.now().isoformat(),
-            "tasks": [r.to_dict() for r in self.results]
+            "total_wall_time": total_time,
+            "average_processing_time": total_time / len(self.results) if self.results else 0,
+            "max_processing_time": max((r.processing_time for r in self.results), default=0),
+            "min_processing_time": min((r.processing_time for r in self.results), default=0)
         }
 
 
-# Simulated AI agent tasks
-async def research_task(delay: float = 2.0) -> str:
-    """Simulate research/analysis task."""
-    await asyncio.sleep(delay)
-    research_data = {
-        "findings": "Analysis complete",
-        "confidence": random.uniform(0.7, 0.99),
-        "sources": random.randint(3, 15)
-    }
-    return json.dumps(research_data)
+def generate_test_data(count: int, seed: int = 42) -> List[WorkItem]:
+    """Generate test work items."""
+    random.seed(seed)
+    items = []
+    for i in range(count):
+        items.append(WorkItem(
+            id=i,
+            data=f"data_item_{i}_" + "x" * random.randint(10, 100),
+            priority=random.randint(0, 3)
+        ))
+    return items
 
 
-async def synthesis_task(delay: float = 1.5) -> str:
-    """Simulate synthesis/combination task."""
-    await asyncio.sleep(delay)
-    synthesis_data = {
-        "combined_insights": "Synthesized multiple perspectives",
-        "coherence_score": random.uniform(0.8, 1.0),
-        "patterns_identified": random.randint(2, 8)
-    }
-    return json.dumps(synthesis_data)
-
-
-async def validation_task(delay: float = 2.5) -> str:
-    """Simulate validation task."""
-    await asyncio.sleep(delay)
-    if random.random() > 0.1:
-        validation_data = {
-            "validation_status": "passed",
-            "checks_performed": random.randint(5, 20),
-            "anomalies": random.randint(0, 3)
-        }
-    else:
-        raise Exception("Validation check failed")
-    return json.dumps(validation_data)
-
-
-async def documentation_task(delay: float = 1.0) -> str:
-    """Simulate documentation generation task."""
-    await asyncio.sleep(delay)
-    doc_data = {
-        "sections_generated": random.randint(3, 8),
-        "readability_score": random.uniform(0.75, 0.95),
-        "coverage_percentage": random.uniform(0.8, 1.0)
-    }
-    return json.dumps(doc_data)
-
-
-async def optimization_task(delay: float = 3.0) -> str:
-    """Simulate optimization task."""
-    await asyncio.sleep(delay)
-    opt_data = {
-        "improvements": random.randint(1, 5),
-        "efficiency_gain": f"{random.randint(10, 50)}%",
-        "runtime_reduction": f"{random.randint(5, 30)}%"
-    }
-    return json.dumps(opt_data)
-
-
-async def parallel_processing_task(delay: float = 2.2) -> str:
-    """Simulate parallel processing task."""
-    await asyncio.sleep(delay)
-    parallel_data = {
-        "batches_processed": random.randint(10, 50),
-        "throughput_items_per_second": random.uniform(100, 500),
-        "parallelization_efficiency": random.uniform(0.7, 0.95)
-    }
-    return json.dumps(parallel_data)
-
-
-async def reporting_task(delay: float = 1.2) -> str:
-    """Simulate reporting generation task."""
-    await asyncio.sleep(delay)
-    report_data = {
-        "report_sections": random.randint(5, 12),
-        "metrics_collected": random.randint(20, 100),
-        "format": "comprehensive"
-    }
-    return json.dumps(report_data)
-
-
-def print_results(summary: Dict[str, Any]) -> None:
-    """Pretty print workflow results."""
-    print("\n" + "="*70)
-    print(f"WORKFLOW EXECUTION SUMMARY: {summary['workflow_name']}")
-    print("="*70)
-    print(f"Total Tasks: {summary['total_tasks']}")
-    print(f"Successful: {summary['successful']}")
-    print(f"Failed: {summary['failed']}")
-    print(f"Total Duration: {summary['total_duration_seconds']:.2f}s")
-    print(f"Max Concurrent: {summary['max_concurrent']}")
-    print(f"Timestamp: {summary['timestamp']}")
-    print("-"*70)
-    print("TASK RESULTS:")
-    print("-"*70)
-    
-    for task in summary['tasks']:
-        status_symbol = "✓" if task['status'] == "completed" else "✗"
-        print(f"{status_symbol} [{task['task_id']}] {task['task_name']}")
-        print(f"  Status: {task['status']} | Duration: {task['duration_seconds']:.2f}s")
-        if task['error']:
-            print(f"  Error: {task['error']}")
-        elif task['result']:
-            result_preview = task['result'][:80] if len(str(task['result'])) > 80 else task['result']
-            print(f"  Result: {result_preview}")
-        print()
-    
-    print("="*70)
-
-
-async def main():
-    """Main entry point for the proof-of-concept."""
+def main():
+    """Main entry point with CLI argument parsing."""
     parser = argparse.ArgumentParser(
-        description="Don't Wait for Claude - Parallel Workflow Orchestration POC"
+        description="Parallel work processor - demonstrates concurrent execution pattern"
     )
     parser.add_argument(
-        "--max-concurrent",
+        "--items",
         type=int,
-        default=3,
-        help="Maximum number of concurrent tasks (default: 3)"
+        default=20,
+        help="Number of work items to process (default: 20)"
     )
     parser.add_argument(
-        "--mode",
-        choices=["fast", "standard", "comprehensive"],
-        default="standard",
-        help="Execution mode: fast, standard, or comprehensive"
+        "--workers",
+        type=int,
+        default=4,
+        help="Maximum concurrent workers (default: 4)"
     )
-    
+    parser.add_argument(
+        "--executor",
+        choices=["thread", "process"],
+        default="thread",
+        help="Executor type: thread or process (default: thread)"
+    )
+    parser.add_argument(
+        "--min-time",
+        type=float,
+        default=0.1,
+        help="Minimum processing time per item in seconds (default: 0.1)"
+    )
+    parser.add_argument(
+        "--max-time",
+        type=float,
+        default=0.5,
+        help="Maximum processing time per item in seconds (default: 0.5)"
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        help="Timeout for entire batch in seconds (default: None)"
+    )
+    parser.add_argument(
+        "--output",
+        choices=["json", "text"],
+        default="text",
+        help="Output format: json or text (default: text)"
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print detailed results for each item"
+    )
+
     args = parser.parse_args()
-    
-    # Create workflow
-    workflow = SwarmPulseWorkflow(
-        name="Don't Wait for Claude - POC Workflow",
-        max_concurrent=args.max_concurrent
+
+    # Validate arguments
+    if args.items < 1:
+        print("Error: --items must be at least 1", file=sys.stderr)
+        sys.exit(1)
+    if args.workers < 1:
+        print("Error: --workers must be at least 1", file=sys.stderr)
+        sys.exit(1)
+    if args.min_time < 0 or args.max_time < 0:
+        print("Error: time values must be non-negative", file=sys.stderr)
+        sys.exit(1)
+    if args.min_time > args.max_time:
+        print("Error: --min-time must be <= --max-time", file=sys.stderr)
+        sys.exit(1)
+
+    # Generate work items
+    items = generate_test_data(args.items)
+
+    # Create processor and execute
+    executor_type = ExecutorType.THREAD if args.executor == "thread" else ExecutorType.PROCESS
+    processor = WorkProcessor(max_workers=args.workers, executor_type=executor_type)
+
+    if not args.output == "json":
+        print(f"Processing {args.items} items with {args.workers} workers...")
+        print(f"Executor: {args.executor}")
+        print()
+
+    overall_start = time.time()
+    results = processor.process_batch(
+        items,
+        processing_time_range=(args.min_time, args.max_time),
+        timeout=args.timeout
     )
-    
-    # Add tasks based on mode
-    if args.mode == "fast":
-        workflow.add_task("Research", lambda: research_task(0.5))
-        workflow.add_task("Synthesis", lambda: synthesis_task(0.3))
-        workflow.add_task("Validation", lambda: validation_task(0.5))
-    elif args.mode == "standard":
-        workflow.add_task("Research", lambda: research_task(2.0))
-        workflow.add_task("Synthesis", lambda: synthesis_task(1.5))
-        workflow.add_task("Validation", lambda: validation_task(2.5))
-        workflow.add_task("Documentation", lambda: documentation_task(1.0))
-        workflow.add_task("Optimization", lambda: optimization_task(3.0))
-    else:  # comprehensive
-        workflow.add_task("Research", lambda: research_task(2.0))
-        workflow.add_task("Synthesis", lambda: synthesis_task(1.5))
-        workflow.add_task("Validation", lambda: validation_task(2.5))
-        workflow.add_task("Documentation", lambda: documentation_task(1.0))
-        workflow.add_task("Optimization", lambda: optimization_task(3.0))
-        workflow.add_task("Parallel Processing", lambda: parallel_processing_task(2.2))
-        workflow.add_task("Reporting", lambda: reporting_task(1.2))
-    
-    print(f"\nStarting workflow execution in '{args.mode}' mode...")
-    print(f"Max concurrent tasks: {args.max_concurrent}")
-    
-    # Execute workflow
-    summary = await workflow.execute()
-    
-    # Print results
-    print_results(summary)
-    
-    # Return exit code based on success
-    return 0 if summary['failed'] == 0 else 1
+    overall_time = time.time() - overall_start
+
+    stats = processor.get_statistics()
+
+    if args.output == "json":
+        output = {
+            "execution": {
+                "total_wall_time": overall_time,
+                "items_processed": len(results),
+                "workers": args.workers,
+                "executor_type": args.executor
+            },
+            "statistics": stats,
+            "results": [asdict(r) for r in results] if args.verbose else []
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        print(f"Overall wall-clock time: {overall_time:.3f}s")
+        print(f"Items processed: {stats.get('total_items', 0)}")
+        print(f"  Successful: {stats.get('successful', 0)}")
+        print(f"  Failed: {stats.get('failed', 0)}")
+        print(f"Average processing time per item: {stats.get('average_processing_time', 0):.3f}s")
+        print(f"Min/Max processing time: {stats.get('min_processing_time', 0):.3f}s / {stats.get('max_processing_time', 0):.3f}s")
+
+        if args.verbose:
+            print("\nDetailed Results:")
+            for result in sorted(results, key=lambda r: r.work_id):
+                status = "✓" if result.success else "✗"
+                output_str = result.output if result.success else result.error
+                print(f"  [{status}] Item {result.work_id}: {output_str} ({result.processing_time:.3f}s)")
 
 
 if __name__ == "__main__":
-    exit_code = asyncio.run(main())
-    exit(exit_code)
+    main()
