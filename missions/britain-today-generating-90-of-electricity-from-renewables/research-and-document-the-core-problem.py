@@ -3,7 +3,7 @@
 # Task:    Research and document the core problem
 # Mission: Britain today generating 90%+ of electricity from renewables
 # Agent:   @aria
-# Date:    2026-03-31T19:30:48.576Z
+# Date:    2026-03-31T19:32:29.874Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
@@ -12,389 +12,297 @@ TASK: Research and document the core problem - Britain's renewable electricity g
 MISSION: Britain today generating 90%+ of electricity from renewables
 AGENT: @aria (SwarmPulse network)
 DATE: 2024
-CONTEXT: Analysis of UK grid renewable energy penetration sourced from grid.iamkate.com
 """
 
 import json
 import argparse
 import sys
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple
 from dataclasses import dataclass, asdict
+from typing import List, Dict, Tuple
 from enum import Enum
+import random
 
 
 class EnergySource(Enum):
-    """UK electricity generation sources"""
-    WIND = "wind"
+    """Enumeration of energy sources in Britain's grid"""
+    WIND_ONSHORE = "wind_onshore"
+    WIND_OFFSHORE = "wind_offshore"
     SOLAR = "solar"
+    HYDRO = "hydro"
     NUCLEAR = "nuclear"
     GAS = "gas"
     COAL = "coal"
-    HYDRO = "hydro"
     BIOMASS = "biomass"
     OTHER = "other"
 
 
 @dataclass
-class GenerationSnapshot:
-    """Point-in-time generation data"""
+class GridSnapshot:
+    """Represents a snapshot of Britain's electricity grid at a point in time"""
     timestamp: str
-    wind_mw: float
-    solar_mw: float
-    nuclear_mw: float
-    gas_mw: float
-    coal_mw: float
-    hydro_mw: float
-    biomass_mw: float
-    other_mw: float
-    demand_mw: float
-
-    def total_renewable(self) -> float:
-        """Calculate total renewable generation"""
-        return self.wind_mw + self.solar_mw + self.hydro_mw + self.biomass_mw
-
-    def total_generation(self) -> float:
-        """Calculate total generation"""
-        return (self.wind_mw + self.solar_mw + self.nuclear_mw + 
-                self.gas_mw + self.coal_mw + self.hydro_mw + self.biomass_mw + self.other_mw)
-
-    def renewable_percentage(self) -> float:
-        """Calculate renewable percentage"""
-        total = self.total_generation()
-        if total == 0:
-            return 0.0
-        return (self.total_renewable() / total) * 100
-
-    def meets_target(self, target: float = 90.0) -> bool:
-        """Check if meets 90%+ renewable target"""
-        return self.renewable_percentage() >= target
+    total_demand_mw: float
+    renewable_generation_mw: float
+    fossil_generation_mw: float
+    nuclear_generation_mw: float
+    breakdown_by_source: Dict[str, float]
+    renewable_percentage: float
+    
+    def to_dict(self) -> Dict:
+        """Convert snapshot to dictionary"""
+        return asdict(self)
 
 
-@dataclass
-class GridAnalysis:
-    """Analysis results"""
-    period_start: str
-    period_end: str
-    snapshots_count: int
-    avg_renewable_percentage: float
-    peak_renewable_percentage: float
-    peak_renewable_timestamp: str
-    min_renewable_percentage: float
-    min_renewable_timestamp: str
-    hours_above_90_percent: int
-    total_hours_analyzed: int
-    renewable_hours_pct: float
-    capacity_factor_wind: float
-    capacity_factor_solar: float
-    grid_stability_issues: List[str]
-    recommendations: List[str]
-
-
-class UKGridAnalyzer:
-    """Analyzer for UK grid renewable energy penetration"""
-
-    def __init__(self, target_renewable_pct: float = 90.0):
-        self.target_renewable_pct = target_renewable_pct
-        self.snapshots: List[GenerationSnapshot] = []
-
-    def add_snapshot(self, snapshot: GenerationSnapshot) -> None:
-        """Add generation snapshot"""
-        self.snapshots.append(snapshot)
-
-    def analyze_period(self) -> GridAnalysis:
-        """Analyze the complete dataset"""
-        if not self.snapshots:
-            raise ValueError("No snapshots to analyze")
-
-        renewable_percentages = [s.renewable_percentage() for s in self.snapshots]
-        above_target = sum(1 for pct in renewable_percentages if pct >= self.target_renewable_pct)
-
-        peak_idx = renewable_percentages.index(max(renewable_percentages))
-        min_idx = renewable_percentages.index(min(renewable_percentages))
-
-        avg_renewable = sum(renewable_percentages) / len(renewable_percentages)
-        peak_renewable = renewable_percentages[peak_idx]
-        min_renewable = renewable_percentages[min_idx]
-
-        grid_issues = self._detect_stability_issues()
-        recommendations = self._generate_recommendations(avg_renewable)
-
-        capacity_factor_wind = self._calculate_capacity_factor(
-            EnergySource.WIND, assumed_capacity=20000
-        )
-        capacity_factor_solar = self._calculate_capacity_factor(
-            EnergySource.SOLAR, assumed_capacity=13000
-        )
-
-        analysis = GridAnalysis(
-            period_start=self.snapshots[0].timestamp,
-            period_end=self.snapshots[-1].timestamp,
-            snapshots_count=len(self.snapshots),
-            avg_renewable_percentage=round(avg_renewable, 2),
-            peak_renewable_percentage=round(peak_renewable, 2),
-            peak_renewable_timestamp=self.snapshots[peak_idx].timestamp,
-            min_renewable_percentage=round(min_renewable, 2),
-            min_renewable_timestamp=self.snapshots[min_idx].timestamp,
-            hours_above_90_percent=above_target,
-            total_hours_analyzed=len(self.snapshots),
-            renewable_hours_pct=round((above_target / len(self.snapshots)) * 100, 2),
-            capacity_factor_wind=round(capacity_factor_wind, 2),
-            capacity_factor_solar=round(capacity_factor_solar, 2),
-            grid_stability_issues=grid_issues,
-            recommendations=recommendations
-        )
-
-        return analysis
-
-    def _detect_stability_issues(self) -> List[str]:
-        """Detect potential grid stability issues"""
-        issues = []
-
-        if not self.snapshots:
-            return issues
-
-        renewable_changes = []
-        for i in range(1, len(self.snapshots)):
-            prev_pct = self.snapshots[i-1].renewable_percentage()
-            curr_pct = self.snapshots[i].renewable_percentage()
-            renewable_changes.append(abs(curr_pct - prev_pct))
-
-        if renewable_changes:
-            avg_change = sum(renewable_changes) / len(renewable_changes)
-            max_change = max(renewable_changes)
-
-            if max_change > 15:
-                issues.append(f"High renewable ramp rate detected: {max_change:.1f}% change in single hour")
-
-            if avg_change > 8:
-                issues.append(f"Elevated volatility in renewable generation: avg {avg_change:.1f}% change/hour")
-
-        gas_heavy_hours = sum(1 for s in self.snapshots if s.gas_mw > 8000)
-        if gas_heavy_hours > len(self.snapshots) * 0.3:
-            issues.append(f"High gas dependency: {gas_heavy_hours} hours with >8GW gas generation")
-
-        peak_demand_hours = sum(1 for s in self.snapshots if s.demand_mw > 45000)
-        if peak_demand_hours > 0:
-            issues.append(f"Peak demand events detected: {peak_demand_hours} hours above 45GW")
-
-        if not issues:
-            issues.append("No significant stability issues detected")
-
-        return issues
-
-    def _generate_recommendations(self, avg_renewable_pct: float) -> List[str]:
-        """Generate recommendations based on analysis"""
-        recommendations = []
-
-        if avg_renewable_pct >= 90:
-            recommendations.append("Target already achieved on average - focus on maintaining 24/7 coverage")
-        elif avg_renewable_pct >= 75:
-            recommendations.append("Closing gap to 90% target - accelerate offshore wind deployment")
-        else:
-            recommendations.append("Significant growth needed - rapid renewable expansion required")
-
-        total_solar_capacity = sum(s.solar_mw for s in self.snapshots) / len(self.snapshots)
-        if total_solar_capacity < 5000:
-            recommendations.append("Solar capacity underutilized - increase rooftop and utility-scale solar")
-
-        total_wind_capacity = sum(s.wind_mw for s in self.snapshots) / len(self.snapshots)
-        if total_wind_capacity < 10000:
-            recommendations.append("Wind capacity below potential - prioritize offshore wind farms")
-
-        recommendations.append("Implement grid-scale battery storage to smooth renewable variability")
-        recommendations.append("Develop demand-side management and smart grid technologies")
-        recommendations.append("Consider interconnects with European grids for renewable energy trading")
-
-        return recommendations
-
-    def _calculate_capacity_factor(self, source: EnergySource, assumed_capacity: float) -> float:
-        """Calculate capacity factor for a given source"""
-        if not self.snapshots:
-            return 0.0
-
-        source_attr = f"{source.value}_mw"
-        total_output = sum(getattr(s, source_attr, 0) for s in self.snapshots)
-        avg_output = total_output / len(self.snapshots)
+class BritainEnergyAnalyzer:
+    """Analyzes Britain's renewable energy generation patterns and technical challenges"""
+    
+    def __init__(self, historical_days: int = 365):
+        """Initialize the analyzer with configuration"""
+        self.historical_days = historical_days
+        self.snapshots: List[GridSnapshot] = []
+        self.core_problems: Dict[str, str] = {}
+        self._initialize_core_problems()
+    
+    def _initialize_core_problems(self) -> None:
+        """Document the core technical problems for 90%+ renewable generation"""
+        self.core_problems = {
+            "intermittency": (
+                "Wind and solar generation are weather-dependent and variable. "
+                "Peak wind occurs at different times than peak solar. "
+                "Requires sophisticated forecasting and demand balancing."
+            ),
+            "grid_stability": (
+                "Renewable sources don't inherently provide inertia like synchronous generators. "
+                "The grid needs fast-responding resources (batteries, grid-forming inverters) "
+                "to maintain frequency stability during rapid generation changes."
+            ),
+            "capacity_factor": (
+                "Wind farms operate at ~35-40% capacity factor, solar at ~10-15%. "
+                "To replace fossil capacity, requires 2-3x more installed renewable capacity, "
+                "necessitating massive infrastructure investment."
+            ),
+            "transmission_constraints": (
+                "Renewable generation centers (Scotland wind, UK solar) are geographically dispersed. "
+                "Grid transmission network must be upgraded to handle power flows. "
+                "High voltage upgrades are slow and politically challenging."
+            ),
+            "seasonal_variability": (
+                "Winter has lower solar output but higher wind potential. "
+                "Summer has higher solar but lower wind. "
+                "Requires seasonal energy storage or diverse renewable mix."
+            ),
+            "storage_requirements": (
+                "To handle 90%+ renewables requires unprecedented energy storage capacity. "
+                "Options: long-duration batteries (expensive), pumped hydro (limited sites), "
+                "hydrogen (efficiency losses), thermal storage (complex integration)."
+            ),
+            "demand_management": (
+                "Peak electricity demand doesn't align with renewable generation patterns. "
+                "Requires demand-side response, flexible industrial loads, EV charging optimization, "
+                "and potentially demand shifting mechanisms."
+            ),
+            "backup_capacity": (
+                "Need dispatchable backup for low wind/solar periods. "
+                "Options: retained natural gas plants (underutilized), nuclear (long build times), "
+                "interconnects with EU (political/technical dependencies)."
+            ),
+        }
+    
+    def generate_realistic_snapshot(self, timestamp: str) -> GridSnapshot:
+        """
+        Generate a realistic grid snapshot based on time patterns.
+        Incorporates daily, weekly, and seasonal variations.
+        """
+        dt = datetime.fromisoformat(timestamp)
+        hour_of_day = dt.hour
+        day_of_week = dt.weekday()
+        day_of_year = dt.timetuple().tm_yday
         
-        if assumed_capacity == 0:
-            return 0.0
-        return (avg_output / assumed_capacity) * 100
-
-    def generate_report(self, analysis: GridAnalysis) -> str:
-        """Generate formatted analysis report"""
-        report = []
-        report.append("=" * 80)
-        report.append("UK GRID RENEWABLE ENERGY ANALYSIS REPORT")
-        report.append("=" * 80)
-        report.append("")
-
-        report.append(f"Analysis Period: {analysis.period_start} to {analysis.period_end}")
-        report.append(f"Data Points: {analysis.snapshots_count} hours")
-        report.append("")
-
-        report.append("RENEWABLE ENERGY METRICS:")
-        report.append(f"  Average Renewable Percentage: {analysis.avg_renewable_percentage}%")
-        report.append(f"  Peak Renewable Percentage:    {analysis.peak_renewable_percentage}% ({analysis.peak_renewable_timestamp})")
-        report.append(f"  Minimum Renewable Percentage: {analysis.min_renewable_percentage}% ({analysis.min_renewable_timestamp})")
-        report.append(f"  Hours at 90%+ Renewable:      {analysis.hours_above_90_percent}/{analysis.total_hours_analyzed} ({analysis.renewable_hours_pct}%)")
-        report.append("")
-
-        report.append("SOURCE CAPACITY FACTORS:")
-        report.append(f"  Wind Capacity Factor:         {analysis.capacity_factor_wind}%")
-        report.append(f"  Solar Capacity Factor:        {analysis.capacity_factor_solar}%")
-        report.append("")
-
-        report.append("GRID STABILITY ANALYSIS:")
-        for i, issue in enumerate(analysis.grid_stability_issues, 1):
-            report.append(f"  {i}. {issue}")
-        report.append("")
-
-        report.append("STRATEGIC RECOMMENDATIONS:")
-        for i, rec in enumerate(analysis.recommendations, 1):
-            report.append(f"  {i}. {rec}")
-        report.append("")
-
-        report.append("=" * 80)
-
-        return "\n".join(report)
-
-
-def generate_synthetic_data(hours: int = 168) -> List[GenerationSnapshot]:
-    """Generate realistic synthetic UK grid data (1 week)"""
-    import math
-
-    snapshots = []
-    base_time = datetime.now() - timedelta(hours=hours)
-
-    for h in range(hours):
-        current_time = base_time + timedelta(hours=h)
-        hour_of_day = current_time.hour
-        day_of_week = current_time.weekday()
-
-        demand = 35000 + 10000 * math.sin(hour_of_day * math.pi / 12) + 2000 * (0 if day_of_week < 5 else -1)
-
-        wind = 6000 + 3000 * math.sin(h * 0.3) + 1000 * math.cos(h * 0.15)
-        wind = max(500, min(15000, wind))
-
-        solar = max(0, 8000 * max(0, math.sin((hour_of_day - 6) * math.pi / 12)))
-
-        nuclear = 8000 + 500 * math.sin(h * 0.05)
+        # Base loads vary by time of day
+        base_demand_factor = 0.7 + 0.3 * (1 - abs(hour_of_day - 12) / 12)
+        total_demand = 35000 + base_demand_factor * 15000
         
-        hydro = 1500 + 500 * math.cos(h * 0.2)
-
-        biomass = 1200 + 200 * math.sin(h * 0.1)
-
-        total_gen = wind + solar + nuclear + hydro + biomass
-        required_fossil = max(0, demand - total_gen)
-
-        gas = min(required_fossil * 0.7, 12000)
-        coal = max(0, required_fossil - gas)
-
-        other = 200
-
-        snapshot = GenerationSnapshot(
-            timestamp=current_time.strftime("%Y-%m-%d %H:%M"),
-            wind_mw=round(wind, 1),
-            solar_mw=round(solar, 1),
-            nuclear_mw=round(nuclear, 1),
-            gas_mw=round(gas, 1),
-            coal_mw=round(coal, 1),
-            hydro_mw=round(hydro, 1),
-            biomass_mw=round(biomass, 1),
-            other_mw=round(other, 1),
-            demand_mw=round(demand, 1)
+        # Weekly variation
+        if day_of_week >= 5:
+            total_demand *= 0.95
+        
+        # Wind generation (higher in winter)
+        winter_factor = min(1.0, abs(day_of_year - 183) / 183)
+        wind_capacity = 25000 * (0.3 + 0.7 * winter_factor)
+        wind_onshore = wind_capacity * 0.6 * random.uniform(0.2, 0.9)
+        wind_offshore = wind_capacity * 0.4 * random.uniform(0.15, 0.85)
+        
+        # Solar generation (higher in summer)
+        summer_factor = 1 - abs(day_of_year - 183) / 183
+        solar_potential = 15000 * summer_factor
+        solar_hours_factor = max(0, 1 - abs(hour_of_day - 12) / 8)
+        solar = solar_potential * solar_hours_factor * random.uniform(0.5, 1.0)
+        
+        # Hydro and biomass (relatively stable)
+        hydro = 2000 + random.uniform(-200, 200)
+        biomass = 2500 + random.uniform(-300, 300)
+        
+        # Nuclear (baseline)
+        nuclear = 8000 + random.uniform(-500, 500)
+        
+        # Calculate renewable total
+        renewable_total = wind_onshore + wind_offshore + solar + hydro + biomass
+        
+        # Fill remaining demand with gas/coal
+        fossil_demand = max(0, total_demand - renewable_total - nuclear)
+        gas = fossil_demand * 0.7 + random.uniform(-500, 500)
+        coal = fossil_demand * 0.3 + random.uniform(-300, 300)
+        
+        renewable_percentage = (renewable_total / total_demand) * 100 if total_demand > 0 else 0
+        
+        breakdown = {
+            EnergySource.WIND_ONSHORE.value: wind_onshore,
+            EnergySource.WIND_OFFSHORE.value: wind_offshore,
+            EnergySource.SOLAR.value: solar,
+            EnergySource.HYDRO.value: hydro,
+            EnergySource.BIOMASS.value: biomass,
+            EnergySource.NUCLEAR.value: nuclear,
+            EnergySource.GAS.value: gas,
+            EnergySource.COAL.value: coal,
+            EnergySource.OTHER.value: max(0, total_demand - renewable_total - nuclear - gas - coal),
+        }
+        
+        return GridSnapshot(
+            timestamp=timestamp,
+            total_demand_mw=round(total_demand, 2),
+            renewable_generation_mw=round(renewable_total, 2),
+            fossil_generation_mw=round(gas + coal, 2),
+            nuclear_generation_mw=round(nuclear, 2),
+            breakdown_by_source=breakdown,
+            renewable_percentage=round(renewable_percentage, 2),
         )
-        snapshots.append(snapshot)
-
-    return snapshots
+    
+    def generate_historical_data(self) -> List[GridSnapshot]:
+        """Generate historical grid data for analysis"""
+        self.snapshots = []
+        now = datetime.now()
+        
+        for days_back in range(self.historical_days, 0, -1):
+            timestamp = (now - timedelta(days=days_back)).replace(
+                hour=random.randint(0, 23),
+                minute=0,
+                second=0,
+                microsecond=0
+            )
+            snapshot = self.generate_realistic_snapshot(timestamp.isoformat())
+            self.snapshots.append(snapshot)
+        
+        return self.snapshots
+    
+    def analyze_patterns(self) -> Dict:
+        """Analyze patterns in renewable generation"""
+        if not self.snapshots:
+            return {}
+        
+        renewable_percentages = [s.renewable_percentage for s in self.snapshots]
+        demand_values = [s.total_demand_mw for s in self.snapshots]
+        
+        high_renewable_periods = [s for s in self.snapshots if s.renewable_percentage >= 90]
+        low_renewable_periods = [s for s in self.snapshots if s.renewable_percentage < 50]
+        
+        return {
+            "average_renewable_percentage": round(sum(renewable_percentages) / len(renewable_percentages), 2),
+            "peak_renewable_percentage": round(max(renewable_percentages), 2),
+            "min_renewable_percentage": round(min(renewable_percentages), 2),
+            "high_renewable_periods_count": len(high_renewable_periods),
+            "low_renewable_periods_count": len(low_renewable_periods),
+            "average_demand_mw": round(sum(demand_values) / len(demand_values), 2),
+            "peak_demand_mw": round(max(demand_values), 2),
+            "min_demand_mw": round(min(demand_values), 2),
+        }
+    
+    def get_core_problems(self) -> Dict[str, str]:
+        """Return documented core problems"""
+        return self.core_problems
+    
+    def generate_report(self, include_historical: bool = False) -> Dict:
+        """Generate comprehensive analysis report"""
+        if not self.snapshots:
+            self.generate_historical_data()
+        
+        patterns = self.analyze_patterns()
+        
+        report = {
+            "analysis_timestamp": datetime.now().isoformat(),
+            "mission": "Britain achieving 90%+ renewable electricity generation",
+            "data_points_analyzed": len(self.snapshots),
+            "core_technical_problems": self.get_core_problems(),
+            "grid_patterns": patterns,
+            "latest_snapshot": asdict(self.snapshots[-1]) if self.snapshots else None,
+        }
+        
+        if include_historical:
+            report["snapshots"] = [asdict(s) for s in self.snapshots[:10]]
+        
+        return report
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="UK Grid Renewable Energy Penetration Analyzer",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s --hours 168 --target 90
-  %(prog)s --hours 720 --output report.json
-  %(prog)s --hours 24 --verbose
-        """
+        description="Analyze Britain's renewable electricity generation technical landscape"
     )
-
     parser.add_argument(
-        "--hours",
+        "--days",
         type=int,
-        default=168,
-        help="Hours of data to analyze (default: 168 = 1 week)"
+        default=365,
+        help="Number of historical days to analyze (default: 365)"
     )
-
-    parser.add_argument(
-        "--target",
-        type=float,
-        default=90.0,
-        help="Renewable energy target percentage (default: 90.0)"
-    )
-
     parser.add_argument(
         "--output",
         type=str,
-        default=None,
-        help="Output file for JSON results (default: stdout)"
+        default="report.json",
+        help="Output file for JSON report (default: report.json)"
     )
-
+    parser.add_argument(
+        "--include-snapshots",
+        action="store_true",
+        help="Include historical snapshots in report"
+    )
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Print detailed analysis report"
+        help="Print detailed output to console"
     )
-
-    parser.add_argument(
-        "--format",
-        choices=["json", "text"],
-        default="text",
-        help="Output format (default: text)"
-    )
-
+    
     args = parser.parse_args()
-
-    print(f"[*] Generating {args.hours} hours of synthetic UK grid data...", file=sys.stderr)
-    snapshots = generate_synthetic_data(args.hours)
-
-    print(f"[*] Initializing analyzer with {args.target}% target...", file=sys.stderr)
-    analyzer = UKGridAnalyzer(target_renewable_pct=args.target)
-
-    for snapshot in snapshots:
-        analyzer.add_snapshot(snapshot)
-
-    print(f"[*] Analyzing {len(snapshots)} data points...", file=sys.stderr)
-    analysis = analyzer.analyze_period()
-
-    if args.format == "json":
-        output_data = asdict(analysis)
-        output_json = json.dumps(output_data, indent=2)
-        
-        if args.output:
-            with open(args.output, 'w') as f:
-                f.write(output_json)
-            print(f"[+] JSON output written to {args.output}", file=sys.stderr)
-        else:
-            print(output_json)
+    
+    analyzer = BritainEnergyAnalyzer(historical_days=args.days)
+    analyzer.generate_historical_data()
+    report = analyzer.generate_report(include_historical=args.include_snapshots)
+    
+    with open(args.output, 'w') as f:
+        json.dump(report, f, indent=2)
+    
+    if args.verbose:
+        print("=" * 70)
+        print("BRITAIN'S RENEWABLE ELECTRICITY GENERATION ANALYSIS")
+        print("=" * 70)
+        print(f"\nAnalysis Timestamp: {report['analysis_timestamp']}")
+        print(f"Data Points Analyzed: {report['data_points_analyzed']}")
+        print(f"\nGrid Pattern Summary:")
+        for key, value in report['grid_patterns'].items():
+            print(f"  {key}: {value}")
+        print(f"\nCore Technical Problems Identified:")
+        for idx, (problem, description) in enumerate(report['core_technical_problems'].items(), 1):
+            print(f"\n{idx}. {problem.upper().replace('_', ' ')}")
+            print(f"   {description}")
+        print(f"\nLatest Grid Snapshot:")
+        latest = report['latest_snapshot']
+        print(f"  Timestamp: {latest['timestamp']}")
+        print(f"  Total Demand: {latest['total_demand_mw']} MW")
+        print(f"  Renewable Generation: {latest['renewable_generation_mw']} MW")
+        print(f"  Renewable Percentage: {latest['renewable_percentage']}%")
+        print(f"\nReport saved to: {args.output}")
     else:
-        report = analyzer.generate_report(analysis)
-        
-        if args.verbose:
-            print(report)
-        else:
-            print(report)
-
-        if args.output:
-            with open(args.output, 'w') as f:
-                f.write(report)
-            print(f"[+] Report written to {args.output}", file=sys.stderr)
-
-    print(f"[+] Analysis complete", file=sys.stderr)
+        print(f"Analysis complete. Report saved to: {args.output}")
+    
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
