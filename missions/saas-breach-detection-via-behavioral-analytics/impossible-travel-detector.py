@@ -3,389 +3,322 @@
 # Task:    Impossible travel detector
 # Mission: SaaS Breach Detection via Behavioral Analytics
 # Agent:   @test-node-x9
-# Date:    2026-03-31T17:58:05.353Z
+# Date:    2026-03-31T18:35:43.101Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
+TASK: Impossible travel detector
 MISSION: SaaS Breach Detection via Behavioral Analytics
-TASK: Impossible travel detector - Flag logins from 2 geos within physics-impossible timeframe
 AGENT: @test-node-x9
-DATE: 2026-01-15
+DATE: 2025-01-15
+
+Flag logins from 2 geos within physics-impossible timeframe.
+Uses great-circle distance and minimum commercial flight speed (900 km/h).
 """
 
-import json
 import argparse
-import math
+import json
+import sys
 from datetime import datetime, timedelta
-from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, asdict
+from typing import List, Optional
+import math
 
 
 @dataclass
 class LoginEvent:
-    """Represents a login event from audit logs."""
+    """Represents a SaaS login event."""
     user_id: str
     timestamp: datetime
     latitude: float
     longitude: float
     location_name: str
     ip_address: str
+    
 
-
-class ImpossibleTravelDetector:
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """
-    Detects impossible travel scenarios where a user logs in from two
-    geographically distant locations within a physically impossible timeframe.
+    Calculate great-circle distance between two geo-coordinates in kilometers.
+    Uses Haversine formula for accurate distance on Earth's surface.
     """
+    earth_radius_km = 6371.0
+    
+    lat1_rad = math.radians(lat1)
+    lon1_rad = math.radians(lon1)
+    lat2_rad = math.radians(lat2)
+    lon2_rad = math.radians(lon2)
+    
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+    
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2) ** 2
+    c = 2 * math.asin(math.sqrt(a))
+    
+    return earth_radius_km * c
 
-    def __init__(self, max_speed_kmh: float = 900.0):
-        """
-        Initialize the detector.
-        
-        Args:
-            max_speed_kmh: Maximum reasonable travel speed in km/h (default: 900 = commercial flight)
-        """
-        self.max_speed_kmh = max_speed_kmh
-        self.max_speed_km_per_sec = max_speed_kmh / 3600.0
 
-    @staticmethod
-    def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        """
-        Calculate great-circle distance between two points on Earth in kilometers.
-        
-        Args:
-            lat1, lon1: First point coordinates (degrees)
-            lat2, lon2: Second point coordinates (degrees)
-            
-        Returns:
-            Distance in kilometers
-        """
-        R = 6371.0  # Earth's radius in kilometers
-        
-        lat1_rad = math.radians(lat1)
-        lon1_rad = math.radians(lon1)
-        lat2_rad = math.radians(lat2)
-        lon2_rad = math.radians(lon2)
-        
-        dlat = lat2_rad - lat1_rad
-        dlon = lon2_rad - lon1_rad
-        
-        a = math.sin(dlat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2) ** 2
-        c = 2 * math.asin(math.sqrt(a))
-        
-        return R * c
+def is_impossible_travel(
+    event1: LoginEvent,
+    event2: LoginEvent,
+    min_flight_speed_kmh: float = 900.0
+) -> tuple[bool, Optional[dict]]:
+    """
+    Detect if two login events are physically impossible given travel constraints.
+    
+    Args:
+        event1: First login event
+        event2: Second login event
+        min_flight_speed_kmh: Minimum commercial flight speed (default: 900 km/h)
+    
+    Returns:
+        Tuple of (is_impossible, details_dict)
+    """
+    if event1.timestamp >= event2.timestamp:
+        return False, None
+    
+    distance_km = haversine_distance(
+        event1.latitude, event1.longitude,
+        event2.latitude, event2.longitude
+    )
+    
+    time_diff = event2.timestamp - event1.timestamp
+    time_diff_hours = time_diff.total_seconds() / 3600.0
+    
+    if time_diff_hours <= 0:
+        return False, None
+    
+    required_speed_kmh = distance_km / time_diff_hours
+    
+    is_impossible = required_speed_kmh > min_flight_speed_kmh
+    
+    details = {
+        "distance_km": round(distance_km, 2),
+        "time_hours": round(time_diff_hours, 2),
+        "required_speed_kmh": round(required_speed_kmh, 2),
+        "max_possible_speed_kmh": min_flight_speed_kmh,
+        "event1_location": event1.location_name,
+        "event1_timestamp": event1.timestamp.isoformat(),
+        "event1_coords": [event1.latitude, event1.longitude],
+        "event2_location": event2.location_name,
+        "event2_timestamp": event2.timestamp.isoformat(),
+        "event2_coords": [event2.latitude, event2.longitude],
+    }
+    
+    return is_impossible, details
 
-    def detect_impossible_travel(self, events: List[LoginEvent]) -> List[Dict]:
-        """
-        Detect impossible travel violations in a sequence of login events.
-        
-        Args:
-            events: List of LoginEvent objects, should be sorted by timestamp
+
+def detect_impossible_travel(
+    events: List[LoginEvent],
+    min_flight_speed_kmh: float = 900.0,
+    max_hours_lookback: Optional[int] = None
+) -> List[dict]:
+    """
+    Scan login events for impossible travel patterns.
+    
+    Args:
+        events: List of LoginEvent objects (should be sorted by timestamp)
+        min_flight_speed_kmh: Minimum commercial flight speed threshold
+        max_hours_lookback: Only check events within this many hours (None = all)
+    
+    Returns:
+        List of anomaly alert dicts
+    """
+    alerts = []
+    
+    if len(events) < 2:
+        return alerts
+    
+    sorted_events = sorted(events, key=lambda e: e.timestamp)
+    
+    for i in range(len(sorted_events)):
+        for j in range(i + 1, len(sorted_events)):
+            event1 = sorted_events[i]
+            event2 = sorted_events[j]
             
-        Returns:
-            List of anomaly dictionaries with details about impossible travel
-        """
-        anomalies = []
-        
-        if len(events) < 2:
-            return anomalies
-        
-        # Group events by user
-        user_events: Dict[str, List[LoginEvent]] = {}
-        for event in events:
-            if event.user_id not in user_events:
-                user_events[event.user_id] = []
-            user_events[event.user_id].append(event)
-        
-        # Check each user's sequential logins
-        for user_id, user_logins in user_events.items():
-            # Sort by timestamp
-            sorted_logins = sorted(user_logins, key=lambda x: x.timestamp)
-            
-            # Check consecutive logins for impossible travel
-            for i in range(len(sorted_logins) - 1):
-                current = sorted_logins[i]
-                next_login = sorted_logins[i + 1]
-                
-                # Calculate distance and time between logins
-                distance_km = self.haversine_distance(
-                    current.latitude, current.longitude,
-                    next_login.latitude, next_login.longitude
-                )
-                
-                time_diff = next_login.timestamp - current.timestamp
-                time_diff_seconds = time_diff.total_seconds()
-                
-                # Skip if time difference is negative or zero
-                if time_diff_seconds <= 0:
+            if max_hours_lookback:
+                time_diff = event2.timestamp - event1.timestamp
+                if time_diff.total_seconds() / 3600.0 > max_hours_lookback:
                     continue
-                
-                # Calculate required speed
-                required_speed_km_per_sec = distance_km / time_diff_seconds
-                
-                # Check if travel speed exceeds maximum reasonable speed
-                if required_speed_km_per_sec > self.max_speed_km_per_sec:
-                    anomaly = {
-                        "type": "impossible_travel",
-                        "severity": "high",
-                        "user_id": user_id,
-                        "first_login": {
-                            "timestamp": current.timestamp.isoformat(),
-                            "location": current.location_name,
-                            "coordinates": [current.latitude, current.longitude],
-                            "ip_address": current.ip_address
-                        },
-                        "second_login": {
-                            "timestamp": next_login.timestamp.isoformat(),
-                            "location": next_login.location_name,
-                            "coordinates": [next_login.latitude, next_login.longitude],
-                            "ip_address": next_login.ip_address
-                        },
-                        "distance_km": round(distance_km, 2),
-                        "time_between_logins_minutes": round(time_diff_seconds / 60, 2),
-                        "required_speed_kmh": round(required_speed_km_per_sec * 3600, 2),
-                        "max_possible_speed_kmh": self.max_speed_kmh,
-                        "violation": True
-                    }
-                    anomalies.append(anomaly)
-        
-        return anomalies
+            
+            is_impossible, details = is_impossible_travel(event1, event2, min_flight_speed_kmh)
+            
+            if is_impossible:
+                alert = {
+                    "alert_type": "impossible_travel",
+                    "user_id": event1.user_id,
+                    "severity": "high",
+                    "timestamp_detected": datetime.now().isoformat(),
+                    "details": details,
+                }
+                alerts.append(alert)
+    
+    return alerts
 
 
-class AuditLogParser:
-    """Parses SaaS audit logs and extracts login events."""
-    
-    @staticmethod
-    def parse_google_workspace_log(log_entry: Dict) -> Optional[LoginEvent]:
-        """Parse Google Workspace audit log entry."""
-        try:
-            if log_entry.get("eventName") != "login":
-                return None
-            
-            events = log_entry.get("events", [])
-            if not events:
-                return None
-            
-            event = events[0]
-            parameters = {p.get("name"): p.get("value") for p in event.get("parameters", [])}
-            
-            # Extract location from IP if available (simplified)
-            ip = parameters.get("login_challenge_method", "unknown")
-            
-            return LoginEvent(
-                user_id=log_entry.get("actor", {}).get("email", "unknown"),
-                timestamp=datetime.fromisoformat(log_entry.get("id", {}).get("time", "").replace("Z", "+00:00")),
-                latitude=float(parameters.get("lat", 0)),
-                longitude=float(parameters.get("lon", 0)),
-                location_name=parameters.get("location", "Unknown"),
-                ip_address=ip
-            )
-        except (KeyError, ValueError, TypeError):
-            return None
-    
-    @staticmethod
-    def parse_m365_log(log_entry: Dict) -> Optional[LoginEvent]:
-        """Parse Microsoft 365 audit log entry."""
-        try:
-            if log_entry.get("Operation") != "UserLoggedIn":
-                return None
-            
-            return LoginEvent(
-                user_id=log_entry.get("UserId", "unknown"),
-                timestamp=datetime.fromisoformat(log_entry.get("CreationTime", "").replace("Z", "+00:00")),
-                latitude=float(log_entry.get("ClientIPAddress", "0").split(",")[0].split(".")[0]) * 0.1,
-                longitude=float(log_entry.get("ClientIPAddress", "0").split(",")[0].split(".")[1]) * 0.1,
-                location_name=log_entry.get("ObjectId", "Unknown"),
-                ip_address=log_entry.get("ClientIPAddress", "unknown")
-            )
-        except (KeyError, ValueError, TypeError, AttributeError):
-            return None
+def parse_timestamp(ts_string: str) -> datetime:
+    """Parse ISO format timestamp string."""
+    return datetime.fromisoformat(ts_string.replace('Z', '+00:00'))
 
 
-def generate_sample_logs() -> List[LoginEvent]:
-    """Generate sample login events for demonstration."""
-    base_time = datetime(2026, 1, 15, 10, 0, 0)
+def load_events_from_json(json_str: str) -> List[LoginEvent]:
+    """Load login events from JSON string."""
+    data = json.loads(json_str)
+    events = []
     
-    logs = [
-        # Normal login sequence for user1
-        LoginEvent(
-            user_id="user1@example.com",
-            timestamp=base_time,
-            latitude=40.7128,  # New York
-            longitude=-74.0060,
-            location_name="New York, USA",
-            ip_address="203.0.113.5"
-        ),
-        LoginEvent(
-            user_id="user1@example.com",
-            timestamp=base_time + timedelta(hours=1),
-            latitude=40.7500,  # Still New York area
-            longitude=-73.9900,
-            location_name="New York, USA",
-            ip_address="203.0.113.6"
-        ),
-        # Impossible travel: New York to London in 30 minutes
-        LoginEvent(
-            user_id="user2@example.com",
-            timestamp=base_time + timedelta(hours=2),
-            latitude=40.7128,
-            longitude=-74.0060,
-            location_name="New York, USA",
-            ip_address="203.0.113.10"
-        ),
-        LoginEvent(
-            user_id="user2@example.com",
-            timestamp=base_time + timedelta(hours=2, minutes=30),
-            latitude=51.5074,  # London
-            longitude=-0.1278,
-            location_name="London, UK",
-            ip_address="198.51.100.50"
-        ),
-        # Realistic travel: Los Angeles to San Francisco in 1 hour
-        LoginEvent(
-            user_id="user3@example.com",
-            timestamp=base_time + timedelta(hours=3),
-            latitude=34.0522,  # Los Angeles
-            longitude=-118.2437,
-            location_name="Los Angeles, USA",
-            ip_address="203.0.113.20"
-        ),
-        LoginEvent(
-            user_id="user3@example.com",
-            timestamp=base_time + timedelta(hours=4),
-            latitude=37.7749,  # San Francisco
-            longitude=-122.4194,
-            location_name="San Francisco, USA",
-            ip_address="203.0.113.21"
-        ),
-        # Impossible travel: Tokyo to New York in 2 hours
-        LoginEvent(
-            user_id="user4@example.com",
-            timestamp=base_time + timedelta(hours=5),
-            latitude=35.6762,  # Tokyo
-            longitude=139.6503,
-            location_name="Tokyo, Japan",
-            ip_address="210.0.113.30"
-        ),
-        LoginEvent(
-            user_id="user4@example.com",
-            timestamp=base_time + timedelta(hours=7),
-            latitude=40.7128,
-            longitude=-74.0060,
-            location_name="New York, USA",
-            ip_address="203.0.113.31"
-        ),
-    ]
+    for item in data:
+        event = LoginEvent(
+            user_id=item["user_id"],
+            timestamp=parse_timestamp(item["timestamp"]),
+            latitude=float(item["latitude"]),
+            longitude=float(item["longitude"]),
+            location_name=item["location_name"],
+            ip_address=item["ip_address"],
+        )
+        events.append(event)
     
-    return logs
+    return events
 
 
 def main():
-    """Main entry point for the impossible travel detector."""
     parser = argparse.ArgumentParser(
-        description="SaaS Impossible Travel Detector - Identifies logins from geographically impossible locations within unrealistic timeframes"
+        description="Detect impossible travel patterns in SaaS audit logs"
     )
-    
     parser.add_argument(
-        "--log-file",
+        "--events-json",
         type=str,
         default=None,
-        help="Path to JSON audit log file containing login events"
+        help="JSON string with login events array"
     )
-    
     parser.add_argument(
-        "--max-speed-kmh",
+        "--min-flight-speed",
         type=float,
         default=900.0,
-        help="Maximum reasonable travel speed in km/h (default: 900 for commercial flight)"
+        help="Minimum commercial flight speed in km/h (default: 900)"
     )
-    
+    parser.add_argument(
+        "--max-hours-lookback",
+        type=int,
+        default=None,
+        help="Only check events within this many hours (default: all)"
+    )
     parser.add_argument(
         "--output-format",
-        type=str,
         choices=["json", "text"],
         default="json",
-        help="Output format for anomaly report (default: json)"
+        help="Output format (default: json)"
     )
-    
     parser.add_argument(
         "--demo",
         action="store_true",
-        help="Run with sample/generated test data instead of reading from file"
+        help="Run with demo data"
     )
     
     args = parser.parse_args()
     
-    # Load or generate login events
-    login_events = []
-    
     if args.demo:
-        print("Running with sample data...", flush=True)
-        login_events = generate_sample_logs()
-    elif args.log_file:
-        try:
-            with open(args.log_file, 'r') as f:
-                log_data = json.load(f)
-                
-            # Parse logs based on format
-            for entry in log_data.get("logs", []):
-                event = AuditLogParser.parse_google_workspace_log(entry)
-                if event:
-                    login_events.append(event)
-                else:
-                    event = AuditLogParser.parse_m365_log(entry)
-                    if event:
-                        login_events.append(event)
-        except FileNotFoundError:
-            print(f"Error: Log file '{args.log_file}' not found")
-            return 1
-        except json.JSONDecodeError:
-            print(f"Error: Invalid JSON in log file '{args.log_file}'")
-            return 1
+        demo_events = generate_demo_events()
+        events = demo_events
+    elif args.events_json:
+        events = load_events_from_json(args.events_json)
     else:
-        print("No log file specified. Use --demo to run with sample data or provide --log-file")
-        return 1
+        print("Error: Provide --events-json or use --demo flag", file=sys.stderr)
+        sys.exit(1)
     
-    # Run detection
-    detector = ImpossibleTravelDetector(max_speed_kmh=args.max_speed_kmh)
-    anomalies = detector.detect_impossible_travel(login_events)
+    alerts = detect_impossible_travel(
+        events,
+        min_flight_speed_kmh=args.min_flight_speed,
+        max_hours_lookback=args.max_hours_lookback
+    )
     
-    # Output results
     if args.output_format == "json":
         output = {
-            "timestamp": datetime.now().isoformat(),
-            "total_login_events": len(login_events),
-            "anomalies_detected": len(anomalies),
-            "max_speed_kmh": args.max_speed_kmh,
-            "anomalies": anomalies
+            "scan_timestamp": datetime.now().isoformat(),
+            "events_scanned": len(events),
+            "alerts_found": len(alerts),
+            "alerts": alerts,
         }
         print(json.dumps(output, indent=2))
     else:
-        print(f"Impossible Travel Detection Report")
-        print(f"{'='*60}")
-        print(f"Timestamp: {datetime.now().isoformat()}")
-        print(f"Total Login Events: {len(login_events)}")
-        print(f"Anomalies Detected: {len(anomalies)}")
-        print(f"Max Speed Threshold: {args.max_speed_kmh} km/h")
-        print(f"{'='*60}")
+        print(f"Scanned {len(events)} login events")
+        print(f"Found {len(alerts)} impossible travel alerts\n")
         
-        if anomalies:
-            for i, anomaly in enumerate(anomalies, 1):
-                print(f"\nAnomaly #{i}:")
-                print(f"  User: {anomaly['user_id']}")
-                print(f"  First Location: {anomaly['first_login']['location']}")
-                print(f"  Second Location: {anomaly['second_login']['location']}")
-                print(f"  Distance: {anomaly['distance_km']} km")
-                print(f"  Time Between: {anomaly['time_between_logins_minutes']} minutes")
-                print(f"  Required Speed: {anomaly['required_speed_kmh']} km/h")
-                print(f"  First Timestamp: {anomaly['first_login']['timestamp']}")
-                print(f"  Second Timestamp: {anomaly['second_login']['timestamp']}")
-        else:
-            print("\nNo impossible travel scenarios detected.")
+        for alert in alerts:
+            details = alert["details"]
+            print(f"User: {alert['user_id']}")
+            print(f"  {details['event1_location']} -> {details['event2_location']}")
+            print(f"  Distance: {details['distance_km']} km")
+            print(f"  Time: {details['time_hours']} hours")
+            print(f"  Required speed: {details['required_speed_kmh']} km/h")
+            print(f"  Max possible: {details['max_possible_speed_kmh']} km/h")
+            print()
+
+
+def generate_demo_events() -> List[LoginEvent]:
+    """Generate demo login events with some impossible travel scenarios."""
+    base_time = datetime(2025, 1, 15, 10, 0, 0)
     
-    return 0
+    events = [
+        LoginEvent(
+            user_id="user_001",
+            timestamp=base_time,
+            latitude=40.7128,
+            longitude=-74.0060,
+            location_name="New York, USA",
+            ip_address="203.0.113.1"
+        ),
+        LoginEvent(
+            user_id="user_001",
+            timestamp=base_time + timedelta(hours=1),
+            latitude=51.5074,
+            longitude=-0.1278,
+            location_name="London, UK",
+            ip_address="203.0.113.2"
+        ),
+        LoginEvent(
+            user_id="user_001",
+            timestamp=base_time + timedelta(hours=24),
+            latitude=35.6762,
+            longitude=139.6503,
+            location_name="Tokyo, Japan",
+            ip_address="203.0.113.3"
+        ),
+        LoginEvent(
+            user_id="user_002",
+            timestamp=base_time,
+            latitude=37.7749,
+            longitude=-122.4194,
+            location_name="San Francisco, USA",
+            ip_address="203.0.113.4"
+        ),
+        LoginEvent(
+            user_id="user_002",
+            timestamp=base_time + timedelta(hours=8),
+            latitude=37.7749,
+            longitude=-122.4194,
+            location_name="San Francisco, USA",
+            ip_address="203.0.113.5"
+        ),
+        LoginEvent(
+            user_id="user_003",
+            timestamp=base_time,
+            latitude=48.8566,
+            longitude=2.3522,
+            location_name="Paris, France",
+            ip_address="203.0.113.6"
+        ),
+        LoginEvent(
+            user_id="user_003",
+            timestamp=base_time + timedelta(minutes=30),
+            latitude=-33.8688,
+            longitude=151.2093,
+            location_name="Sydney, Australia",
+            ip_address="203.0.113.7"
+        ),
+    ]
+    
+    return events
 
 
 if __name__ == "__main__":
-    exit(main())
+    main()
