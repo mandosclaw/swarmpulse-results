@@ -3,757 +3,742 @@
 # Task:    Add tests and validation
 # Mission: I put all 8,642 Spanish laws in Git – every reform is a commit
 # Agent:   @aria
-# Date:    2026-03-31T19:27:26.924Z
+# Date:    2026-03-31T19:27:41.560Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Add tests and validation for Spanish Laws Git Repository
-Mission: I put all 8,642 Spanish laws in Git – every reform is a commit
-Agent: @aria (SwarmPulse)
-Date: 2025-01-01
-
-This module provides comprehensive unit tests and validation for a Spanish laws
-Git repository system that tracks legal reforms as commits.
+TASK: Add tests and validation for Spanish Laws Git Repository
+MISSION: I put all 8,642 Spanish laws in Git – every reform is a commit
+AGENT: @aria
+DATE: 2024
 """
 
 import unittest
 import json
 import re
-import tempfile
-import shutil
-import os
 import argparse
-from pathlib import Path
-from dataclasses import dataclass
-from typing import List, Dict, Optional, Tuple
+import sys
 from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Optional
+from dataclasses import dataclass, asdict
+from enum import Enum
+
+
+class LawStatus(Enum):
+    """Enumeration for law status types."""
+    ACTIVE = "active"
+    REPEALED = "repealed"
+    AMENDED = "amended"
+    DRAFT = "draft"
 
 
 @dataclass
-class SpanishLaw:
-    """Represents a Spanish law entry"""
+class Law:
+    """Represents a Spanish law with metadata."""
     law_id: str
     title: str
+    date_enacted: str
+    status: LawStatus
+    reform_commits: List[str]
+    articles: int
     category: str
-    enacted_date: str
-    content: str
-    status: str
-    amendments: int = 0
+    
+    def to_dict(self) -> Dict:
+        """Convert law to dictionary."""
+        data = asdict(self)
+        data['status'] = self.status.value
+        return data
 
-    def validate(self) -> Tuple[bool, List[str]]:
-        """Validate law structure and content"""
+
+class LawValidator:
+    """Validates Spanish law data and metadata."""
+    
+    LAW_ID_PATTERN = re.compile(r'^[A-Z]{2,4}/\d{4}/\d{1,5}$')
+    MIN_ARTICLES = 1
+    MAX_ARTICLES = 10000
+    VALID_CATEGORIES = {
+        'constitutional', 'administrative', 'civil', 'criminal', 
+        'commercial', 'procedural', 'labor', 'tax', 'environmental',
+        'health', 'education', 'transport', 'utility'
+    }
+    
+    @staticmethod
+    def validate_law_id(law_id: str) -> Tuple[bool, str]:
+        """Validate law ID format."""
+        if not law_id:
+            return False, "Law ID cannot be empty"
+        if not LawValidator.LAW_ID_PATTERN.match(law_id):
+            return False, f"Invalid law ID format: {law_id}. Expected format: XX/YYYY/NNNNN"
+        return True, ""
+    
+    @staticmethod
+    def validate_title(title: str) -> Tuple[bool, str]:
+        """Validate law title."""
+        if not title:
+            return False, "Title cannot be empty"
+        if len(title) < 5:
+            return False, "Title must be at least 5 characters"
+        if len(title) > 500:
+            return False, "Title must not exceed 500 characters"
+        return True, ""
+    
+    @staticmethod
+    def validate_date(date_str: str) -> Tuple[bool, str]:
+        """Validate date format (ISO 8601)."""
+        if not date_str:
+            return False, "Date cannot be empty"
+        try:
+            datetime.fromisoformat(date_str)
+            return True, ""
+        except ValueError:
+            return False, f"Invalid date format: {date_str}. Expected ISO 8601 format (YYYY-MM-DD)"
+    
+    @staticmethod
+    def validate_articles(articles: int) -> Tuple[bool, str]:
+        """Validate number of articles."""
+        if not isinstance(articles, int):
+            return False, "Articles must be an integer"
+        if articles < LawValidator.MIN_ARTICLES:
+            return False, f"Articles must be at least {LawValidator.MIN_ARTICLES}"
+        if articles > LawValidator.MAX_ARTICLES:
+            return False, f"Articles must not exceed {LawValidator.MAX_ARTICLES}"
+        return True, ""
+    
+    @staticmethod
+    def validate_category(category: str) -> Tuple[bool, str]:
+        """Validate law category."""
+        if not category:
+            return False, "Category cannot be empty"
+        if category.lower() not in LawValidator.VALID_CATEGORIES:
+            valid = ", ".join(sorted(LawValidator.VALID_CATEGORIES))
+            return False, f"Invalid category: {category}. Valid categories: {valid}"
+        return True, ""
+    
+    @staticmethod
+    def validate_reform_commits(commits: List[str]) -> Tuple[bool, str]:
+        """Validate reform commit hashes."""
+        if not isinstance(commits, list):
+            return False, "Reform commits must be a list"
+        if len(commits) == 0:
+            return False, "At least one reform commit is required"
+        for commit in commits:
+            if not isinstance(commit, str):
+                return False, "Each commit must be a string"
+            if not re.match(r'^[a-f0-9]{40}$', commit):
+                return False, f"Invalid git commit hash format: {commit}"
+        return True, ""
+    
+    @classmethod
+    def validate_law(cls, law: Law) -> Tuple[bool, List[str]]:
+        """Validate entire law object."""
         errors = []
         
-        if not self.law_id or not re.match(r'^[A-Z]{1,3}\d{1,6}$', self.law_id):
-            errors.append(f"Invalid law_id format: {self.law_id}")
+        is_valid, msg = cls.validate_law_id(law.law_id)
+        if not is_valid:
+            errors.append(msg)
         
-        if not self.title or len(self.title) < 5:
-            errors.append("Title must be at least 5 characters")
+        is_valid, msg = cls.validate_title(law.title)
+        if not is_valid:
+            errors.append(msg)
         
-        valid_categories = [
-            "Constitutional", "Administrative", "Civil", "Criminal", 
-            "Labor", "Commercial", "Tax", "Environmental", "Other"
-        ]
-        if self.category not in valid_categories:
-            errors.append(f"Invalid category: {self.category}")
+        is_valid, msg = cls.validate_date(law.date_enacted)
+        if not is_valid:
+            errors.append(msg)
         
-        try:
-            enacted = datetime.strptime(self.enacted_date, "%Y-%m-%d")
-            if enacted > datetime.now():
-                errors.append("Enacted date cannot be in the future")
-        except ValueError:
-            errors.append(f"Invalid enacted_date format: {self.enacted_date}")
+        is_valid, msg = cls.validate_articles(law.articles)
+        if not is_valid:
+            errors.append(msg)
         
-        if not self.content or len(self.content) < 10:
-            errors.append("Content must be at least 10 characters")
+        is_valid, msg = cls.validate_category(law.category)
+        if not is_valid:
+            errors.append(msg)
         
-        valid_statuses = ["Active", "Repealed", "Amended", "Suspended", "Proposed"]
-        if self.status not in valid_statuses:
-            errors.append(f"Invalid status: {self.status}")
-        
-        if self.amendments < 0:
-            errors.append("Amendments count cannot be negative")
+        is_valid, msg = cls.validate_reform_commits(law.reform_commits)
+        if not is_valid:
+            errors.append(msg)
         
         return len(errors) == 0, errors
 
 
-class SpanishLawsRepository:
-    """Manages Spanish laws collection with validation"""
+class LawRepository:
+    """Manages a collection of Spanish laws with validation."""
     
-    def __init__(self, repo_path: Optional[str] = None):
-        self.repo_path = repo_path or tempfile.mkdtemp(prefix="spanish_laws_")
-        self.laws: Dict[str, SpanishLaw] = {}
-        self.commits: List[Dict] = []
-        self._ensure_repo()
+    def __init__(self):
+        """Initialize the law repository."""
+        self.laws: Dict[str, Law] = {}
+        self.validator = LawValidator()
     
-    def _ensure_repo(self):
-        """Ensure repository directory exists"""
-        Path(self.repo_path).mkdir(parents=True, exist_ok=True)
-        self.laws_file = os.path.join(self.repo_path, "laws.json")
-        self.commits_file = os.path.join(self.repo_path, "commits.json")
-    
-    def add_law(self, law: SpanishLaw) -> Tuple[bool, Optional[str]]:
-        """Add a law with validation"""
-        valid, errors = law.validate()
-        if not valid:
-            return False, "; ".join(errors)
+    def add_law(self, law: Law) -> Tuple[bool, str]:
+        """Add a law to the repository."""
+        is_valid, errors = self.validator.validate_law(law)
+        if not is_valid:
+            error_msg = "; ".join(errors)
+            return False, error_msg
         
         if law.law_id in self.laws:
-            return False, f"Law {law.law_id} already exists"
+            return False, f"Law with ID {law.law_id} already exists"
         
         self.laws[law.law_id] = law
-        self._commit_change(f"Add law {law.law_id}: {law.title}", "add")
-        return True, None
+        return True, f"Law {law.law_id} added successfully"
     
-    def update_law(self, law_id: str, law: SpanishLaw) -> Tuple[bool, Optional[str]]:
-        """Update an existing law with validation"""
-        if law_id not in self.laws:
-            return False, f"Law {law_id} not found"
-        
-        valid, errors = law.validate()
-        if not valid:
-            return False, "; ".join(errors)
-        
-        old_law = self.laws[law_id]
-        self.laws[law_id] = law
-        self._commit_change(f"Update law {law_id}: {law.title}", "modify")
-        return True, None
-    
-    def repeal_law(self, law_id: str) -> Tuple[bool, Optional[str]]:
-        """Mark a law as repealed"""
-        if law_id not in self.laws:
-            return False, f"Law {law_id} not found"
-        
-        law = self.laws[law_id]
-        law.status = "Repealed"
-        self._commit_change(f"Repeal law {law_id}", "repeal")
-        return True, None
-    
-    def amend_law(self, law_id: str, amendment_content: str) -> Tuple[bool, Optional[str]]:
-        """Add an amendment to a law"""
-        if law_id not in self.laws:
-            return False, f"Law {law_id} not found"
-        
-        if len(amendment_content) < 5:
-            return False, "Amendment content too short"
-        
-        law = self.laws[law_id]
-        law.amendments += 1
-        law.status = "Amended"
-        self._commit_change(f"Amend law {law_id}: {amendment_content[:50]}", "amend")
-        return True, None
-    
-    def _commit_change(self, message: str, action: str):
-        """Record a commit-like change"""
-        commit = {
-            "timestamp": datetime.now().isoformat(),
-            "message": message,
-            "action": action,
-            "law_count": len(self.laws)
-        }
-        self.commits.append(commit)
-    
-    def get_law(self, law_id: str) -> Optional[SpanishLaw]:
-        """Retrieve a law by ID"""
+    def get_law(self, law_id: str) -> Optional[Law]:
+        """Retrieve a law by ID."""
         return self.laws.get(law_id)
     
-    def list_laws(self, status: Optional[str] = None) -> List[SpanishLaw]:
-        """List all laws, optionally filtered by status"""
-        if status is None:
-            return list(self.laws.values())
+    def update_law_status(self, law_id: str, new_status: LawStatus) -> Tuple[bool, str]:
+        """Update the status of a law."""
+        if law_id not in self.laws:
+            return False, f"Law {law_id} not found"
+        
+        self.laws[law_id].status = new_status
+        return True, f"Law {law_id} status updated to {new_status.value}"
+    
+    def add_reform_commit(self, law_id: str, commit_hash: str) -> Tuple[bool, str]:
+        """Add a reform commit to a law."""
+        if law_id not in self.laws:
+            return False, f"Law {law_id} not found"
+        
+        if not re.match(r'^[a-f0-9]{40}$', commit_hash):
+            return False, f"Invalid commit hash format: {commit_hash}"
+        
+        law = self.laws[law_id]
+        if commit_hash in law.reform_commits:
+            return False, f"Commit {commit_hash} already exists for law {law_id}"
+        
+        law.reform_commits.append(commit_hash)
+        return True, f"Reform commit added to law {law_id}"
+    
+    def get_laws_by_category(self, category: str) -> List[Law]:
+        """Get all laws in a specific category."""
+        return [law for law in self.laws.values() if law.category.lower() == category.lower()]
+    
+    def get_laws_by_status(self, status: LawStatus) -> List[Law]:
+        """Get all laws with a specific status."""
         return [law for law in self.laws.values() if law.status == status]
     
     def get_statistics(self) -> Dict:
-        """Get repository statistics"""
-        statuses = {}
-        categories = {}
+        """Get repository statistics."""
+        if not self.laws:
+            return {
+                'total_laws': 0,
+                'total_articles': 0,
+                'total_reforms': 0,
+                'by_status': {},
+                'by_category': {}
+            }
         
-        for law in self.laws.values():
-            statuses[law.status] = statuses.get(law.status, 0) + 1
-            categories[law.category] = categories.get(law.category, 0) + 1
+        by_status = {}
+        for status in LawStatus:
+            count = len(self.get_laws_by_status(status))
+            if count > 0:
+                by_status[status.value] = count
+        
+        by_category = {}
+        for category in self.validator.VALID_CATEGORIES:
+            laws = self.get_laws_by_category(category)
+            if laws:
+                by_category[category] = len(laws)
+        
+        total_articles = sum(law.articles for law in self.laws.values())
+        total_reforms = sum(len(law.reform_commits) for law in self.laws.values())
         
         return {
-            "total_laws": len(self.laws),
-            "total_commits": len(self.commits),
-            "by_status": statuses,
-            "by_category": categories,
-            "total_amendments": sum(law.amendments for law in self.laws.values())
+            'total_laws': len(self.laws),
+            'total_articles': total_articles,
+            'total_reforms': total_reforms,
+            'by_status': by_status,
+            'by_category': by_category
         }
     
     def export_json(self) -> str:
-        """Export repository as JSON"""
-        return json.dumps({
-            "laws": {
-                law_id: {
-                    "title": law.title,
-                    "category": law.category,
-                    "enacted_date": law.enacted_date,
-                    "status": law.status,
-                    "amendments": law.amendments
-                }
-                for law_id, law in self.laws.items()
-            },
-            "commits": self.commits
-        }, indent=2)
-    
-    def cleanup(self):
-        """Clean up temporary repository"""
-        if os.path.exists(self.repo_path):
-            shutil.rmtree(self.repo_path)
+        """Export repository to JSON format."""
+        data = {
+            'timestamp': datetime.now().isoformat(),
+            'statistics': self.get_statistics(),
+            'laws': [law.to_dict() for law in sorted(self.laws.values(), key=lambda x: x.law_id)]
+        }
+        return json.dumps(data, indent=2)
 
 
-class TestSpanishLawValidation(unittest.TestCase):
-    """Test Spanish law validation logic"""
+class TestLawValidator(unittest.TestCase):
+    """Unit tests for LawValidator."""
     
-    def test_valid_law_creation(self):
-        """Test creating a valid law"""
-        law = SpanishLaw(
-            law_id="LOC123",
-            title="Ley Orgánica de Derechos Fundamentales",
-            category="Constitutional",
-            enacted_date="2005-06-15",
-            content="Artículo 1: Los derechos fundamentales serán protegidos...",
-            status="Active"
-        )
-        valid, errors = law.validate()
-        self.assertTrue(valid)
-        self.assertEqual(len(errors), 0)
+    def test_validate_law_id_valid(self):
+        """Test valid law ID formats."""
+        valid_ids = [
+            'BO/1978/3',
+            'LOC/1985/12',
+            'LO/1985/123',
+            'LOFCA/1980/12345'
+        ]
+        for law_id in valid_ids:
+            is_valid, msg = LawValidator.validate_law_id(law_id)
+            self.assertTrue(is_valid, f"Failed for {law_id}: {msg}")
     
-    def test_invalid_law_id_format(self):
-        """Test rejection of invalid law ID format"""
-        law = SpanishLaw(
-            law_id="invalid123invalid",
-            title="Test Law",
-            category="Civil",
-            enacted_date="2005-06-15",
-            content="Test content here for validation",
-            status="Active"
-        )
-        valid, errors = law.validate()
-        self.assertFalse(valid)
-        self.assertTrue(any("law_id" in e for e in errors))
+    def test_validate_law_id_invalid(self):
+        """Test invalid law ID formats."""
+        invalid_ids = [
+            '',
+            'INVALID',
+            '12/1978/3',
+            'LO/78/3',
+            'LO/1978/',
+            'LO-1978-3'
+        ]
+        for law_id in invalid_ids:
+            is_valid, msg = LawValidator.validate_law_id(law_id)
+            self.assertFalse(is_valid, f"Should be invalid: {law_id}")
     
-    def test_invalid_category(self):
-        """Test rejection of invalid category"""
-        law = SpanishLaw(
-            law_id="LOC123",
-            title="Test Law",
-            category="InvalidCategory",
-            enacted_date="2005-06-15",
-            content="Test content here for validation",
-            status="Active"
-        )
-        valid, errors = law.validate()
-        self.assertFalse(valid)
-        self.assertTrue(any("category" in e for e in errors))
+    def test_validate_title_valid(self):
+        """Test valid titles."""
+        valid_titles = [
+            'Spanish Constitution',
+            'Organic Law of the Judiciary',
+            'A' * 500
+        ]
+        for title in valid_titles:
+            is_valid, msg = LawValidator.validate_title(title)
+            self.assertTrue(is_valid, f"Failed for '{title}': {msg}")
     
-    def test_invalid_status(self):
-        """Test rejection of invalid status"""
-        law = SpanishLaw(
-            law_id="LOC123",
-            title="Test Law",
-            category="Civil",
-            enacted_date="2005-06-15",
-            content="Test content here for validation",
-            status="InvalidStatus"
-        )
-        valid, errors = law.validate()
-        self.assertFalse(valid)
-        self.assertTrue(any("status" in e for e in errors))
+    def test_validate_title_invalid(self):
+        """Test invalid titles."""
+        invalid_titles = [
+            '',
+            'Law',
+            'A' * 501
+        ]
+        for title in invalid_titles:
+            is_valid, msg = LawValidator.validate_title(title)
+            self.assertFalse(is_valid, f"Should be invalid: {title}")
     
-    def test_future_enacted_date(self):
-        """Test rejection of future enacted date"""
-        future_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-        law = SpanishLaw(
-            law_id="LOC123",
-            title="Test Law",
-            category="Civil",
-            enacted_date=future_date,
-            content="Test content here for validation",
-            status="Active"
-        )
-        valid, errors = law.validate()
-        self.assertFalse(valid)
-        self.assertTrue(any("future" in e for e in errors))
+    def test_validate_date_valid(self):
+        """Test valid date formats."""
+        valid_dates = [
+            '1978-12-27',
+            '2023-01-01',
+            '2024-06-15'
+        ]
+        for date_str in valid_dates:
+            is_valid, msg = LawValidator.validate_date(date_str)
+            self.assertTrue(is_valid, f"Failed for {date_str}: {msg}")
     
-    def test_short_title(self):
-        """Test rejection of title that's too short"""
-        law = SpanishLaw(
-            law_id="LOC123",
-            title="Law",
-            category="Civil",
-            enacted_date="2005-06-15",
-            content="Test content here for validation",
-            status="Active"
-        )
-        valid, errors = law.validate()
-        self.assertFalse(valid)
-        self.assertTrue(any("Title" in e for e in errors))
+    def test_validate_date_invalid(self):
+        """Test invalid date formats."""
+        invalid_dates = [
+            '',
+            '27-12-1978',
+            '1978/12/27',
+            '2024-13-01',
+            '2024-12-32'
+        ]
+        for date_str in invalid_dates:
+            is_valid, msg = LawValidator.validate_date(date_str)
+            self.assertFalse(is_valid, f"Should be invalid: {date_str}")
     
-    def test_negative_amendments(self):
-        """Test rejection of negative amendment count"""
-        law = SpanishLaw(
-            law_id="LOC123",
-            title="Test Law Title",
-            category="Civil",
-            enacted_date="2005-06-15",
-            content="Test content here for validation",
-            status="Active",
-            amendments=-1
-        )
-        valid, errors = law.validate()
-        self.assertFalse(valid)
-        self.assertTrue(any("amendments" in e for e in errors))
+    def test_validate_articles_valid(self):
+        """Test valid article counts."""
+        valid_articles = [1, 50, 500, 10000]
+        for count in valid_articles:
+            is_valid, msg = LawValidator.validate_articles(count)
+            self.assertTrue(is_valid, f"Failed for {count}: {msg}")
+    
+    def test_validate_articles_invalid(self):
+        """Test invalid article counts."""
+        invalid_articles = [0, -1, 10001, 'fifty']
+        for count in invalid_articles:
+            is_valid, msg = LawValidator.validate_articles(count)
+            self.assertFalse(is_valid, f"Should be invalid: {count}")
+    
+    def test_validate_category_valid(self):
+        """Test valid categories."""
+        for category in LawValidator.VALID_CATEGORIES:
+            is_valid, msg = LawValidator.validate_category(category)
+            self.assertTrue(is_valid, f"Failed for {category}: {msg}")
+            
+            is_valid, msg = LawValidator.validate_category(category.upper())
+            self.assertTrue(is_valid, f"Failed for {category.upper()}: {msg}")
+    
+    def test_validate_category_invalid(self):
+        """Test invalid categories."""
+        invalid_categories = ['', 'invalid', 'sports', 'unknown']
+        for category in invalid_categories:
+            is_valid, msg = LawValidator.validate_category(category)
+            self.assertFalse(is_valid, f"Should be invalid: {category}")
+    
+    def test_validate_reform_commits_valid(self):
+        """Test valid commit hashes."""
+        valid_commits = [
+            ['a' * 40],
+            ['0' * 40, 'f' * 40],
+            ['abc123' + 'd' * 34, '1' * 40]
+        ]
+        for commits in valid_commits:
+            is_valid, msg = LawValidator.validate_reform_commits(commits)
+            self.assertTrue(is_valid, f"Failed for {commits}: {msg}")
+    
+    def test_validate_reform_commits_invalid(self):
+        """Test invalid commit hashes."""
+        invalid_commits = [
+            [],
+            ['invalid'],
+            ['a' * 39],
+            ['a' * 41],
+            ['g' * 40],
+            'not_a_list'
+        ]
+        for commits in invalid_commits:
+            is_valid, msg = LawValidator.validate_reform_commits(commits)
+            self.assertFalse(is_valid, f"Should be invalid: {commits}")
 
 
-class TestSpanishLawsRepository(unittest.TestCase):
-    """Test repository operations"""
+class TestLawRepository(unittest.TestCase):
+    """Unit tests for LawRepository."""
     
     def setUp(self):
-        """Set up test repository"""
-        self.repo = SpanishLawsRepository()
-    
-    def tearDown(self):
-        """Clean up test repository"""
-        self.repo.cleanup()
-    
-    def test_add_valid_law(self):
-        """Test adding a valid law to repository"""
-        law = SpanishLaw(
-            law_id="CC001",
-            title="Código Civil Español",
-            category="Civil",
-            enacted_date="1889-05-24",
-            content="Libro primero: De las personas...",
-            status="Active"
+        """Set up test fixtures."""
+        self.repo = LawRepository()
+        self.sample_law = Law(
+            law_id='CE/1978/3',
+            title='Spanish Constitution',
+            date_enacted='1978-12-27',
+            status=LawStatus.ACTIVE,
+            reform_commits=['a' * 40, 'b' * 40],
+            articles=169,
+            category='constitutional'
         )
-        success, error = self.repo.add_law(law)
+    
+    def test_add_law_valid(self):
+        """Test adding a valid law."""
+        success, msg = self.repo.add_law(self.sample_law)
         self.assertTrue(success)
-        self.assertIsNone(error)
-        self.assertEqual(len(self.repo.laws), 1)
+        self.assertIn('added successfully', msg)
+        self.assertIn(self.sample_law.law_id, self.repo.laws)
     
-    def test_add_duplicate_law(self):
-        """Test rejection of duplicate law ID"""
-        law = SpanishLaw(
-            law_id="CC001",
-            title="Código Civil Español",
-            category="Civil",
-            enacted_date="1889-05-24",
-            content="Libro primero: De las personas...",
-            status="Active"
-        )
-        self.repo.add_law(law)
-        success, error = self.repo.add_law(law)
+    def test_add_law_duplicate(self):
+        """Test adding a duplicate law."""
+        self.repo.add_law(self.sample_law)
+        success, msg = self.repo.add_law(self.sample_law)
         self.assertFalse(success)
-        self.assertIn("already exists", error)
+        self.assertIn('already exists', msg)
     
-    def test_add_invalid_law(self):
-        """Test rejection of invalid law"""
-        law = SpanishLaw(
-            law_id="INVALID",
-            title="Test",
-            category="Civil",
-            enacted_date="2005-06-15",
-            content="test",
-            status="Active"
+    def test_add_law_invalid(self):
+        """Test adding an invalid law."""
+        invalid_law = Law(
+            law_id='INVALID',
+            title='Test',
+            date_enacted='1978-12-27',
+            status=LawStatus.ACTIVE,
+            reform_commits=['a' * 40],
+            articles=100,
+            category='constitutional'
         )
-        success, error = self.repo.add_law(law)
+        success, msg = self.repo.add_law(invalid_law)
         self.assertFalse(success)
-        self.assertIsNotNone(error)
-    
-    def test_update_law(self):
-        """Test updating an existing law"""
-        law = SpanishLaw(
-            law_id="CC001",
-            title="Código Civil Español",
-            category="Civil",
-            enacted_date="1889-05-24",
-            content="Libro primero: De las personas...",
-            status="Active"
-        )
-        self.repo.add_law(law)
-        
-        updated_law = SpanishLaw(
-            law_id="CC001",
-            title="Código Civil Español Modificado",
-            category="Civil",
-            enacted_date="1889-05-24",
-            content="Libro primero modificado: De las personas...",
-            status="Amended"
-        )
-        success, error = self.repo.update_law("CC001", updated_law)
-        self.assertTrue(success)
-        self.assertEqual(self.repo.get_law("CC001").status, "Amended")
-    
-    def test_update_nonexistent_law(self):
-        """Test update of non-existent law"""
-        law = SpanishLaw(
-            law_id="CC999",
-            title="Test Law",
-            category="Civil",
-            enacted_date="2005-06-15",
-            content="Test content here for validation",
-            status="Active"
-        )
-        success, error = self.repo.update_law("CC999", law)
-        self.assertFalse(success)
-        self.assertIn("not found", error)
-    
-    def test_repeal_law(self):
-        """Test repealing a law"""
-        law = SpanishLaw(
-            law_id="CC001",
-            title="Código Civil Español",
-            category="Civil",
-            enacted_date="1889-05-24",
-            content="Libro primero: De las personas...",
-            status="Active"
-        )
-        self.repo.add_law(law)
-        success, error = self.repo.repeal_law("CC001")
-        self.assertTrue(success)
-        self.assertEqual(self.repo.get_law("CC001").status, "Repealed")
-    
-    def test_repeal_nonexistent_law(self):
-        """Test repeal of non-existent law"""
-        success, error = self.repo.repeal_law("CC999")
-        self.assertFalse(success)
-        self.assertIn("not found", error)
-    
-    def test_amend_law(self):
-        """Test amending a law"""
-        law = SpanishLaw(
-            law_id="CC001",
-            title="Código Civil Español",
-            category="Civil",
-            enacted_date="1889-05-24",
-            content="Libro primero: De las personas...",
-            status="Active"
-        )
-        self.repo.add_law(law)
-        success, error = self.repo.amend_law("CC001", "Se modifica el artículo 42")
-        self.assertTrue(success)
-        self.assertEqual(self.repo.get_law("CC001").amendments, 1)
-        self.assertEqual(self.repo.get_law("CC001").status, "Amended")
-    
-    def test_amend_short_content(self):
-        """Test amendment with insufficient content"""
-        law = SpanishLaw(
-            law_id="CC001",
-            title="Código Civil Español",
-            category="Civil",
-            enacted_date="1889-05-24",
-            content="Libro primero: De las personas...",
-            status="Active"
-        )
-        self.repo.add_law(law)
-        success, error = self.repo.amend_law("CC001", "Bad")
-        self.assertFalse(success)
-        self.assertIn("too short", error)
+        self.assertIn('Invalid law ID format', msg)
     
     def test_get_law(self):
-        """Test retrieving a law"""
-        law = SpanishLaw(
-            law_id="CC001",
-            title="Código Civil Español",
-            category="Civil",
-            enacted_date="1889-05-24",
-            content="Libro primero: De las personas...",
-            status="Active"
-        )
-        self.repo.add_law(law)
-        retrieved = self.repo.get_law("CC001")
-        self.assertIsNotNone(retrieved)
-        self.assertEqual(retrieved.title, "Código Civil Español")
+        """Test retrieving a law."""
+        self.repo.add_law(self.sample_law)
+        law = self.repo.get_law(self.sample_law.law_id)
+        self.assertIsNotNone(law)
+        self.assertEqual(law.law_id, self.sample_law.law_id)
     
-    def test_get_nonexistent_law(self):
-        """Test retrieval of non-existent law"""
-        retrieved = self.repo.get_law("CC999")
-        self.assertIsNone(retrieved)
+    def test_get_law_not_found(self):
+        """Test retrieving a non-existent law."""
+        law = self.repo.get_law('XX/0000/0')
+        self.assertIsNone(law)
     
-    def test_list_all_laws(self):
-        """Test listing all laws"""
-        for i in range(3):
-            law = SpanishLaw(
-                law_id=f"CC{i:03d}",
-                title=f"Código Civil {i}",
-                category="Civil",
-                enacted_date="1889-05-24",
-                content=f"Content {i}...",
-                status="Active"
-            )
-            self.repo.add_law(law)
-        
-        laws = self.repo.list_laws()
-        self.assertEqual(len(laws), 3)
+    def test_update_law_status(self):
+        """Test updating law status."""
+        self.repo.add_law(self.sample_law)
+        success, msg = self.repo.update_law_status(self.sample_law.law_id, LawStatus.REPEALED)
+        self.assertTrue(success)
+        law = self.repo.get_law(self.sample_law.law_id)
+        self.assertEqual(law.status, LawStatus.REPEALED)
     
-    def test_list_laws_by_status(self):
-        """Test filtering laws by status"""
-        law1 = SpanishLaw(
-            law_id="CC001",
-            title="Código Civil 1",
-            category="Civil",
-            enacted_date="1889-05-24",
-            content="Content 1...",
-            status="Active"
-        )
-        law2 = SpanishLaw(
-            law_id="CC002",
-            title="Código Civil 2",
-            category="Civil",
-            enacted_date="1889-05-24",
-            content="Content 2...",
-            status="Repealed"
-        )
-        
+    def test_update_law_status_not_found(self):
+        """Test updating status of non-existent law."""
+        success, msg = self.repo.update_law_status('XX/0000/0', LawStatus.ACTIVE)
+        self.assertFalse(success)
+        self.assertIn('not found', msg)
+    
+    def test_add_reform_commit(self):
+        """Test adding a reform commit."""
+        self.repo.add_law(self.sample_law)
+        new_commit = 'c' * 40
+        success, msg = self.repo.add_reform_commit(self.sample_law.law_id, new_commit)
+        self.assertTrue(success)
+        law = self.repo.get_law(self.sample_law.law_id)
+        self.assertIn(new_commit, law.reform_commits)
+    
+    def test_add_reform_commit_duplicate(self):
+        """Test adding a duplicate reform commit."""
+        self.repo.add_law(self.sample_law)
+        existing_commit = self.sample_law.reform_commits[0]
+        success, msg = self.repo.add_reform_commit(self.sample_law.law_id, existing_commit)
+        self.assertFalse(success)
+        self.assertIn('already exists', msg)
+    
+    def test_add_reform_commit_invalid_hash(self):
+        """Test adding reform commit with invalid hash."""
+        self.repo.add_law(self.sample_law)
+        success, msg = self.repo.add_reform_commit(self.sample_law.law_id, 'invalid')
+        self.assertFalse(success)
+        self.assertIn('Invalid commit hash format', msg)
+    
+    def test_get_laws_by_category(self):
+        """Test retrieving laws by category."""
+        law1 = Law('CE/1978/3', 'Constitution', '1978-12-27', LawStatus.ACTIVE, 
+                   ['a' * 40], 169, 'constitutional')
+        law2 = Law('LO/1985/1', 'Judiciary Law', '1985-07-01', LawStatus.ACTIVE,
+                   ['b' * 40], 232, 'administrative')
         self.repo.add_law(law1)
         self.repo.add_law(law2)
         
-        active = self.repo.list_laws(status="Active")
-        self.assertEqual(len(active), 1)
-        self.assertEqual(active[0].law_id, "CC001")
+        const_laws = self.repo.get_laws_by_category('constitutional')
+        self.assertEqual(len(const_laws), 1)
+        self.assertEqual(const_laws[0].law_id, 'CE/1978/3')
     
-    def test_statistics(self):
-        """Test repository statistics"""
-        for i in range(2):
-            law = SpanishLaw(
-                law_id=f"CC{i:03d}",
-                title=f"Código Civil {i}",
-                category="Civil",
-                enacted_date="1889-05-24",
-                content=f"Content {i}...",
-                status="Active",
-                amendments=i
-            )
-            self.repo.add_law(law)
+    def test_get_laws_by_status(self):
+        """Test retrieving laws by status."""
+        law1 = Law('CE/1978/3', 'Constitution', '1978-12-27', LawStatus.ACTIVE,
+                   ['a' * 40], 169, 'constitutional')
+        law2 = Law('LO/1985/1', 'Judiciary Law', '1985-07-01', LawStatus.REPEALED,
+                   ['b' * 40], 232, 'administrative')
+        self.repo.add_law(law1)
+        self.repo.add_law(law2)
+        
+        active_laws = self.repo.get_laws_by_status(LawStatus.ACTIVE)
+        self.assertEqual(len(active_laws), 1)
+        self.assertEqual(active_laws[0].law_id, 'CE/1978/3')
+    
+    def test_get_statistics(self):
+        """Test repository statistics."""
+        law1 = Law('CE/1978/3', 'Constitution', '1978-12-27', LawStatus.ACTIVE,
+                   ['a' * 40, 'b' * 40], 169, 'constitutional')
+        law2 = Law('LO/1985/1', 'Judiciary Law', '1985-07-01', LawStatus.ACTIVE,
+                   ['c' * 40], 232, 'administrative')
+        self.repo.add_law(law1)
+        self.repo.add_law(law2)
         
         stats = self.repo.get_statistics()
-        self.assertEqual(stats["total_laws"], 2)
-        self.assertEqual(stats["by_status"]["Active"], 2)
-        self.assertEqual(stats["by_category"]["Civil"], 2)
-        self.assertEqual(stats["total_amendments"], 1)
-    
-    def test_commit_tracking(self):
-        """Test commit tracking"""
-        law = SpanishLaw(
-            law_id="CC001",
-            title="Código Civil",
-            category="Civil",
-            enacted_date="1889-05-24",
-            content="Content...",
-            status="Active"
-        )
-        self.repo.add_law(law)
-        self.repo.amend_law("CC001", "Amendment content")
-        
-        self.assertEqual(len(self.repo.commits), 2)
-        self.assertEqual(self.repo.commits[0]["action"], "add")
-        self.assertEqual(self.repo.commits[1]["action"], "amend")
+        self.assertEqual(stats['total_laws'], 2)
+        self.assertEqual(stats['total_articles'], 401)
+        self.assertEqual(stats['total_reforms'], 3)
+        self.assertEqual(stats['by_status']['active'], 2)
+        self.assertIn('constitutional', stats['by_category'])
     
     def test_export_json(self):
-        """Test JSON export"""
-        law = SpanishLaw(
-            law_id="CC001",
-            title="Código Civil",
-            category="Civil",
-            enacted_date="1889-05-24",
-            content="Content...",
-            status="Active"
-        )
-        self.repo.add_law(law)
-        
+        """Test JSON export."""
+        self.repo.add_law(self.sample_law)
         json_str = self.repo.export_json()
         data = json.loads(json_str)
         
-        self.assertIn("laws", data)
-        self.assertIn("commits", data)
-        self.assertIn("CC001", data["laws"])
-
-
-def run_demonstration():
-    """Run a demonstration of the Spanish laws repository system"""
-    print("=" * 80)
-    print("Spanish Laws Repository Demonstration")
-    print("=" * 80)
-    
-    repo = SpanishLawsRepository()
-    
-    print("\n1. Adding Spanish Laws...")
-    laws_data = [
-        SpanishLaw(
-            law_id="CC001",
-            title="Código Civil Español",
-            category="Civil",
-            enacted_date="1889-05-24",
-            content="Libro primero: De las personas y de los derechos y obligaciones que las afectan",
-            status="Active",
-            amendments=15
-        ),
-        SpanishLaw(
-            law_id="CP002",
-            title="Código Penal Español",
-            category="Criminal",
-            enacted_date="1995-11-23",
-            content="Libro primero: Disposiciones generales sobre los delitos y las faltas",
-            status="Active",
-            amendments=8
-        ),
-        SpanishLaw(
-            law_id="LOC003",
-            title="Ley Orgánica de Derechos Fundamentales",
-            category="Constitutional",
-            enacted_date="1978-12-27",
-            content="Título primero: De los derechos y deberes fundamentales",
-            status="Active",
-            amendments=3
-        ),
-        SpanishLaw(
-            law_id="LEC004",
-            title="Ley de Enjuiciamiento Civil",
-            category="Civil",
-            enacted_date="2000-01-07",
-            content="Libro primero: Disposiciones generales",
-            status="Active",
-            amendments=20
-        ),
-    ]
-    
-    for law in laws_data:
-        success, error = repo.add_law(law)
-        if success:
-            print(f"  ✓ Added {law.law_id}: {law.title}")
-        else:
-            print(f"  ✗ Failed to add {law.law_id}: {error}")
-    
-    print("\n2. Amending laws...")
-    repo.amend_law("CC001", "Se modifica el artículo sobre derechos de sucesión")
-    print(f"  ✓ Amended CC001 (amendments count: {repo.get_law('CC001').amendments})")
-    
-    print("\n3. Listing all laws...")
-    all_laws = repo.list_laws()
-    for law in all_laws:
-        print(f"  - {law.law_id}: {law.title} ({law.status})")
-    
-    print("\n4. Filtering by status (Active)...")
-    active_laws = repo.list_laws(status="Active")
-    print(f"  Found {len(active_laws)} active laws")
-    
-    print("\n5. Repository Statistics...")
-    stats = repo.get_statistics()
-    print(f"  Total laws: {stats['total_laws']}")
-    print(f"  Total commits: {stats['total_commits']}")
-    print(f"  Total amendments: {stats['total_amendments']}")
-    print(f"  By status: {json.dumps(stats['by_status'], indent=4)}")
-    print(f"  By category: {json.dumps(stats['by_category'], indent=4)}")
-    
-    print("\n6. Repealing a law...")
-    success, error = repo.repeal_law("LEC004")
-    if success:
-        print(f"  ✓ Repealed LEC004")
-        print(f"    New status: {repo.get_law('LEC004').status}")
-    
-    print("\n7. Commit History...")
-    for i, commit in enumerate(repo.commits[-3:], 1):
-        print(f"  {i}. [{commit['action'].upper()}] {commit['message']}")
-    
-    print("\n8. Testing Validation...")
-    invalid_law = SpanishLaw(
-        law_id="BADID",
-        title="Invalid",
-        category="Unknown",
-        enacted_date="2099-01-01",
-        content="x",
-        status="InvalidStatus"
-    )
-    valid, errors = invalid_law.validate()
-    print(f"  Validation result: {valid}")
-    if errors:
-        print("  Validation errors:")
-        for error in errors:
-            print(f"    - {error}")
-    
-    print("\n" + "=" * 80)
-    repo.cleanup()
-    print("Demonstration completed successfully!")
-    print("=" * 80)
+        self.assertIn('timestamp', data)
+        self.assertIn('statistics', data)
+        self.assertIn('laws', data)
+        self.assertEqual(len(data['laws']), 1)
+        self.assertEqual(data['laws'][0]['law_id'], self.sample_law.law_id)
 
 
 def main():
-    """Main entry point with CLI"""
+    """Main entry point with CLI."""
     parser = argparse.ArgumentParser(
-        description="Spanish Laws Repository - Unit Tests and Validation",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Run all tests
-  %(prog)s --mode tests
-  
-  # Run with verbose output
-  %(prog)s --mode tests --verbose
-  
-  # Run demonstration
-  %(prog)s --mode demo
-  
-  # Run specific test class
-  %(prog)s --mode tests --test-class TestSpanishLawValidation
-        """
+        description='Spanish Laws Git Repository - Test and Validation Suite'
     )
-    
     parser.add_argument(
-        "--mode",
-        choices=["tests", "demo"],
-        default="tests",
-        help="Execution mode (default: tests)"
+        '--mode',
+        choices=['test', 'demo', 'validate'],
+        default='test',
+        help='Execution mode: test (run unit tests), demo (show example usage), validate (validate sample data)'
     )
-    
     parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output"
+        '--verbose',
+        action='store_true',
+        help='Enable verbose output'
     )
-    
     parser.add_argument(
-        "--test-class",
-        help="Run specific test class"
-    )
-    
-    parser.add_argument(
-        "--test-method",
-        help="Run specific test method (use with --test-class)"
+        '--export-json',
+        metavar='FILE',
+        help='Export demo repository to JSON file'
     )
     
     args = parser.parse_args()
     
-    if args.mode == "demo":
-        run_demonstration()
-    else:
+    if args.mode == 'test':
+        if args.verbose:
+            verbosity = 2
+        else:
+            verbosity = 1
+        
         loader = unittest.TestLoader()
         suite = unittest.TestSuite()
         
-        if args.test_class:
-            if args.test_class == "TestSpanishLawValidation":
-                test_class = TestSpanishLawValidation
-            elif args.test_class == "TestSpanishLawsRepository":
-                test_class = TestSpanishLawsRepository
-            else:
-                print(f"Unknown test class: {args.test_class}")
-                return
-            
-            if args.test_method:
-                suite.addTest(test_class(args.test_method))
-            else:
-                suite.addTests(loader.loadTestsFromTestCase(test_class))
-        else:
-            suite.addTests(loader.loadTestsFromTestCase(TestSpanishLawValidation))
-            suite.addTests(loader.loadTestsFromTestCase(TestSpanishLawsRepository))
+        suite.addTests(loader.loadTestsFromTestCase(TestLawValidator))
+        suite.addTests(loader.loadTestsFromTestCase(TestLawRepository))
         
-        verbosity = 2 if args.verbose else 1
         runner = unittest.TextTestRunner(verbosity=verbosity)
         result = runner.run(suite)
         
-        exit(0 if result.wasSuccessful() else 1)
+        return 0 if result.wasSuccessful() else 1
+    
+    elif args.mode == 'demo':
+        repo = LawRepository()
+        
+        sample_laws = [
+            Law(
+                law_id='CE/1978/3',
+                title='Spanish Constitution',
+                date_enacted='1978-12-27',
+                status=LawStatus.ACTIVE,
+                reform_commits=['a' * 40, 'b' * 40],
+                articles=169,
+                category='constitutional'
+            ),
+            Law(
+                law_id='LO/1985/1',
+                title='Organic Law of the Judiciary',
+                date_enacted='1985-07-01',
+                status=LawStatus.ACTIVE,
+                reform_commits=['c' * 40],
+                articles=232,
+                category='administrative'
+            ),
+            Law(
+                law_id='CC/1978/1',
+                title='Civil Code',
+                date_enacted='1889-01-01',
+                status=LawStatus.AMENDED,
+                reform_commits=['d' * 40, 'e' * 40, 'f' * 40],
+                articles=1975,
+                category='civil'
+            ),
+            Law(
+                law_id='CP/1995/10',
+                title='Criminal Code',
+                date_enacted='1995-11-23',
+                status=LawStatus.ACTIVE,
+                reform_commits=['1' * 40],
+                articles=639,
+                category='criminal'
+            ),
+            Law(
+                law_id='LO/1990/3',
+                title='Organic Law on the Right to Education',
+                date_enacted='1990-10-03',
+                status=LawStatus.AMENDED,
+                reform_commits=['2' * 40, '3' * 40],
+                articles=59,
+                category='education'
+            )
+        ]
+        
+        print("=" * 70)
+        print("SPANISH LAWS GIT REPOSITORY - VALIDATION DEMO")
+        print("=" * 70)
+        print()
+        
+        for law in sample_laws:
+            success, msg = repo.add_law(law)
+            if args.verbose:
+                status = "✓" if success else "✗"
+                print(f"{status} {msg}")
+        
+        print()
+        print("REPOSITORY STATISTICS:")
+        print("-" * 70)
+        stats = repo.get_statistics()
+        print(f"Total Laws: {stats['total_laws']}")
+        print(f"Total Articles: {stats['total_articles']}")
+        print(f"Total Reforms: {stats['total_reforms']}")
+        print()
+        print("Laws by Status:")
+        for status, count in stats['by_status'].items():
+            print(f"  {status}: {count}")
+        print()
+        print("Laws by Category:")
+        for category, count in stats['by_category'].items():
+            print(f"  {category}: {count}")
+        print()
+        
+        if args.export_json:
+            with open(args.export_json, 'w') as f:
+                f.write(repo.export_json())
+            print(f"Repository exported to {args.export_json}")
+        
+        print()
+        print("SAMPLE LAW DETAILS:")
+        print("-" * 70)
+        constitution = repo.get_law('CE/1978/3')
+        if constitution:
+            print(f"ID: {constitution.law_id}")
+            print(f"Title: {constitution.title}")
+            print(f"Enacted: {constitution.date_enacted}")
+            print(f"Status: {constitution.status.value}")
+            print(f"Articles: {constitution.articles}")
+            print(f"Category: {constitution.category}")
+            print(f"Reform Commits: {len(constitution.reform_commits)}")
+        
+        print()
+        return 0
+    
+    elif args.mode == 'validate':
+        print("=" * 70)
+        print("LAW VALIDATION TESTS")
+        print("=" * 70)
+        print()
+        
+        validator = LawValidator()
+        
+        test_law = Law(
+            law_id='LO/2024/1',
+            title='Sample Legislative Organic Law',
+            date_enacted='2024-01-15',
+            status=LawStatus.ACTIVE,
+            reform_commits=['a' * 40, 'b' * 40],
+            articles=150,
+            category='administrative'
+        )
+        
+        is_valid, errors = validator.validate_law(test_law)
+        
+        if is_valid:
+            print("✓ Law validation PASSED")
+            print(f"  Law ID: {test_law.law_id}")
+            print(f"  Title: {test_law.title}")
+            print(f"  Date: {test_law.date_enacted}")
+            print(f"  Articles: {test_law.articles}")
+            print(f"  Category: {test_law.category}")
+        else:
+            print("✗ Law validation FAILED with errors:")
+            for error in errors:
+                print(f"  - {error}")
+        
+        print()
+        print("Testing invalid law...")
+        invalid_law = Law(
+            law_id='INVALID_ID',
+            title='X',
+            date_enacted='invalid-date',
+            status=LawStatus.ACTIVE,
+            reform_commits=[],
+            articles=-5,
+            category='unknown'
+        )
+        
+        is_valid, errors = validator.validate_law(invalid_law)
+        
+        if not is_valid:
+            print("✓ Invalid law correctly rejected:")
+            for error in errors:
+                print(f"  - {error}")
+        
+        print()
+        return 0
+    
+    return 1
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    sys.exit(main())
