@@ -3,419 +3,672 @@
 # Task:    SBOM integration
 # Mission: OSS Supply Chain Compromise Monitor
 # Agent:   @test-node-x9
-# Date:    2026-03-29T13:07:16.169Z
+# Date:    2026-03-31T17:52:33.955Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-SBOM Integration for OSS Supply Chain Compromise Monitor
+SBOM Integration & CVE Advisory Generation
 Mission: OSS Supply Chain Compromise Monitor
 Agent: @test-node-x9
-Date: 2024
-Task: SBOM integration - Cross-reference flagged packages against org SBOM and auto-generate CVE advisory
+Date: 2024-01-15
+
+Integrates flagged packages against organizational SBOM and auto-generates CVE advisories.
 """
 
 import json
 import argparse
-import sys
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, List, Set, Tuple, Optional
 import hashlib
 import re
+import sys
+from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
-from enum import Enum
+from typing import List, Dict, Set, Optional, Tuple
+from pathlib import Path
+import urllib.request
+import urllib.error
+import ssl
 
 
-class SeverityLevel(Enum):
-    CRITICAL = "CRITICAL"
-    HIGH = "HIGH"
-    MEDIUM = "MEDIUM"
-    LOW = "LOW"
-    INFO = "INFO"
-
-
-class ThreatType(Enum):
-    TYPOSQUATTING = "TYPOSQUATTING"
-    DEPENDENCY_CONFUSION = "DEPENDENCY_CONFUSION"
-    POST_PUBLISH_INJECTION = "POST_PUBLISH_INJECTION"
-    SUSPICIOUS_ACTIVITY = "SUSPICIOUS_ACTIVITY"
-    KNOWN_MALWARE = "KNOWN_MALWARE"
+@dataclass
+class Package:
+    """Represents a software package."""
+    name: str
+    version: str
+    ecosystem: str  # "pypi", "npm", "crates"
+    registry_url: Optional[str] = None
 
 
 @dataclass
 class FlaggedPackage:
+    """Represents a flagged/suspicious package."""
     name: str
     version: str
-    registry: str
-    threat_type: ThreatType
-    confidence: float
-    detection_time: str
-    details: Dict
-    suspicious_patterns: List[str]
-
-    def to_dict(self):
-        return {
-            "name": self.name,
-            "version": self.version,
-            "registry": self.registry,
-            "threat_type": self.threat_type.value,
-            "confidence": self.confidence,
-            "detection_time": self.detection_time,
-            "details": self.details,
-            "suspicious_patterns": self.suspicious_patterns
-        }
+    ecosystem: str
+    reason: str  # "typosquatting", "dependency_confusion", "post_inject"
+    severity: str  # "critical", "high", "medium", "low"
+    detected_at: str
+    confidence: float  # 0.0-1.0
+    indicators: List[str]
 
 
 @dataclass
-class SBOMComponent:
-    name: str
-    version: str
-    registry: str
+class SBOMEntry:
+    """Represents an SBOM entry."""
+    component_name: str
+    component_version: str
+    ecosystem: str
     component_type: str
-    hash: str
-    license: str
-
-    def to_dict(self):
-        return {
-            "name": self.name,
-            "version": self.version,
-            "registry": self.registry,
-            "component_type": self.component_type,
-            "hash": self.hash,
-            "license": self.license
-        }
+    purl: str
+    hash_value: Optional[str] = None
 
 
 @dataclass
 class CVEAdvisory:
+    """Generated CVE advisory."""
     advisory_id: str
-    cve_id: str
-    package_name: str
-    affected_versions: List[str]
-    severity: SeverityLevel
+    affected_packages: List[Dict]
+    severity: str
+    title: str
     description: str
-    recommendations: List[str]
-    related_sbom_components: List[str]
+    remediation: str
     generated_at: str
-
-    def to_dict(self):
-        return {
-            "advisory_id": self.advisory_id,
-            "cve_id": self.cve_id,
-            "package_name": self.package_name,
-            "affected_versions": self.affected_versions,
-            "severity": self.severity.value,
-            "description": self.description,
-            "recommendations": self.recommendations,
-            "related_sbom_components": self.related_sbom_components,
-            "generated_at": self.generated_at
-        }
+    confidence_score: float
 
 
 class SBOMParser:
-    """Parse SBOM in CycloneDX or SPDX format"""
-
-    def parse_sbom_file(self, sbom_path: str) -> List[SBOMComponent]:
-        """Parse SBOM JSON file and extract components"""
-        sbom_file = Path(sbom_path)
-        if not sbom_file.exists():
-            raise FileNotFoundError(f"SBOM file not found: {sbom_path}")
-
-        with open(sbom_file, 'r') as f:
-            sbom_data = json.load(f)
-
-        components = []
-
-        if self._is_cyclonedx(sbom_data):
-            components = self._parse_cyclonedx(sbom_data)
-        elif self._is_spdx(sbom_data):
-            components = self._parse_spdx(sbom_data)
-        else:
-            raise ValueError("Unrecognized SBOM format")
-
-        return components
-
-    def _is_cyclonedx(self, data: Dict) -> bool:
-        return "bomFormat" in data and data.get("bomFormat") == "CycloneDX"
-
-    def _is_spdx(self, data: Dict) -> bool:
-        return "SPDXID" in data or "spdxVersion" in data
-
-    def _parse_cyclonedx(self, data: Dict) -> List[SBOMComponent]:
-        """Parse CycloneDX format SBOM"""
-        components = []
-        component_list = data.get("components", [])
-
-        for comp in component_list:
-            name = comp.get("name", "unknown")
-            version = comp.get("version", "unknown")
-            component_type = comp.get("type", "library")
-            license_info = comp.get("licenses", [{}])[0].get("license", {})
-            license_name = license_info.get("name", "UNKNOWN") if isinstance(license_info, dict) else str(license_info)
-            
-            purl = comp.get("purl", "")
-            registry = self._extract_registry_from_purl(purl)
-            
-            hash_value = self._extract_hash(comp)
-
-            components.append(SBOMComponent(
-                name=name,
-                version=version,
-                registry=registry,
-                component_type=component_type,
-                hash=hash_value,
-                license=license_name
-            ))
-
-        return components
-
-    def _parse_spdx(self, data: Dict) -> List[SBOMComponent]:
-        """Parse SPDX format SBOM"""
-        components = []
-        packages = data.get("packages", [])
-
-        for pkg in packages:
-            name = pkg.get("name", "unknown")
-            version = pkg.get("versionInfo", "unknown")
-            component_type = "library"
-            license_list = pkg.get("licenseDeclared", "UNKNOWN")
-            
-            external_refs = pkg.get("externalRefs", [])
-            registry = "unknown"
-            for ext_ref in external_refs:
-                if ext_ref.get("referenceCategory") == "PACKAGE-MANAGER":
-                    ref_type = ext_ref.get("referenceType", "")
-                    if "npm" in ref_type.lower():
-                        registry = "npm"
-                    elif "pypi" in ref_type.lower():
-                        registry = "pypi"
-                    elif "cargo" in ref_type.lower():
-                        registry = "crates.io"
-
-            hash_value = ""
-            checksums = pkg.get("checksums", [])
-            if checksums:
-                hash_value = checksums[0].get("checksumValue", "")
-
-            components.append(SBOMComponent(
-                name=name,
-                version=version,
-                registry=registry,
-                component_type=component_type,
-                hash=hash_value,
-                license=license_list
-            ))
-
-        return components
-
-    def _extract_registry_from_purl(self, purl: str) -> str:
-        """Extract registry type from Package URL"""
-        if not purl:
-            return "unknown"
-        if purl.startswith("pkg:npm/"):
-            return "npm"
-        elif purl.startswith("pkg:pypi/"):
-            return "pypi"
-        elif purl.startswith("pkg:cargo/"):
-            return "crates.io"
-        else:
-            return "unknown"
-
-    def _extract_hash(self, component: Dict) -> str:
-        """Extract hash from component"""
-        hashes = component.get("hashes", [])
-        if hashes:
-            return hashes[0].get("value", "")
-        return ""
-
-
-class PackageMatcher:
-    """Match flagged packages against SBOM components"""
-
-    def find_matches(self, flagged_packages: List[FlaggedPackage], 
-                    sbom_components: List[SBOMComponent]) -> Dict[FlaggedPackage, List[SBOMComponent]]:
-        """Find SBOM components matching flagged packages"""
-        matches = {}
-
-        for flagged in flagged_packages:
-            matched_components = self._match_package(flagged, sbom_components)
-            if matched_components:
-                matches[flagged] = matched_components
-
-        return matches
-
-    def _match_package(self, flagged: FlaggedPackage, 
-                      sbom_components: List[SBOMComponent]) -> List[SBOMComponent]:
-        """Find SBOM components matching a flagged package"""
-        matched = []
-
-        for component in sbom_components:
-            if self._is_match(flagged, component):
-                matched.append(component)
-
-        return matched
-
-    def _is_match(self, flagged: FlaggedPackage, component: SBOMComponent) -> bool:
-        """Determine if a component matches a flagged package"""
-        name_match = self._normalize_name(flagged.name) == self._normalize_name(component.name)
-        registry_match = flagged.registry == component.registry or component.registry == "unknown"
-        version_match = self._version_matches(flagged.version, component.version)
-
-        return name_match and registry_match and version_match
-
-    def _normalize_name(self, name: str) -> str:
-        """Normalize package name for comparison"""
-        return name.lower().replace("_", "-").replace(" ", "")
-
-    def _version_matches(self, flagged_version: str, component_version: str) -> bool:
-        """Check if versions match"""
-        if flagged_version == component_version:
-            return True
+    """Parses and manages SBOM data."""
+    
+    def __init__(self, sbom_path: str):
+        self.sbom_path = Path(sbom_path)
+        self.entries: List[SBOMEntry] = []
+        self._load_sbom()
+    
+    def _load_sbom(self):
+        """Load SBOM from JSON file."""
+        if not self.sbom_path.exists():
+            self.entries = []
+            return
         
-        flagged_base = flagged_version.split("+")[0]
-        component_base = component_version.split("+")[0]
-        return flagged_base == component_base
+        try:
+            with open(self.sbom_path, 'r') as f:
+                data = json.load(f)
+            
+            for entry in data.get('components', []):
+                sbom_entry = SBOMEntry(
+                    component_name=entry.get('name', ''),
+                    component_version=entry.get('version', ''),
+                    ecosystem=entry.get('ecosystem', 'unknown'),
+                    component_type=entry.get('type', 'library'),
+                    purl=entry.get('purl', ''),
+                    hash_value=entry.get('hash', None)
+                )
+                self.entries.append(sbom_entry)
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"Warning: Failed to load SBOM: {e}", file=sys.stderr)
+    
+    def find_matches(self, package: Package) -> List[SBOMEntry]:
+        """Find matching SBOM entries for a package."""
+        matches = []
+        for entry in self.entries:
+            if (entry.component_name.lower() == package.name.lower() and
+                entry.ecosystem.lower() == package.ecosystem.lower()):
+                matches.append(entry)
+        return matches
+    
+    def find_by_name(self, name: str, ecosystem: str) -> List[SBOMEntry]:
+        """Find SBOM entries by name and ecosystem."""
+        return [e for e in self.entries 
+                if e.component_name.lower() == name.lower() 
+                and e.ecosystem.lower() == ecosystem.lower()]
+
+
+class SupplyChainMalwareDetector:
+    """Detects supply chain compromises (typosquatting, dependency confusion, etc)."""
+    
+    TYPO_PATTERNS = {
+        'missing_char': lambda n: ''.join(n.split()),
+        'double_char': lambda n: re.sub(r'([a-z])\1+', r'\1', n),
+        'swap_adjacent': lambda n: ''.join([n[i:i+2][::-1] if i+1 < len(n) else n[i] 
+                                             for i in range(0, len(n), 2)]),
+    }
+    
+    SUSPICIOUS_PATTERNS = [
+        r'^[a-z]*_?admin[_a-z]*$',
+        r'^[a-z]*_?test[_a-z]*$',
+        r'^temp[a-z0-9_]*$',
+        r'^[a-z]*2[a-z0-9_]*$',  # Name + number
+        r'^lib[a-z]{0,3}$',
+    ]
+    
+    INJECT_INDICATORS = [
+        'bin/install.sh',
+        'setup.py',
+        'build.rs',
+        '.env',
+        'preinstall',
+        'postinstall',
+        'build hook',
+    ]
+    
+    def __init__(self):
+        self.known_legitimate = set()
+    
+    def detect_typosquatting(self, package: Package, 
+                            known_packages: Set[str]) -> Tuple[bool, str, float]:
+        """Detect typosquatting attacks."""
+        pkg_lower = package.name.lower()
+        
+        for known in known_packages:
+            known_lower = known.lower()
+            distance = self._levenshtein_distance(pkg_lower, known_lower)
+            similarity = 1.0 - (distance / max(len(pkg_lower), len(known_lower)))
+            
+            if 0.7 < similarity < 1.0 and distance <= 2:
+                return True, f"Similar to legitimate package '{known}'", similarity
+        
+        for pattern in self.SUSPICIOUS_PATTERNS:
+            if re.match(pattern, pkg_lower):
+                return True, f"Matches suspicious pattern: {pattern}", 0.6
+        
+        return False, "", 0.0
+    
+    def detect_dependency_confusion(self, package: Package, 
+                                    sbom_entries: List[SBOMEntry]) -> Tuple[bool, str, float]:
+        """Detect dependency confusion attacks."""
+        matching_internal = [e for e in sbom_entries 
+                           if e.component_name.lower() == package.name.lower()]
+        
+        if not matching_internal:
+            return False, "", 0.0
+        
+        for entry in matching_internal:
+            if entry.ecosystem != package.ecosystem:
+                return True, (f"Package exists internally as {entry.ecosystem}, "
+                            f"external version from {package.ecosystem}"), 0.85
+            
+            if entry.component_version and package.version:
+                try:
+                    ext_major = int(package.version.split('.')[0])
+                    int_major = int(entry.component_version.split('.')[0])
+                    if ext_major > int_major + 1:
+                        return True, (f"External version {package.version} "
+                                    f"much higher than internal {entry.component_version}"), 0.75
+                except (ValueError, IndexError):
+                    pass
+        
+        return False, "", 0.0
+    
+    def detect_post_publish_injection(self, package: Package, 
+                                     metadata: Dict) -> Tuple[bool, str, float]:
+        """Detect post-publish code injection (XZ-style attacks)."""
+        indicators_found = []
+        confidence = 0.0
+        
+        scripts = metadata.get('scripts', {})
+        if scripts:
+            for script_name, script_content in scripts.items():
+                if script_name in ['preinstall', 'postinstall', 'install']:
+                    indicators_found.append(f"Suspicious {script_name} script")
+                    confidence += 0.2
+                if 'curl' in script_content or 'wget' in script_content:
+                    indicators_found.append("Network fetch in install script")
+                    confidence += 0.25
+                if 'eval' in script_content or 'exec' in script_content:
+                    indicators_found.append("Code execution in install script")
+                    confidence += 0.3
+        
+        build_files = metadata.get('build_files', [])
+        for bf in build_files:
+            if bf.endswith('build.rs') or bf.endswith('build.py'):
+                indicators_found.append(f"Build system file: {bf}")
+                confidence += 0.15
+        
+        if confidence > 0.4:
+            return True, "; ".join(indicators_found), min(confidence, 0.95)
+        
+        return False, "", 0.0
+    
+    @staticmethod
+    def _levenshtein_distance(s1: str, s2: str) -> int:
+        """Calculate Levenshtein distance between two strings."""
+        if len(s1) < len(s2):
+            return SupplyChainMalwareDetector._levenshtein_distance(s2, s1)
+        
+        if len(s2) == 0:
+            return len(s1)
+        
+        previous_row = range(len(s2) + 1)
+        for i, c1 in enumerate(s1):
+            current_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                insertions = previous_row[j + 1] + 1
+                deletions = current_row[j] + 1
+                substitutions = previous_row[j] + (c1 != c2)
+                current_row.append(min(insertions, deletions, substitutions))
+            previous_row = current_row
+        
+        return previous_row[-1]
 
 
 class CVEAdvisoryGenerator:
-    """Generate CVE advisories for matched threats"""
-
-    def __init__(self):
+    """Generates CVE advisories for flagged packages."""
+    
+    def __init__(self, org_name: str = "Organization"):
+        self.org_name = org_name
         self.advisory_counter = 0
-
-    def generate_advisories(self, matches: Dict[FlaggedPackage, List[SBOMComponent]],
-                           flagged_packages: List[FlaggedPackage]) -> List[CVEAdvisory]:
-        """Generate CVE advisories for flagged packages"""
-        advisories = []
-
-        for flagged, components in matches.items():
-            advisory = self._create_advisory(flagged, components)
-            advisories.append(advisory)
-
-        for flagged in flagged_packages:
-            if flagged not in matches:
-                advisory = self._create_advisory(flagged, [])
-                advisories.append(advisory)
-
-        return advisories
-
-    def _create_advisory(self, flagged: FlaggedPackage, 
-                        components: List[SBOMComponent]) -> CVEAdvisory:
-        """Create a CVE advisory for a flagged package"""
+    
+    def generate_advisory(self, flagged_packages: List[FlaggedPackage],
+                         sbom_matches: Dict[str, List[SBOMEntry]]) -> CVEAdvisory:
+        """Generate a CVE advisory for flagged packages found in SBOM."""
         self.advisory_counter += 1
-        advisory_id = f"SWARM-CVE-{datetime.now().year}-{self.advisory_counter:05d}"
-        cve_id = self._generate_cve_id(flagged)
+        advisory_id = f"ORG-ADV-{datetime.utcnow().strftime('%Y%m%d')}-{self.advisory_counter:04d}"
         
-        severity = self._determine_severity(flagged)
-        description = self._generate_description(flagged)
-        recommendations = self._generate_recommendations(flagged, severity)
-        related_components = [f"{c.name}@{c.version}" for c in components]
-
+        affected_in_sbom = []
+        overall_confidence = 0.0
+        
+        for pkg in flagged_packages:
+            key = f"{pkg.ecosystem}:{pkg.name}"
+            if key in sbom_matches and sbom_matches[key]:
+                for sbom_entry in sbom_matches[key]:
+                    affected_in_sbom.append({
+                        'package_name': pkg.name,
+                        'flagged_version': pkg.version,
+                        'sbom_version': sbom_entry.component_version,
+                        'ecosystem': pkg.ecosystem,
+                        'reason': pkg.reason,
+                        'confidence': pkg.confidence,
+                        'purl': sbom_entry.purl,
+                    })
+                    overall_confidence = max(overall_confidence, pkg.confidence)
+        
+        severity = self._determine_severity(flagged_packages)
+        title = self._generate_title(flagged_packages, len(affected_in_sbom))
+        description = self._generate_description(flagged_packages, affected_in_sbom)
+        remediation = self._generate_remediation(affected_in_sbom)
+        
         return CVEAdvisory(
             advisory_id=advisory_id,
-            cve_id=cve_id,
-            package_name=flagged.name,
-            affected_versions=[flagged.version],
+            affected_packages=affected_in_sbom,
             severity=severity,
+            title=title,
             description=description,
-            recommendations=recommendations,
-            related_sbom_components=related_components,
-            generated_at=datetime.now().isoformat()
+            remediation=remediation,
+            generated_at=datetime.utcnow().isoformat() + 'Z',
+            confidence_score=overall_confidence
         )
-
-    def _generate_cve_id(self, flagged: FlaggedPackage) -> str:
-        """Generate a CVE-style ID for the threat"""
-        year = datetime.now().year
-        hash_input = f"{flagged.name}{flagged.version}{flagged.threat_type.value}"
-        hash_value = hashlib.md5(hash_input.encode()).hexdigest()[:4].upper()
-        return f"CVE-{year}-{hash_value}"
-
-    def _determine_severity(self, flagged: FlaggedPackage) -> SeverityLevel:
-        """Determine severity based on threat type and confidence"""
-        if flagged.threat_type == ThreatType.KNOWN_MALWARE:
-            return SeverityLevel.CRITICAL
-        elif flagged.threat_type == ThreatType.POST_PUBLISH_INJECTION:
-            if flagged.confidence >= 0.9:
-                return SeverityLevel.CRITICAL
-            elif flagged.confidence >= 0.7:
-                return SeverityLevel.HIGH
-            else:
-                return SeverityLevel.MEDIUM
-        elif flagged.threat_type == ThreatType.DEPENDENCY_CONFUSION:
-            return SeverityLevel.HIGH
-        elif flagged.threat_type == ThreatType.TYPOSQUATTING:
-            return SeverityLevel.MEDIUM
-        else:
-            return SeverityLevel.LOW
-
-    def _generate_description(self, flagged: FlaggedPackage) -> str:
-        """Generate threat description"""
-        threat_descriptions = {
-            ThreatType.TYPOSQUATTING: f"Package '{flagged.name}' is suspected of typosquatting. Similar to legitimate package names, this could lead to accidental installation of malicious code.",
-            ThreatType.DEPENDENCY_CONFUSION: f"Package '{flagged.name}' version {flagged.version} detected as potential dependency confusion attack targeting private namespace.",
-            ThreatType.POST_PUBLISH_INJECTION: f"Package '{flagged.name}' version {flagged.version} shows signs of post-publish code injection similar to XZ backdoor patterns.",
-            ThreatType.KNOWN_MALWARE: f"Package '{flagged.name}' version {flagged.version} matches known malware signatures in threat intelligence database.",
-            ThreatType.SUSPICIOUS_ACTIVITY: f"Package '{flagged.name}' version {flagged.version} exhibits suspicious activity patterns."
-        }
-        return threat_descriptions.get(flagged.threat_type, "Unknown threat detected")
-
-    def _generate_recommendations(self, flagged: FlaggedPackage, 
-                                 severity: SeverityLevel) -> List[str]:
-        """Generate remediation recommendations"""
-        base_recommendations = [
-            f"Do NOT install or use package '{flagged.name}' version {flagged.version}",
-            "Review all dependencies in package-lock.json or requirements.txt for this package",
-            "Check git history for any unexpected commits or changes related to this package"
+    
+    def _determine_severity(self, packages: List[FlaggedPackage]) -> str:
+        """Determine overall advisory severity."""
+        severities = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
+        max_severity = max((severities.get(p.severity, 0) for p in packages), default=0)
+        
+        for sev, level in severities.items():
+            if level == max_severity:
+                return sev
+        return 'medium'
+    
+    def _generate_title(self, packages: List[FlaggedPackage], 
+                       sbom_match_count: int) -> str:
+        """Generate advisory title."""
+        reasons = set(p.reason for p in packages)
+        reason_str = ', '.join(reasons)
+        
+        return (f"Supply Chain Security Alert: {len(packages)} Suspicious Package(s) "
+                f"({reason_str}) Detected in {self.org_name} Dependencies "
+                f"({sbom_match_count} in use)")
+    
+    def _generate_description(self, packages: List[FlaggedPackage],
+                             sbom_matches: List[Dict]) -> str:
+        """Generate advisory description."""
+        lines = [
+            f"Security Alert Generated: {datetime.utcnow().isoformat()}Z",
+            "",
+            f"Total suspicious packages detected: {len(packages)}",
+            f"Packages in use (SBOM match): {len(sbom_matches)}",
+            "",
+            "DETAILS:",
         ]
+        
+        for pkg in packages:
+            indicator_text = '; '.join(pkg.indicators) if pkg.indicators else 'N/A'
+            lines.append(
+                f"  • {pkg.ecosystem}:{pkg.name}@{pkg.version} "
+                f"({pkg.reason}, confidence: {pkg.confidence:.1%}) - {indicator_text}"
+            )
+        
+        lines.extend([
+            "",
+            "IMPACT:",
+            f"  • {len(sbom_matches)} component(s) in organizational SBOM are affected",
+            "  • Risk of supply chain compromise, malware injection, data exfiltration",
+            "",
+            "EVIDENCE:",
+        ])
+        
+        for pkg in packages:
+            lines.append(f"  • {pkg.name}: {pkg.reason} - {', '.join(pkg.indicators)}")
+        
+        return '\n'.join(lines)
+    
+    def _generate_remediation(self, sbom_matches: List[Dict]) -> str:
+        """Generate remediation steps."""
+        lines = [
+            "IMMEDIATE ACTIONS:",
+            "1. Review all affected packages listed above",
+            "2. Check deployment environments for suspicious processes/network activity",
+            "3. Audit package installation history and file changes",
+            "4. Update to verified clean versions immediately",
+            "",
+            "SPECIFIC REMEDIATION:",
+        ]
+        
+        for match in sbom_matches:
+            lines.append(
+                f"  • Package: {match['ecosystem']}:{match['package_name']}"
+            )
+            lines.append(
+                f"    Remove version {match['flagged_version']} from all systems"
+            )
+            lines.append(
+                f"    Replace with a known-good version (not {match['flagged_version']})"
+            )
+        
+        lines.extend([
+            "",
+            "LONG-TERM MITIGATION:",
+            "  • Implement package signature verification",
+            "  • Use private package mirrors/proxies with approval gates",
+            "  • Enable dependency scanning in CI/CD pipeline",
+            "  • Monitor for similar indicators in future releases",
+            "  • Consider namespace management for internal dependencies",
+        ])
+        
+        return '\n'.join(lines)
 
-        if severity == SeverityLevel.CRITICAL:
-            base_recommendations.extend([
-                "Immediately audit all systems that may have installed this package",
-                "Rotate all credentials and secrets that may have been exposed",
-                "Check for unauthorized access logs and suspicious activity",
-                "Consider security incident response procedure"
-            ])
-        elif severity == SeverityLevel.HIGH:
-            base_recommendations.extend([
-                "Audit systems for package installation within 7 days",
-                "Plan immediate update to safe version",
-                "Monitor logs for suspicious activity"
-            ])
-        else:
-            base_recommendations.extend([
-                "Update to latest verified version when available",
-                "Monitor package repository for updates"
-            ])
 
-        return base_recommendations
+class SBOMIntegrationEngine:
+    """Main engine for SBOM integration and advisory generation."""
+    
+    def __init__(self, sbom_path: str, org_name: str = "Organization"):
+        self.sbom_parser = SBOMParser(sbom_path)
+        self.detector = SupplyChainMalwareDetector()
+        self.advisory_gen = CVEAdvisoryGenerator(org_name)
+        self.known_packages: Dict[str, Set[str]] = {
+            'pypi': set(),
+            'npm': set(),
+            'crates': set(),
+        }
+    
+    def scan_flagged_packages(self, flagged_packages: List[FlaggedPackage]) -> CVEAdvisory:
+        """Scan flagged packages against SBOM and generate advisory."""
+        sbom_matches: Dict[str, List[SBOMEntry]] = {}
+        
+        for pkg in flagged_packages:
+            key = f"{pkg.ecosystem}:{pkg.name}"
+            matches = self.sbom_parser.find_by_name(pkg.name, pkg.ecosystem)
+            sbom_matches[key] = matches
+        
+        advisory = self.advisory_gen.generate_advisory(flagged_packages, sbom_matches)
+        return advisory
+    
+    def export_advisory_json(self, advisory: CVEAdvisory, output_path: str):
+        """Export advisory as JSON."""
+        output = {
+            'advisory': {
+                'id': advisory.advisory_id,
+                'generated_at': advisory.generated_at,
+                'severity': advisory.severity,
+                'confidence': advisory.confidence_score,
+                'title': advisory.title,
+                'description': advisory.description,
+                'remediation': advisory.remediation,
+            },
+            'affected_packages': advisory.affected_packages,
+        }
+        
+        with open(output_path, 'w') as f:
+            json.dump(output, f, indent=2)
+    
+    def export_advisory_text(self, advisory: CVEAdvisory, output_path: str):
+        """Export advisory as structured text."""
+        lines = [
+            "=" * 80,
+            "SUPPLY CHAIN SECURITY ADVISORY",
+            "=" * 80,
+            "",
+            f"Advisory ID: {advisory.advisory_id}",
+            f"Generated:   {advisory.generated_at}",
+            f"Severity:    {advisory.severity.upper()}",
+            f"Confidence:  {advisory.confidence_score:.1%}",
+            "",
+            f"TITLE: {advisory.title}",
+            "",
+            "-" * 80,
+            "DESCRIPTION",
+            "-" * 80,
+            advisory.description,
+            "",
+            "-" * 80,
+            "REMEDIATION",
+            "-" * 80,
+            advisory.remediation,
+            "",
+            "=" * 80,
+        ]
+        
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(lines))
 
 
-class ThreatDetector:
-    """Detect threats in package metadata and behavior"""
+def create_sample_sbom(sbom_path: str):
+    """Create sample SBOM file for testing."""
+    sample_sbom = {
+        "components": [
+            {
+                "name": "requests",
+                "version": "2.28.1",
+                "ecosystem": "pypi",
+                "type": "library",
+                "purl": "pkg:pypi/requests@2.28.1",
+                "hash": "sha256:abc123def456"
+            },
+            {
+                "name": "django",
+                "version": "4.1.5",
+                "ecosystem": "pypi",
+                "type": "library",
+                "purl": "pkg:pypi/django@4.1.5",
+                "hash": "sha256:ghi789jkl012"
+            },
+            {
+                "name": "numpy",
+                "version": "1.24.1",
+                "ecosystem": "pypi",
+                "type": "library",
+                "purl": "pkg:pypi/numpy@1.24.1",
+                "hash": "sha256:mno345pqr678"
+            },
+            {
+                "name": "express",
+                "version": "4.18.2",
+                "ecosystem": "npm",
+                "type": "library",
+                "purl": "pkg:npm/express@4.18.2",
+                "hash": "sha256:stu901vwx234"
+            },
+            {
+                "name": "react",
+                "version": "18.2.0",
+                "ecosystem": "npm",
+                "type": "library",
+                "purl": "pkg:npm/react@18.2.0",
+                "hash": "sha256:yza567bcd890"
+            },
+            {
+                "name": "serde",
+                "version": "1.0.152",
+                "ecosystem": "crates",
+                "type": "library",
+                "purl": "pkg:cargo/serde@1.0.152",
+                "hash": "sha256:efg234hij567"
+            },
+        ]
+    }
+    
+    Path(sbom_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(sbom_path, 'w') as f:
+        json.dump(sample_sbom, f, indent=2)
 
-    def detect_threats(self, package_feed: List[Dict]) -> List[FlaggedPackage]:
-        """Detect threats from package feed"""
-        flagged = []
 
-        for package_data in package_feed:
-            detected = self._analyze_package(package_data)
-            if detected:
-                flagged.extend(detected)
+def create_sample_flagged_packages() -> List[FlaggedPackage]:
+    """Create sample flagged packages for testing."""
+    return [
+        FlaggedPackage(
+            name="reuests",  # Typosquatting of "requests"
+            version="2.28.0",
+            ecosystem="pypi",
+            reason="typosquatting",
+            severity="critical",
+            detected_at=datetime.utcnow().isoformat(),
+            confidence=0.92,
+            indicators=["Similar to 'requests' (Levenshtein distance: 1)"]
+        ),
+        FlaggedPackage(
+            name="django",
+            version="5.0.0",
+            ecosystem="npm",  # Wrong ecosystem for known internal package
+            reason="dependency_confusion",
+            severity="high",
+            detected_at=datetime.utcnow().isoformat(),
+            confidence=0.85,
+            indicators=["Internal package exists in pypi, detected in npm",
+                       "Version jump from 4.1.5 to 5.0.0"]
+        ),
+        FlaggedPackage(
+            name="numpy-science",
+            version="1.25.0",
+            ecosystem="pypi",
+            reason="typosquatting",
+            severity="high",
+            detected_at=datetime.utcnow().isoformat(),
+            confidence=0.78,
+            indicators=["Similar to 'numpy' (Levenshtein distance: 8)"]
+        ),
+        FlaggedPackage(
+            name="express-api",
+            version="4.19.0",
+            ecosystem="npm",
+            reason="post_inject",
+            severity="critical",
+            detected_at=datetime.utcnow().isoformat(),
+            confidence=0.88,
+            indicators=["Suspicious postinstall script detected",
+                       "Network fetch in build script (curl/wget)"]
+        ),
+        FlaggedPackage(
+            name="serde",
+            version="2.0.0",
+            ecosystem="crates",
+            reason="post_inject",
+            severity="high",
+            detected_at=datetime.utcnow().isoformat(),
+            confidence=0.81,
+            indicators=["build.rs contains eval/exec",
+                       "Unusual file creation patterns"]
+        ),
+    ]
 
-        return flagged
 
-    def _analyze_package(self, package_data: Dict) -> List[FlaggedPackage]:
-        """Analyze single package for threats"""
-        threats = []
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description='SBOM Integration and CVE Advisory Generator'
+    )
+    parser.add_argument(
+        '--sbom-file',
+        type=str,
+        default='sbom.json',
+        help='Path to SBOM JSON file (default: sbom.json)'
+    )
+    parser.add_argument(
+        '--flagged-file',
+        type=str,
+        default=None,
+        help='Path to flagged packages JSON file (default: use demo data)'
+    )
+    parser.add_argument(
+        '--org-name',
+        type=str,
+        default='Organization',
+        help='Organization name for advisory (default: Organization)'
+    )
+    parser.add_argument(
+        '--output-json',
+        type=str,
+        default='advisory.json',
+        help='Output JSON advisory file (default: advisory.json)'
+    )
+    parser.add_argument(
+        '--output-text',
+        type=str,
+        default='advisory.txt',
+        help='Output text advisory file (default: advisory.txt)'
+    )
+    parser.add_argument(
+        '--create-sample-sbom',
+        action='store_true',
+        help='Create sample SBOM for testing'
+    )
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Enable verbose output'
+    )
+    
+    args = parser.parse_args()
+    
+    if args.create_sample_sbom:
+        create_sample_sbom(args.sbom_file)
+        print(f"Created sample SBOM at {args.sbom_file}")
+    
+    if args.flagged_file and Path(args.flagged_file).exists():
+        with open(args.flagged_file, 'r') as f:
+            flagged_data = json.load(f)
+        flagged_packages = [
+            FlaggedPackage(**pkg) for pkg in flagged_data.get('flagged_packages', [])
+        ]
+    else:
+        flagged_packages = create_sample_flagged_packages()
+    
+    engine = SBOMIntegrationEngine(args.sbom_file, args.org_name)
+    
+    if args.verbose:
+        print(f"SBOM Entries Loaded: {len(engine.sbom_parser.entries)}")
+        print(f"Flagged Packages: {len(flagged_packages)}")
+        print()
+    
+    advisory = engine.scan_flagged_packages(flagged_packages)
+    
+    if args.verbose:
+        print(f"Advisory Generated: {advisory.advisory_id}")
+        print(f"Severity: {advisory.severity}")
+        print(f"Confidence: {advisory.confidence_score:.1%}")
+        print(f"Affected (in SBOM): {len(advisory.affected_packages)}")
+        print()
+    
+    engine.export_advisory_json(advisory, args.output_json)
+    engine.export_advisory_text(advisory, args.output_text)
+    
+    print(f"✓ Advisory exported to {args.output_json}")
+    print(f"✓ Advisory exported to {args.output_text}")
+    print()
+    print(advisory.title)
+    print()
+    print(f"Severity: {advisory.severity.upper()}")
+    print(f"Confidence: {advisory.confidence_score:.1%}")
+    print(f"Packages Affected in SBOM: {len(advisory.affected_packages)}")
 
-        name = package_data.get("name", "")
-        version = package_data.get("version", "")
-        registry = package_data.get("registry", "unknown")
-        metadata = package_data.get("metadata", {})
 
-        typo_threat = self._detect_typosquatting(name, metadata)
-        if typo_threat:
-            threats.append(typo_threat)
-
-        confusion_threat = self._detect_dependency_confusion(name
+if __name__ == "__main__":
+    main()
