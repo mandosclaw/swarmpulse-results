@@ -3,7 +3,7 @@
 # Task:    Package maintainer change alerter
 # Mission: OSS Supply Chain Compromise Monitor
 # Agent:   @quinn
-# Date:    2026-03-29T13:14:49.889Z
+# Date:    2026-03-31T18:43:23.206Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
@@ -11,7 +11,7 @@
 TASK: Package maintainer change alerter
 MISSION: OSS Supply Chain Compromise Monitor
 AGENT: @quinn
-DATE: 2024
+DATE: 2025-01-15
 
 Monitor PyPI and npm for maintainer ownership changes on critical dependencies,
 sending diff reports to detect potential supply chain compromises.
@@ -22,427 +22,441 @@ import json
 import sys
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 import urllib.request
 import urllib.error
 import hashlib
 
 
 class PackageMaintainerMonitor:
-    """Monitor package maintainer changes across PyPI and npm."""
+    """Monitor package maintainers for ownership changes across registries."""
 
-    def __init__(
-        self,
-        state_file: Path,
-        pypi_enabled: bool = True,
-        npm_enabled: bool = True,
-        alert_threshold_days: int = 7,
-    ):
-        self.state_file = Path(state_file)
-        self.pypi_enabled = pypi_enabled
-        self.npm_enabled = npm_enabled
-        self.alert_threshold_days = alert_threshold_days
-        self.state = self._load_state()
-        self.alerts: List[Dict[str, Any]] = []
+    def __init__(self, cache_file: str = "maintainer_cache.json", alert_threshold_hours: int = 24):
+        """
+        Initialize the monitor.
 
-    def _load_state(self) -> Dict[str, Any]:
-        """Load previous state from disk."""
-        if self.state_file.exists():
-            with open(self.state_file, "r") as f:
-                return json.load(f)
-        return {
-            "pypi": {},
-            "npm": {},
-            "last_check": None,
-            "package_snapshots": {},
-        }
+        Args:
+            cache_file: Path to cache previous maintainer states
+            alert_threshold_hours: Hours to consider a change as "recent"
+        """
+        self.cache_file = cache_file
+        self.alert_threshold_hours = alert_threshold_hours
+        self.cache: Dict[str, Any] = self._load_cache()
 
-    def _save_state(self) -> None:
-        """Save current state to disk."""
-        self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.state_file, "w") as f:
-            json.dump(self.state, f, indent=2)
-
-    def _fetch_json(self, url: str, timeout: int = 10) -> Optional[Dict[str, Any]]:
-        """Fetch JSON from URL with error handling."""
+    def _load_cache(self) -> Dict[str, Any]:
+        """Load previous maintainer snapshot from disk."""
         try:
-            with urllib.request.urlopen(url, timeout=timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as e:
-            return None
+            with open(self.cache_file, "r") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
 
-    def _get_pypi_maintainers(self, package_name: str) -> Optional[Dict[str, Any]]:
-        """Fetch maintainers for a PyPI package."""
+    def _save_cache(self, cache: Dict[str, Any]) -> None:
+        """Persist maintainer snapshot to disk."""
+        with open(self.cache_file, "w") as f:
+            json.dump(cache, f, indent=2, default=str)
+
+    def _fetch_pypi_package(self, package_name: str) -> Optional[Dict[str, Any]]:
+        """Fetch package metadata from PyPI JSON API."""
         url = f"https://pypi.org/pypi/{package_name}/json"
-        data = self._fetch_json(url)
-
-        if not data or "releases" not in data:
+        try:
+            with urllib.request.urlopen(url, timeout=10) as response:
+                if response.status == 200:
+                    return json.loads(response.read().decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError):
             return None
-
-        maintainers = []
-        if "info" in data:
-            info = data["info"]
-            if info.get("maintainer"):
-                maintainers.append(
-                    {
-                        "name": info["maintainer"],
-                        "email": info.get("maintainer_email", ""),
-                        "role": "maintainer",
-                    }
-                )
-            if info.get("author"):
-                maintainers.append(
-                    {
-                        "name": info["author"],
-                        "email": info.get("author_email", ""),
-                        "role": "author",
-                    }
-                )
-
-        latest_release = None
-        latest_version = None
-        for version, releases in data.get("releases", {}).items():
-            if releases:
-                if latest_version is None:
-                    latest_version = version
-                    latest_release = releases[0]
-
-        return {
-            "registry": "pypi",
-            "package": package_name,
-            "maintainers": maintainers,
-            "latest_version": latest_version,
-            "last_updated": data.get("info", {}).get("last_updated", None),
-        }
-
-    def _get_npm_maintainers(self, package_name: str) -> Optional[Dict[str, Any]]:
-        """Fetch maintainers for an npm package."""
-        url = f"https://registry.npmjs.org/{package_name}"
-        data = self._fetch_json(url)
-
-        if not data:
-            return None
-
-        maintainers = []
-        if "maintainers" in data:
-            for maint in data["maintainers"]:
-                maintainers.append(
-                    {
-                        "name": maint.get("name", ""),
-                        "email": maint.get("email", ""),
-                        "role": "maintainer",
-                    }
-                )
-
-        latest_version = None
-        if "dist-tags" in data and "latest" in data["dist-tags"]:
-            latest_version = data["dist-tags"]["latest"]
-
-        return {
-            "registry": "npm",
-            "package": package_name,
-            "maintainers": maintainers,
-            "latest_version": latest_version,
-            "last_updated": data.get("time", {}).get("modified", None),
-        }
-
-    def _hash_maintainers(self, maintainers: List[Dict[str, str]]) -> str:
-        """Create hash of maintainer list for comparison."""
-        maintainer_str = json.dumps(
-            sorted(maintainers, key=lambda x: x.get("name", "")), sort_keys=True
-        )
-        return hashlib.sha256(maintainer_str.encode()).hexdigest()
-
-    def _detect_changes(
-        self, registry: str, package_name: str, new_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Detect changes in maintainers."""
-        old_data = self.state.get(registry, {}).get(package_name)
-
-        if not old_data:
-            # First time seeing this package
-            return None
-
-        old_maintainers = old_data.get("maintainers", [])
-        new_maintainers = new_data.get("maintainers", [])
-
-        old_hash = self._hash_maintainers(old_maintainers)
-        new_hash = self._hash_maintainers(new_maintainers)
-
-        if old_hash == new_hash:
-            return None
-
-        # Detect specific changes
-        old_names = {m.get("name") for m in old_maintainers}
-        new_names = {m.get("name") for m in new_maintainers}
-
-        added = new_names - old_names
-        removed = old_names - new_names
-
-        if added or removed:
-            return {
-                "registry": registry,
-                "package": package_name,
-                "timestamp": datetime.utcnow().isoformat(),
-                "added_maintainers": list(added),
-                "removed_maintainers": list(removed),
-                "old_maintainers": old_maintainers,
-                "new_maintainers": new_maintainers,
-                "old_version": old_data.get("latest_version"),
-                "new_version": new_data.get("latest_version"),
-            }
-
         return None
 
-    def monitor_package(self, registry: str, package_name: str) -> Optional[Dict[str, Any]]:
-        """Monitor a single package for maintainer changes."""
-        if registry == "pypi":
-            if not self.pypi_enabled:
-                return None
-            new_data = self._get_pypi_maintainers(package_name)
-        elif registry == "npm":
-            if not self.npm_enabled:
-                return None
-            new_data = self._get_npm_maintainers(package_name)
-        else:
+    def _fetch_npm_package(self, package_name: str) -> Optional[Dict[str, Any]]:
+        """Fetch package metadata from npm registry API."""
+        url = f"https://registry.npmjs.org/{package_name}"
+        try:
+            with urllib.request.urlopen(url, timeout=10) as response:
+                if response.status == 200:
+                    return json.loads(response.read().decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError):
             return None
+        return None
 
-        if not new_data:
-            return None
+    def _extract_pypi_maintainers(self, package_data: Dict[str, Any]) -> Set[str]:
+        """Extract maintainer information from PyPI package data."""
+        maintainers: Set[str] = set()
 
-        # Check for changes
-        change = self._detect_changes(registry, package_name, new_data)
+        info = package_data.get("info", {})
+        if info.get("author"):
+            maintainers.add(info["author"])
+        if info.get("maintainer"):
+            maintainers.add(info["maintainer"])
 
-        # Update state
-        if registry not in self.state:
-            self.state[registry] = {}
-        self.state[registry][package_name] = {
-            "maintainers": new_data.get("maintainers", []),
-            "latest_version": new_data.get("latest_version"),
-            "last_updated": new_data.get("last_updated"),
-            "check_timestamp": datetime.utcnow().isoformat(),
-        }
+        releases = package_data.get("releases", {})
+        for release_files in releases.values():
+            for file_info in release_files:
+                if file_info.get("upload_time_iso_8601"):
+                    uploader = file_info.get("filename", "")
+                    if uploader:
+                        maintainers.add(uploader.split("-")[0])
 
-        if change:
-            self.alerts.append(change)
+        urls = info.get("project_urls", {})
+        if urls:
+            maintainers.add(json.dumps(urls, sort_keys=True))
 
-        return change
+        return maintainers
 
-    def monitor_packages(self, packages: List[Tuple[str, str]]) -> List[Dict[str, Any]]:
-        """Monitor multiple packages."""
-        results = []
-        for registry, package_name in packages:
-            try:
-                change = self.monitor_package(registry, package_name)
-                if change:
-                    results.append(change)
-                time.sleep(0.5)  # Rate limiting
-            except Exception as e:
-                results.append(
-                    {
-                        "error": True,
-                        "registry": registry,
-                        "package": package_name,
-                        "error_message": str(e),
-                        "timestamp": datetime.utcnow().isoformat(),
-                    }
-                )
+    def _extract_npm_maintainers(self, package_data: Dict[str, Any]) -> Set[str]:
+        """Extract maintainer information from npm package data."""
+        maintainers: Set[str] = set()
 
-        self.state["last_check"] = datetime.utcnow().isoformat()
-        self._save_state()
+        if "maintainers" in package_data:
+            for maintainer in package_data["maintainers"]:
+                if isinstance(maintainer, dict) and "name" in maintainer:
+                    maintainers.add(maintainer["name"])
+                elif isinstance(maintainer, str):
+                    maintainers.add(maintainer)
 
-        return results
+        if "author" in package_data:
+            author = package_data["author"]
+            if isinstance(author, dict) and "name" in author:
+                maintainers.add(author["name"])
+            elif isinstance(author, str):
+                maintainers.add(author)
 
-    def get_alerts(self) -> List[Dict[str, Any]]:
-        """Get all alerts from this monitoring session."""
-        return self.alerts
+        dist_tags = package_data.get("dist-tags", {})
+        latest_version = dist_tags.get("latest")
+        if latest_version:
+            versions = package_data.get("versions", {})
+            if latest_version in versions:
+                version_data = versions[latest_version]
+                if "_npmUser" in version_data:
+                    npm_user = version_data["_npmUser"]
+                    if isinstance(npm_user, dict) and "name" in npm_user:
+                        maintainers.add(npm_user["name"])
 
-    def generate_report(self, changes: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Generate a structured report of maintainer changes."""
+        return maintainers
+
+    def check_package(
+        self,
+        package_name: str,
+        registry: str = "pypi",
+        critical: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Check a package for maintainer changes.
+
+        Args:
+            package_name: Name of the package to check
+            registry: 'pypi' or 'npm'
+            critical: Mark as critical dependency for alerting priority
+
+        Returns:
+            Alert report with changes detected
+        """
+        cache_key = f"{registry}:{package_name}"
+        current_maintainers: Optional[Set[str]] = None
+        package_data: Optional[Dict[str, Any]] = None
+
+        if registry.lower() == "pypi":
+            package_data = self._fetch_pypi_package(package_name)
+            if package_data:
+                current_maintainers = self._extract_pypi_maintainers(package_data)
+        elif registry.lower() == "npm":
+            package_data = self._fetch_npm_package(package_name)
+            if package_data:
+                current_maintainers = self._extract_npm_maintainers(package_data)
+
         report = {
             "timestamp": datetime.utcnow().isoformat(),
-            "total_packages_monitored": 0,
-            "total_changes_detected": len(
-                [c for c in changes if "error" not in c]
-            ),
-            "critical_changes": [],
-            "warning_changes": [],
-            "errors": [],
+            "package": package_name,
+            "registry": registry,
+            "critical": critical,
+            "alert": False,
+            "alert_type": None,
+            "changes": {},
+            "current_maintainers": sorted(list(current_maintainers)) if current_maintainers else [],
+            "previous_maintainers": [],
         }
 
-        for change in changes:
-            if "error" in change and change["error"]:
-                report["errors"].append(change)
-                continue
+        if not current_maintainers or not package_data:
+            report["error"] = f"Failed to fetch package data from {registry}"
+            return report
 
-            added_count = len(change.get("added_maintainers", []))
-            removed_count = len(change.get("removed_maintainers", []))
+        if cache_key in self.cache:
+            cached = self.cache[cache_key]
+            previous_maintainers = set(cached.get("maintainers", []))
+            previous_timestamp = cached.get("timestamp")
 
-            # Classify severity
-            is_critical = added_count > 0 and removed_count == 0
+            report["previous_maintainers"] = sorted(list(previous_maintainers))
 
-            change_info = {
-                "registry": change["registry"],
-                "package": change["package"],
-                "timestamp": change["timestamp"],
-                "added_count": added_count,
-                "removed_count": removed_count,
-                "added_maintainers": change.get("added_maintainers", []),
-                "removed_maintainers": change.get("removed_maintainers", []),
-                "version_change": {
-                    "old": change.get("old_version"),
-                    "new": change.get("new_version"),
-                },
-            }
+            added = current_maintainers - previous_maintainers
+            removed = previous_maintainers - current_maintainers
 
-            if is_critical:
-                report["critical_changes"].append(change_info)
-            else:
-                report["warning_changes"].append(change_info)
+            if added or removed:
+                report["changes"] = {
+                    "added": sorted(list(added)),
+                    "removed": sorted(list(removed)),
+                    "added_count": len(added),
+                    "removed_count": len(removed),
+                }
 
-        report["total_packages_monitored"] = sum(
-            1 for change in changes if "error" not in change
-        ) + len(report["errors"])
+                if removed:
+                    report["alert"] = True
+                    report["alert_type"] = "MAINTAINER_REMOVED"
+                    if critical:
+                        report["severity"] = "HIGH"
+                    else:
+                        report["severity"] = "MEDIUM"
+
+                if added:
+                    if not report["alert"]:
+                        report["alert"] = True
+                        report["alert_type"] = "MAINTAINER_ADDED"
+                    else:
+                        report["alert_type"] = "MAINTAINER_CHANGE"
+                    if critical:
+                        report["severity"] = "MEDIUM"
+                    else:
+                        report["severity"] = "LOW"
+
+                if previous_timestamp:
+                    prev_dt = datetime.fromisoformat(previous_timestamp)
+                    time_since = datetime.utcnow() - prev_dt
+                    if time_since < timedelta(hours=self.alert_threshold_hours):
+                        report["is_recent"] = True
+
+        self.cache[cache_key] = {
+            "maintainers": sorted(list(current_maintainers)),
+            "timestamp": datetime.utcnow().isoformat(),
+            "package": package_name,
+            "registry": registry,
+        }
+        self._save_cache(self.cache)
 
         return report
 
+    def check_packages(
+        self,
+        packages: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Check multiple packages for maintainer changes.
+
+        Args:
+            packages: List of dicts with 'name', 'registry', and optional 'critical' keys
+
+        Returns:
+            Aggregated monitoring report
+        """
+        reports = []
+        alerts = []
+        summary = {
+            "total_packages": len(packages),
+            "alerts_found": 0,
+            "critical_alerts": 0,
+            "checked_at": datetime.utcnow().isoformat(),
+        }
+
+        for pkg in packages:
+            report = self.check_package(
+                package_name=pkg["name"],
+                registry=pkg.get("registry", "pypi"),
+                critical=pkg.get("critical", False)
+            )
+            reports.append(report)
+
+            if report.get("alert"):
+                alerts.append(report)
+                summary["alerts_found"] += 1
+                if report.get("critical"):
+                    summary["critical_alerts"] += 1
+
+        return {
+            "summary": summary,
+            "alerts": alerts,
+            "all_reports": reports,
+        }
+
+
+class AlertFormatter:
+    """Format and output alerts in structured formats."""
+
+    @staticmethod
+    def format_text_report(report: Dict[str, Any]) -> str:
+        """Format a single report as human-readable text."""
+        lines = []
+        lines.append("=" * 70)
+        lines.append(f"Package: {report['package']} ({report['registry'].upper()})")
+        lines.append(f"Timestamp: {report['timestamp']}")
+        lines.append(f"Critical: {report.get('critical', False)}")
+
+        if report.get("error"):
+            lines.append(f"ERROR: {report['error']}")
+        else:
+            if report.get("alert"):
+                alert_type = report.get("alert_type", "UNKNOWN")
+                severity = report.get("severity", "UNKNOWN")
+                lines.append(f"⚠️  ALERT [{alert_type}] - Severity: {severity}")
+
+            if report.get("changes"):
+                changes = report["changes"]
+                if changes.get("removed"):
+                    lines.append(f"  ❌ Removed maintainers: {', '.join(changes['removed'])}")
+                if changes.get("added"):
+                    lines.append(f"  ✅ Added maintainers: {', '.join(changes['added'])}")
+
+            lines.append(f"Previous maintainers: {', '.join(report.get('previous_maintainers', []))}")
+            lines.append(f"Current maintainers: {', '.join(report.get('current_maintainers', []))}")
+
+        lines.append("=" * 70)
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_json_report(report: Dict[str, Any]) -> str:
+        """Format report as JSON."""
+        return json.dumps(report, indent=2, default=str)
+
+    @staticmethod
+    def format_summary(result: Dict[str, Any]) -> str:
+        """Format monitoring summary."""
+        summary = result["summary"]
+        lines = []
+        lines.append("\n" + "=" * 70)
+        lines.append("MAINTAINER CHANGE MONITORING SUMMARY")
+        lines.append("=" * 70)
+        lines.append(f"Checked: {summary['total_packages']} packages")
+        lines.append(f"Alerts: {summary['alerts_found']}")
+        lines.append(f"Critical Alerts: {summary['critical_alerts']}")
+        lines.append(f"Timestamp: {summary['checked_at']}")
+        lines.append("=" * 70 + "\n")
+
+        if result["alerts"]:
+            lines.append("ALERTS DETECTED:")
+            for alert in result["alerts"]:
+                lines.append(f"  • {alert['package']} ({alert['registry']}): {alert['alert_type']}")
+        else:
+            lines.append("No alerts detected.")
+
+        return "\n".join(lines)
+
 
 def main():
-    """Main entry point."""
+    """Main entry point with CLI argument handling."""
     parser = argparse.ArgumentParser(
-        description="Monitor PyPI and npm for maintainer ownership changes"
+        description="Monitor package maintainer changes across registries",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  Monitor PyPI packages:
+    %(prog)s --package requests --package numpy --registry pypi
+
+  Monitor npm packages:
+    %(prog)s --package lodash --package express --registry npm
+
+  Monitor critical packages with high alert threshold:
+    %(prog)s --package django --critical --alert-threshold 12
+
+  Batch check from JSON config:
+    %(prog)s --config packages.json
+        """
     )
+
     parser.add_argument(
-        "--state-file",
+        "--package",
         type=str,
-        default=".maintainer_monitor_state.json",
-        help="Path to state file for tracking previous maintainers",
+        action="append",
+        help="Package name to monitor (can be specified multiple times)"
     )
     parser.add_argument(
-        "--pypi",
+        "--registry",
+        type=str,
+        choices=["pypi", "npm"],
+        default="pypi",
+        help="Package registry (default: pypi)"
+    )
+    parser.add_argument(
+        "--critical",
         action="store_true",
-        default=True,
-        help="Monitor PyPI packages",
+        help="Mark all packages as critical dependencies"
     )
     parser.add_argument(
-        "--no-pypi",
-        action="store_false",
-        dest="pypi",
-        help="Disable PyPI monitoring",
-    )
-    parser.add_argument(
-        "--npm",
-        action="store_true",
-        default=True,
-        help="Monitor npm packages",
-    )
-    parser.add_argument(
-        "--no-npm",
-        action="store_false",
-        dest="npm",
-        help="Disable npm monitoring",
-    )
-    parser.add_argument(
-        "--packages",
+        "--config",
         type=str,
-        nargs="+",
-        help="Package specifications in format 'registry:package' (e.g., 'pypi:requests' 'npm:express')",
-    )
-    parser.add_argument(
-        "--config-file",
-        type=str,
-        help="JSON file with package list",
+        help="JSON config file with package list"
     )
     parser.add_argument(
         "--output",
         type=str,
-        help="Output file for alerts (JSON format)",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text)"
     )
     parser.add_argument(
-        "--threshold-days",
+        "--alert-threshold",
         type=int,
-        default=7,
-        help="Alert threshold in days for reporting",
+        default=24,
+        help="Hours to consider a change as 'recent' (default: 24)"
     )
     parser.add_argument(
-        "--report",
+        "--cache-file",
+        type=str,
+        default="maintainer_cache.json",
+        help="Path to maintainer cache file (default: maintainer_cache.json)"
+    )
+    parser.add_argument(
+        "--alerts-only",
         action="store_true",
-        help="Generate detailed report",
+        help="Only output alerts, suppress full reports"
     )
 
     args = parser.parse_args()
 
     monitor = PackageMaintainerMonitor(
-        state_file=Path(args.state_file),
-        pypi_enabled=args.pypi,
-        npm_enabled=args.npm,
-        alert_threshold_days=args.threshold_days,
+        cache_file=args.cache_file,
+        alert_threshold_hours=args.alert_threshold
     )
 
-    packages_to_monitor: List[Tuple[str, str]] = []
+    packages_to_check: List[Dict[str, Any]] = []
 
-    # Parse package specifications
-    if args.packages:
-        for pkg_spec in args.packages:
-            if ":" in pkg_spec:
-                registry, package = pkg_spec.split(":", 1)
-                packages_to_monitor.append((registry, package))
-            else:
-                print(f"Invalid package spec: {pkg_spec}", file=sys.stderr)
-
-    # Load from config file if provided
-    if args.config_file:
+    if args.config:
         try:
-            with open(args.config_file, "r") as f:
+            with open(args.config, "r") as f:
                 config = json.load(f)
-                if "packages" in config:
-                    for pkg in config["packages"]:
-                        if isinstance(pkg, dict):
-                            packages_to_monitor.append(
-                                (pkg.get("registry"), pkg.get("package"))
-                            )
-                        elif isinstance(pkg, str) and ":" in pkg:
-                            registry, package = pkg.split(":", 1)
-                            packages_to_monitor.append((registry, package))
-        except (json.JSONDecodeError, FileNotFoundError) as e:
-            print(f"Error loading config: {e}", file=sys.stderr)
+                packages_to_check = config.get("packages", [])
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Error loading config file: {e}", file=sys.stderr)
             sys.exit(1)
-
-    if not packages_to_monitor:
-        print("No packages specified. Use --packages or --config-file", file=sys.stderr)
+    elif args.package:
+        for pkg_name in args.package:
+            packages_to_check.append({
+                "name": pkg_name,
+                "registry": args.registry,
+                "critical": args.critical,
+            })
+    else:
+        parser.print_help()
         sys.exit(1)
 
-    # Run monitoring
-    changes = monitor.monitor_packages(packages_to_monitor)
+    result = monitor.check_packages(packages_to_check)
 
-    # Generate report if requested
-    if args.report:
-        report = monitor.generate_report(changes)
-        print("\n" + "=" * 70)
-        print("MAINTAINER CHANGE ALERT REPORT")
-        print("=" * 70)
-        print(f"Timestamp: {report['timestamp']}")
-        print(f"Total packages monitored: {report['total_packages_monitored']}")
-        print(f"Total changes detected: {report['total_changes_detected']}")
-        print(f"Critical changes: {len(report['critical_changes'])}")
-        print(f"Warning changes: {len(report['warning_changes'])}")
-        print(f"Errors: {len(report['errors'])}")
+    if args.alerts_only:
+        if result["alerts"]:
+            if args.output == "json":
+                print(json.dumps(result["alerts"], indent=2, default=str))
+            else:
+                for alert in result["alerts"]:
+                    print(AlertFormatter.format_text_report(alert))
+    else:
+        if args.output == "json":
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            print(AlertFormatter.format_summary(result))
+            if result["alerts"]:
+                for alert in result["alerts"]:
+                    print(AlertFormatter.format_text_report(alert))
+            else:
+                for report in result["all_reports"]:
+                    print(AlertFormatter.format_text_report(report))
 
-        if report["critical_changes"]:
-            print("\n" + "-" * 70)
-            print("CRITICAL CHANGES (New maintainers added):")
-            print("-" * 70)
-            for change in report["critical_changes"]:
-                print(f"\nPackage: {change['registry']}:{change['package']}")
-                print(f"  Added maintainers: {', '.join(change['added_maintainers'])}")
-                print(f"  Version change: {change['version_change']['old']} -> {change['version_change']['new']}")
-                print(f"  Timestamp: {change['timestamp']}")
+    sys.exit(0 if result["summary"]["critical_alerts"] == 0 else 1)
 
-        if report["warning_changes"]:
-            print("\n" + "-" * 70)
-            print("WARNING CHANGES (Maintainer removals or modifications):")
-            print("-" * 70)
-            for change in report["warning_changes"]:
-                print(f"\nPackage: {change['registry']}:{change['package']}")
-                if change["added_maintainers"]:
+
+if __name__ == "__main__":
+    main()
