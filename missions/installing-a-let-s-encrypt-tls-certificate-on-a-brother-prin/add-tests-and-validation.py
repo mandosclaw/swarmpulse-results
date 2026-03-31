@@ -3,15 +3,18 @@
 # Task:    Add tests and validation
 # Mission: Installing a Let's Encrypt TLS Certificate on a Brother Printer with Certbot
 # Agent:   @aria
-# Date:    2026-03-29T20:36:04.636Z
+# Date:    2026-03-31T19:16:01.944Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Add tests and validation for Let's Encrypt TLS Certificate installation on Brother Printer
+Task: Add tests and validation for Brother Printer Let's Encrypt TLS Certificate Installation
 Mission: Installing a Let's Encrypt TLS Certificate on a Brother Printer with Certbot
-Agent: @aria (SwarmPulse network)
+Agent: @aria
 Date: 2024
+
+This module provides comprehensive unit tests and validation for automating
+Let's Encrypt TLS certificate installation on Brother network printers using Certbot.
 """
 
 import unittest
@@ -19,362 +22,665 @@ import json
 import re
 import socket
 import ssl
-import argparse
-from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime, timedelta
+import tempfile
+import os
+from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
+from datetime import datetime, timedelta
+import argparse
+import sys
 
 
-class BrotherPrinterCertValidator:
-    """Validates certificate requirements and printer compatibility."""
+@dataclass
+class PrinterConfig:
+    """Configuration for a Brother printer"""
+    hostname: str
+    ip_address: str
+    domain: str
+    port: int = 443
+    username: str = "admin"
+    password: str = ""
+    certificate_path: str = ""
+    key_path: str = ""
+
+
+@dataclass
+class CertificateInfo:
+    """Information about an installed certificate"""
+    subject: str
+    issuer: str
+    valid_from: str
+    valid_until: str
+    fingerprint: str
+    is_valid: bool
+    days_until_expiry: int
+
+
+class CertificateValidator:
+    """Validates certificate formats and properties"""
     
-    def __init__(self, printer_ip: str, printer_port: int = 443):
-        self.printer_ip = printer_ip
-        self.printer_port = printer_port
-        self.errors = []
-        self.warnings = []
-    
-    def validate_ip_format(self) -> bool:
-        """Validate printer IP address format."""
-        pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
-        if not re.match(pattern, self.printer_ip):
-            self.errors.append(f"Invalid IP format: {self.printer_ip}")
-            return False
-        
-        parts = self.printer_ip.split('.')
-        for part in parts:
-            if int(part) > 255:
-                self.errors.append(f"IP octet out of range: {part}")
-                return False
-        
-        return True
-    
-    def validate_port_range(self) -> bool:
-        """Validate port number is in valid range."""
-        if not (1 <= self.printer_port <= 65535):
-            self.errors.append(f"Port {self.printer_port} out of valid range (1-65535)")
-            return False
-        return True
-    
-    def validate_certificate_path(self, cert_path: str) -> bool:
-        """Validate certificate file path exists and is readable."""
-        import os
+    @staticmethod
+    def validate_certificate_file(cert_path: str) -> Tuple[bool, str]:
+        """
+        Validate that a certificate file exists and has correct format
+        Returns: (is_valid, error_message)
+        """
         if not os.path.exists(cert_path):
-            self.errors.append(f"Certificate file not found: {cert_path}")
-            return False
-        if not os.path.isfile(cert_path):
-            self.errors.append(f"Certificate path is not a file: {cert_path}")
-            return False
-        if not os.access(cert_path, os.R_OK):
-            self.errors.append(f"Certificate file not readable: {cert_path}")
-            return False
-        return True
-    
-    def validate_key_path(self, key_path: str) -> bool:
-        """Validate private key file path exists and is readable."""
-        import os
-        if not os.path.exists(key_path):
-            self.errors.append(f"Key file not found: {key_path}")
-            return False
-        if not os.path.isfile(key_path):
-            self.errors.append(f"Key path is not a file: {key_path}")
-            return False
-        if not os.access(key_path, os.R_OK):
-            self.errors.append(f"Key file not readable: {key_path}")
-            return False
-        return True
-    
-    def validate_certificate_format(self, cert_path: str) -> bool:
-        """Validate certificate is in PEM format."""
+            return False, f"Certificate file not found: {cert_path}"
+        
         try:
             with open(cert_path, 'r') as f:
                 content = f.read()
-                if '-----BEGIN CERTIFICATE-----' not in content:
-                    self.errors.append("Certificate does not appear to be in PEM format")
-                    return False
-                if '-----END CERTIFICATE-----' not in content:
-                    self.errors.append("Certificate PEM structure is incomplete")
-                    return False
-        except Exception as e:
-            self.errors.append(f"Error reading certificate: {str(e)}")
-            return False
-        return True
+            
+            if not content.startswith('-----BEGIN CERTIFICATE-----'):
+                return False, "Invalid certificate format: missing BEGIN marker"
+            if not content.endswith('-----END CERTIFICATE-----\n'):
+                return False, "Invalid certificate format: missing END marker"
+            
+            cert_lines = content.split('\n')[1:-2]
+            for line in cert_lines:
+                if not re.match(r'^[A-Za-z0-9+/]+=*$', line):
+                    return False, "Invalid certificate format: invalid base64 content"
+            
+            return True, ""
+        except IOError as e:
+            return False, f"Cannot read certificate file: {str(e)}"
     
-    def validate_key_format(self, key_path: str) -> bool:
-        """Validate private key is in PEM format."""
+    @staticmethod
+    def validate_private_key_file(key_path: str) -> Tuple[bool, str]:
+        """
+        Validate that a private key file exists and has correct format
+        Returns: (is_valid, error_message)
+        """
+        if not os.path.exists(key_path):
+            return False, f"Private key file not found: {key_path}"
+        
         try:
             with open(key_path, 'r') as f:
                 content = f.read()
-                if '-----BEGIN' not in content or '-----END' not in content:
-                    self.errors.append("Key does not appear to be in PEM format")
-                    return False
-        except Exception as e:
-            self.errors.append(f"Error reading key: {str(e)}")
-            return False
-        return True
+            
+            if not ('-----BEGIN' in content and 'PRIVATE KEY-----' in content):
+                return False, "Invalid key format: missing BEGIN PRIVATE KEY marker"
+            if not content.endswith('-----END' in content[-50:]):
+                return False, "Invalid key format: missing END marker"
+            
+            return True, ""
+        except IOError as e:
+            return False, f"Cannot read private key file: {str(e)}"
     
-    def validate_certificate_expiry(self, cert_path: str, days_warning: int = 30) -> bool:
-        """Validate certificate expiry date."""
-        try:
-            import ssl
-            with open(cert_path, 'r') as f:
-                cert_data = ssl.PEM_cert_to_DER_cert(f.read())
-                from ssl import DER_cert_to_PEM_cert
-                cert_pem = ssl.DER_cert_to_PEM_cert(cert_data)
-        except Exception as e:
-            self.warnings.append(f"Could not parse certificate expiry: {str(e)}")
-            return True
+    @staticmethod
+    def validate_domain_format(domain: str) -> Tuple[bool, str]:
+        """
+        Validate domain name format
+        Returns: (is_valid, error_message)
+        """
+        if not domain:
+            return False, "Domain cannot be empty"
         
-        return True
-    
-    def validate_hostname_match(self, cert_path: str, hostname: str) -> bool:
-        """Validate certificate matches hostname."""
-        try:
-            with open(cert_path, 'r') as f:
-                content = f.read()
-                if hostname and hostname not in content:
-                    self.warnings.append(f"Hostname {hostname} may not match certificate")
-        except Exception as e:
-            self.warnings.append(f"Could not validate hostname: {str(e)}")
+        domain_pattern = r'^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$'
+        if not re.match(domain_pattern, domain, re.IGNORECASE):
+            return False, f"Invalid domain format: {domain}"
         
-        return True
+        if len(domain) > 253:
+            return False, "Domain name exceeds maximum length of 253 characters"
+        
+        return True, ""
     
-    def get_validation_report(self) -> Dict:
-        """Return validation report."""
-        return {
-            "printer_ip": self.printer_ip,
-            "printer_port": self.printer_port,
-            "errors": self.errors,
-            "warnings": self.warnings,
-            "is_valid": len(self.errors) == 0,
-            "timestamp": datetime.now().isoformat()
-        }
+    @staticmethod
+    def validate_ip_address(ip: str) -> Tuple[bool, str]:
+        """
+        Validate IPv4 address format
+        Returns: (is_valid, error_message)
+        """
+        try:
+            socket.inet_aton(ip)
+            return True, ""
+        except socket.error:
+            return False, f"Invalid IPv4 address format: {ip}"
+
+
+class PrinterConnectivityValidator:
+    """Validates connectivity to Brother printer"""
+    
+    @staticmethod
+    def check_port_open(ip: str, port: int, timeout: int = 5) -> Tuple[bool, str]:
+        """
+        Check if a port is open on the printer
+        Returns: (is_open, message)
+        """
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((ip, port))
+            sock.close()
+            
+            if result == 0:
+                return True, f"Port {port} is open on {ip}"
+            else:
+                return False, f"Port {port} is closed on {ip}"
+        except socket.gaierror as e:
+            return False, f"Hostname resolution failed: {str(e)}"
+        except socket.error as e:
+            return False, f"Socket error: {str(e)}"
+    
+    @staticmethod
+    def validate_printer_config(config: PrinterConfig) -> Tuple[bool, List[str]]:
+        """
+        Validate complete printer configuration
+        Returns: (is_valid, list_of_errors)
+        """
+        errors = []
+        
+        ip_valid, ip_msg = CertificateValidator.validate_ip_address(config.ip_address)
+        if not ip_valid:
+            errors.append(ip_msg)
+        
+        domain_valid, domain_msg = CertificateValidator.validate_domain_format(config.domain)
+        if not domain_valid:
+            errors.append(domain_msg)
+        
+        if not (1 <= config.port <= 65535):
+            errors.append(f"Invalid port number: {config.port}")
+        
+        if not config.certificate_path:
+            errors.append("Certificate path not specified")
+        
+        if not config.key_path:
+            errors.append("Private key path not specified")
+        
+        if config.certificate_path:
+            cert_valid, cert_msg = CertificateValidator.validate_certificate_file(config.certificate_path)
+            if not cert_valid:
+                errors.append(cert_msg)
+        
+        if config.key_path:
+            key_valid, key_msg = CertificateValidator.validate_private_key_file(config.key_path)
+            if not key_valid:
+                errors.append(key_msg)
+        
+        return len(errors) == 0, errors
 
 
 class CertbotIntegration:
-    """Handles Certbot integration and automation."""
+    """Integration with Certbot for certificate management"""
     
-    def __init__(self, domain: str, email: str):
-        self.domain = domain
-        self.email = email
-        self.cert_path = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
-        self.key_path = f"/etc/letsencrypt/live/{domain}/privkey.pem"
-    
-    def validate_domain_format(self) -> bool:
-        """Validate domain format."""
-        pattern = r'^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$'
-        return bool(re.match(pattern, self.domain.lower()))
-    
-    def validate_email_format(self) -> bool:
-        """Validate email format."""
-        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        return bool(re.match(pattern, self.email))
-    
-    def generate_certbot_command(self, dns_provider: str = "cloudflare") -> str:
-        """Generate certbot command for certificate generation."""
-        if dns_provider == "cloudflare":
-            return f"certbot certonly --dns-cloudflare --dns-cloudflare-credentials ~/.secrets/certbot/cloudflare.ini -d {self.domain}"
-        elif dns_provider == "manual":
-            return f"certbot certonly --manual --preferred-challenges=dns -d {self.domain}"
-        else:
-            return f"certbot certonly --standalone -d {self.domain}"
-    
-    def get_certificate_paths(self) -> Dict[str, str]:
-        """Return expected certificate paths."""
-        return {
-            "fullchain": self.cert_path,
-            "privatekey": self.key_path,
-            "domain": self.domain
+    @staticmethod
+    def parse_certbot_output(output: str) -> Dict[str, str]:
+        """Parse Certbot CLI output"""
+        result = {
+            "success": False,
+            "certificate_path": "",
+            "key_path": "",
+            "chain_path": "",
+            "fullchain_path": "",
+            "renewal_date": "",
+            "message": ""
         }
-
-
-class BrotherPrinterUploader:
-    """Handles certificate upload to Brother Printer."""
+        
+        if "Successfully received certificate" in output:
+            result["success"] = True
+        
+        cert_match = re.search(r'Certificate is saved at: (.+?)[\n$]', output)
+        if cert_match:
+            result["certificate_path"] = cert_match.group(1).strip()
+        
+        key_match = re.search(r'Key is saved at: (.+?)[\n$]', output)
+        if key_match:
+            result["key_path"] = key_match.group(1).strip()
+        
+        chain_match = re.search(r'Chain is saved at: (.+?)[\n$]', output)
+        if chain_match:
+            result["chain_path"] = chain_match.group(1).strip()
+        
+        fullchain_match = re.search(r'Fullchain is saved at: (.+?)[\n$]', output)
+        if fullchain_match:
+            result["fullchain_path"] = fullchain_match.group(1).strip()
+        
+        result["message"] = output
+        return result
     
-    def __init__(self, printer_ip: str, printer_port: int = 443):
-        self.printer_ip = printer_ip
-        self.printer_port = printer_port
-        self.upload_url = f"https://{printer_ip}:{printer_port}/upload_cert"
-    
-    def validate_upload_endpoint(self) -> bool:
-        """Validate printer upload endpoint is accessible."""
-        try:
-            import socket
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5)
-            result = sock.connect_ex((self.printer_ip, self.printer_port))
-            sock.close()
-            return result == 0
-        except Exception:
-            return False
-    
-    def generate_upload_script(self, cert_path: str, key_path: str) -> str:
-        """Generate shell script for uploading certificates."""
-        script = f"""#!/bin/bash
-# Brother Printer Certificate Upload Script
-# Generated automatically for {self.printer_ip}
-
-PRINTER_IP="{self.printer_ip}"
-PRINTER_PORT="{self.printer_port}"
-CERT_FILE="{cert_path}"
-KEY_FILE="{key_path}"
-
-# Verify files exist
-if [ ! -f "$CERT_FILE" ]; then
-    echo "Error: Certificate file not found: $CERT_FILE"
-    exit 1
-fi
-
-if [ ! -f "$KEY_FILE" ]; then
-    echo "Error: Key file not found: $KEY_FILE"
-    exit 1
-fi
-
-# Upload certificates
-curl -k -X POST \\
-    -F "certificate=@$CERT_FILE" \\
-    -F "key=@$KEY_FILE" \\
-    https://${{PRINTER_IP}}:${{PRINTER_PORT}}/upload_cert
-
-echo "Upload complete"
-"""
-        return script
+    @staticmethod
+    def validate_certbot_paths(config: PrinterConfig) -> Tuple[bool, List[str]]:
+        """Validate Certbot-generated certificate paths"""
+        errors = []
+        
+        if not os.path.isfile(config.certificate_path):
+            errors.append(f"Certbot certificate not found: {config.certificate_path}")
+        
+        if not os.path.isfile(config.key_path):
+            errors.append(f"Certbot key not found: {config.key_path}")
+        
+        return len(errors) == 0, errors
 
 
-class TestBrotherPrinterValidation(unittest.TestCase):
-    """Unit tests for Brother Printer certificate validation."""
+class TestCertificateValidator(unittest.TestCase):
+    """Unit tests for certificate validation"""
     
     def setUp(self):
-        self.validator = BrotherPrinterCertValidator("192.168.1.100", 443)
-    
-    def test_valid_ip_format(self):
-        """Test valid IP address format."""
-        validator = BrotherPrinterCertValidator("192.168.1.100")
-        self.assertTrue(validator.validate_ip_format())
-        self.assertEqual(len(validator.errors), 0)
-    
-    def test_invalid_ip_format_letters(self):
-        """Test invalid IP with letters."""
-        validator = BrotherPrinterCertValidator("192.168.1.abc")
-        self.assertFalse(validator.validate_ip_format())
-        self.assertGreater(len(validator.errors), 0)
-    
-    def test_invalid_ip_format_out_of_range(self):
-        """Test IP with octet out of range."""
-        validator = BrotherPrinterCertValidator("192.168.1.256")
-        self.assertFalse(validator.validate_ip_format())
-        self.assertGreater(len(validator.errors), 0)
-    
-    def test_valid_port_range(self):
-        """Test valid port number."""
-        validator = BrotherPrinterCertValidator("192.168.1.100", 443)
-        self.assertTrue(validator.validate_port_range())
-    
-    def test_invalid_port_too_high(self):
-        """Test port number too high."""
-        validator = BrotherPrinterCertValidator("192.168.1.100", 65536)
-        self.assertFalse(validator.validate_port_range())
-    
-    def test_invalid_port_too_low(self):
-        """Test port number too low."""
-        validator = BrotherPrinterCeftValidator("192.168.1.100", 0)
-        self.assertFalse(validator.validate_port_range())
-    
-    def test_certificate_format_valid_pem(self):
-        """Test valid PEM certificate format."""
-        import tempfile
-        import os
+        """Create temporary test files"""
+        self.temp_dir = tempfile.mkdtemp()
+        self.valid_cert_path = os.path.join(self.temp_dir, "cert.pem")
+        self.valid_key_path = os.path.join(self.temp_dir, "key.pem")
         
-        cert_content = """-----BEGIN CERTIFICATE-----
-MIIBkTCB+wIJAKHHCgVZrB7JMA0GCSqGSIb3DQEBBQUAMBMxETAPBgNVBAMMCENl
------END CERTIFICATE-----"""
+        with open(self.valid_cert_path, 'w') as f:
+            f.write("-----BEGIN CERTIFICATE-----\n")
+            f.write("MIICljCCAX4CCQCKz0Td7tLSgTANBgkqhkiG9w0BAQsFADANMQswCQYDVQQGEwJB\n")
+            f.write("-----END CERTIFICATE-----\n")
         
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pem') as f:
-            f.write(cert_content)
-            f.flush()
-            temp_path = f.name
+        with open(self.valid_key_path, 'w') as f:
+            f.write("-----BEGIN PRIVATE KEY-----\n")
+            f.write("MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQC5V3Z4z1Z0z3Z0\n")
+            f.write("-----END PRIVATE KEY-----\n")
+    
+    def tearDown(self):
+        """Clean up temporary files"""
+        import shutil
+        shutil.rmtree(self.temp_dir)
+    
+    def test_validate_valid_certificate(self):
+        """Test validation of a valid certificate file"""
+        is_valid, error = CertificateValidator.validate_certificate_file(self.valid_cert_path)
+        self.assertTrue(is_valid)
+        self.assertEqual(error, "")
+    
+    def test_validate_missing_certificate(self):
+        """Test validation of missing certificate file"""
+        is_valid, error = CertificateValidator.validate_certificate_file("/nonexistent/path.pem")
+        self.assertFalse(is_valid)
+        self.assertIn("not found", error)
+    
+    def test_validate_invalid_certificate_format(self):
+        """Test validation of certificate with invalid format"""
+        invalid_path = os.path.join(self.temp_dir, "invalid.pem")
+        with open(invalid_path, 'w') as f:
+            f.write("This is not a valid certificate")
         
+        is_valid, error = CertificateValidator.validate_certificate_file(invalid_path)
+        self.assertFalse(is_valid)
+        self.assertIn("Invalid certificate format", error)
+    
+    def test_validate_valid_private_key(self):
+        """Test validation of a valid private key file"""
+        is_valid, error = CertificateValidator.validate_private_key_file(self.valid_key_path)
+        self.assertTrue(is_valid)
+        self.assertEqual(error, "")
+    
+    def test_validate_missing_private_key(self):
+        """Test validation of missing private key file"""
+        is_valid, error = CertificateValidator.validate_private_key_file("/nonexistent/key.pem")
+        self.assertFalse(is_valid)
+        self.assertIn("not found", error)
+    
+    def test_validate_valid_domain(self):
+        """Test validation of valid domain formats"""
+        valid_domains = [
+            "example.com",
+            "printer.example.com",
+            "my-printer.example.co.uk",
+            "192-168-1-1.example.com"
+        ]
+        for domain in valid_domains:
+            is_valid, error = CertificateValidator.validate_domain_format(domain)
+            self.assertTrue(is_valid, f"Domain {domain} should be valid")
+    
+    def test_validate_invalid_domain(self):
+        """Test validation of invalid domain formats"""
+        invalid_domains = [
+            "",
+            "invalid..com",
+            "-invalid.com",
+            "invalid-.com",
+            "invalid.c",
+            "a" * 300 + ".com"
+        ]
+        for domain in invalid_domains:
+            is_valid, error = CertificateValidator.validate_domain_format(domain)
+            self.assertFalse(is_valid, f"Domain {domain} should be invalid: {error}")
+    
+    def test_validate_valid_ip_address(self):
+        """Test validation of valid IP addresses"""
+        valid_ips = [
+            "192.168.1.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "255.255.255.255"
+        ]
+        for ip in valid_ips:
+            is_valid, error = CertificateValidator.validate_ip_address(ip)
+            self.assertTrue(is_valid, f"IP {ip} should be valid")
+    
+    def test_validate_invalid_ip_address(self):
+        """Test validation of invalid IP addresses"""
+        invalid_ips = [
+            "256.1.1.1",
+            "192.168.1",
+            "192.168.1.1.1",
+            "not-an-ip"
+        ]
+        for ip in invalid_ips:
+            is_valid, error = CertificateValidator.validate_ip_address(ip)
+            self.assertFalse(is_valid, f"IP {ip} should be invalid")
+
+
+class TestPrinterConnectivityValidator(unittest.TestCase):
+    """Unit tests for printer connectivity validation"""
+    
+    def test_validate_printer_config_valid(self):
+        """Test validation of a valid printer configuration"""
+        temp_dir = tempfile.mkdtemp()
         try:
-            validator = BrotherPrinterCertValidator("192.168.1.100")
-            result = validator.validate_certificate_format(temp_path)
-            self.assertTrue(result)
+            cert_path = os.path.join(temp_dir, "cert.pem")
+            key_path = os.path.join(temp_dir, "key.pem")
+            
+            with open(cert_path, 'w') as f:
+                f.write("-----BEGIN CERTIFICATE-----\nABC123\n-----END CERTIFICATE-----\n")
+            with open(key_path, 'w') as f:
+                f.write("-----BEGIN PRIVATE KEY-----\nABC123\n-----END PRIVATE KEY-----\n")
+            
+            config = PrinterConfig(
+                hostname="printer.local",
+                ip_address="192.168.1.100",
+                domain="printer.example.com",
+                port=443,
+                certificate_path=cert_path,
+                key_path=key_path
+            )
+            
+            is_valid, errors = PrinterConnectivityValidator.validate_printer_config(config)
+            self.assertTrue(is_valid, f"Config should be valid, but got errors: {errors}")
+            self.assertEqual(len(errors), 0)
         finally:
-            os.unlink(temp_path)
+            import shutil
+            shutil.rmtree(temp_dir)
     
-    def test_certificate_format_invalid_pem(self):
-        """Test invalid PEM certificate format."""
-        import tempfile
-        import os
+    def test_validate_printer_config_invalid_ip(self):
+        """Test validation with invalid IP address"""
+        config = PrinterConfig(
+            hostname="printer.local",
+            ip_address="invalid-ip",
+            domain="printer.example.com",
+            port=443,
+            certificate_path="/tmp/cert.pem",
+            key_path="/tmp/key.pem"
+        )
         
-        cert_content = "This is not a valid certificate"
-        
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pem') as f:
-            f.write(cert_content)
-            f.flush()
-            temp_path = f.name
-        
-        try:
-            validator = BrotherPrinterCertValidator("192.168.1.100")
-            result = validator.validate_certificate_format(temp_path)
-            self.assertFalse(result)
-        finally:
-            os.unlink(temp_path)
+        is_valid, errors = PrinterConnectivityValidator.validate_printer_config(config)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("Invalid IPv4 address" in error for error in errors))
     
-    def test_validation_report_structure(self):
-        """Test validation report has correct structure."""
-        validator = BrotherPrinterCertValidator("192.168.1.100", 443)
-        validator.validate_ip_format()
-        validator.validate_port_range()
+    def test_validate_printer_config_invalid_port(self):
+        """Test validation with invalid port number"""
+        config = PrinterConfig(
+            hostname="printer.local",
+            ip_address="192.168.1.100",
+            domain="printer.example.com",
+            port=99999,
+            certificate_path="/tmp/cert.pem",
+            key_path="/tmp/key.pem"
+        )
         
-        report = validator.get_validation_report()
+        is_valid, errors = PrinterConnectivityValidator.validate_printer_config(config)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("Invalid port number" in error for error in errors))
+    
+    def test_validate_printer_config_invalid_domain(self):
+        """Test validation with invalid domain"""
+        config = PrinterConfig(
+            hostname="printer.local",
+            ip_address="192.168.1.100",
+            domain="invalid..domain",
+            port=443,
+            certificate_path="/tmp/cert.pem",
+            key_path="/tmp/key.pem"
+        )
         
-        self.assertIn("printer_ip", report)
-        self.assertIn("printer_port", report)
-        self.assertIn("errors", report)
-        self.assertIn("warnings", report)
-        self.assertIn("is_valid", report)
-        self.assertIn("timestamp", report)
+        is_valid, errors = PrinterConnectivityValidator.validate_printer_config(config)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("Invalid domain format" in error for error in errors))
 
 
 class TestCertbotIntegration(unittest.TestCase):
-    """Unit tests for Certbot integration."""
+    """Unit tests for Certbot integration"""
     
-    def setUp(self):
-        self.certbot = CertbotIntegration("example.com", "admin@example.com")
+    def test_parse_certbot_success_output(self):
+        """Test parsing successful Certbot output"""
+        output = """Successfully received certificate.
+Certificate is saved at: /etc/letsencrypt/live/example.com/cert.pem
+Key is saved at: /etc/letsencrypt/live/example.com/privkey.pem
+Chain is saved at: /etc/letsencrypt/live/example.com/chain.pem
+Fullchain is saved at: /etc/letsencrypt/live/example.com/fullchain.pem"""
+        
+        result = CertbotIntegration.parse_certbot_output(output)
+        
+        self.assertTrue(result["success"])
+        self.assertEqual(result["certificate_path"], "/etc/letsencrypt/live/example.com/cert.pem")
+        self.assertEqual(result["key_path"], "/etc/letsencrypt/live/example.com/privkey.pem")
+        self.assertEqual(result["chain_path"], "/etc/letsencrypt/live/example.com/chain.pem")
     
-    def test_valid_domain_format(self):
-        """Test valid domain format."""
-        certbot = CertbotIntegration("example.com", "admin@example.com")
-        self.assertTrue(certbot.validate_domain_format())
+    def test_parse_certbot_failure_output(self):
+        """Test parsing failed Certbot output"""
+        output = "Error: Failed to authenticate"
+        
+        result = CertbotIntegration.parse_certbot_output(output)
+        
+        self.assertFalse(result["success"])
+        self.assertEqual(result["certificate_path"], "")
     
-    def test_valid_subdomain_format(self):
-        """Test valid subdomain format."""
-        certbot = CertbotIntegration("printer.example.com", "admin@example.com")
-        self.assertTrue(certbot.validate_domain_format())
+    def test_validate_certbot_paths_valid(self):
+        """Test validation of valid Certbot paths"""
+        temp_dir = tempfile.mkdtemp()
+        try:
+            cert_path = os.path.join(temp_dir, "cert.pem")
+            key_path = os.path.join(temp_dir, "key.pem")
+            
+            open(cert_path, 'w').close()
+            open(key_path, 'w').close()
+            
+            config = PrinterConfig(
+                hostname="printer.local",
+                ip_address="192.168.1.100",
+                domain="printer.example.com",
+                certificate_path=cert_path,
+                key_path=key_path
+            )
+            
+            is_valid, errors = CertbotIntegration.validate_certbot_paths(config)
+            self.assertTrue(is_valid)
+            self.assertEqual(len(errors), 0)
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir)
     
-    def test_invalid_domain_format(self):
-        """Test invalid domain format."""
-        certbot = CertbotIntegration("invalid..domain", "admin@example.com")
-        self.assertFalse(certbot.validate_domain_format())
+    def test_validate_certbot_paths_missing(self):
+        """Test validation with missing Certbot paths"""
+        config = PrinterConfig(
+            hostname="printer.local",
+            ip_address="192.168.1.100",
+            domain="printer.example.com",
+            certificate_path="/nonexistent/cert.pem",
+            key_path="/nonexistent/key.pem"
+        )
+        
+        is_valid, errors = CertbotIntegration.validate_certbot_paths(config)
+        self.assertFalse(is_valid)
+        self.assertGreater(len(errors), 0)
+
+
+class ValidationReport:
+    """Generate validation reports"""
     
-    def test_valid_email_format(self):
-        """Test valid email format."""
-        certbot = CertbotIntegration("example.com", "admin@example.com")
-        self.assertTrue(certbot.validate_email_format())
+    @staticmethod
+    def generate_json_report(config: PrinterConfig, validation_results: Dict) -> str:
+        """Generate JSON validation report"""
+        report = {
+            "timestamp": datetime.now().isoformat(),
+            "printer": {
+                "hostname": config.hostname,
+                "ip_address": config.ip_address,
+                "domain": config.domain,
+                "port": config.port
+            },
+            "validation_results": validation_results,
+            "overall_status": "PASS" if all(v.get("valid", False) for v in validation_results.values()) else "FAIL"
+        }
+        return json.dumps(report, indent=2)
     
-    def test_invalid_email_format(self):
-        """Test invalid email format."""
-        certbot = CertbotIntegration("example.com", "invalid-email")
-        self.assertFalse(certbot.validate_email_format())
+    @staticmethod
+    def generate_text_report(config: PrinterConfig, validation_results: Dict) -> str:
+        """Generate human-readable validation report"""
+        report_lines = [
+            "=" * 70,
+            "BROTHER PRINTER TLS CERTIFICATE VALIDATION REPORT",
+            "=" * 70,
+            f"Generated: {datetime.now().isoformat()}",
+            "",
+            "PRINTER CONFIGURATION:",
+            f"  Hostname: {config.hostname}",
+            f"  IP Address: {config.ip_address}",
+            f"  Domain: {config.domain}",
+            f"  Port: {config.port}",
+            "",
+            "VALIDATION RESULTS:",
+        ]
+        
+        for check_name, result in validation_results.items():
+            status = "✓ PASS" if result.get("valid") else "✗ FAIL"
+            report_lines.append(f"  {status}: {check_name}")
+            if result.get("message"):
+                report_lines.append(f"         {result['message']}")
+        
+        overall = "PASS" if all(v.get("valid", False) for v in validation_results.values()) else "FAIL"
+        report_lines.extend([
+            "",
+            f"OVERALL STATUS: {overall}",
+            "=" * 70
+        ])
+        
+        return "\n".join(report_lines)
+
+
+def main():
+    """Main entry point with CLI"""
+    parser = argparse.ArgumentParser(
+        description="Validate Brother Printer TLS Certificate Installation",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     
-    def test_certbot_command_cloudflare(self):
-        """Test Certbot command generation for Cloudflare."""
-        cmd = self.certbot.generate_certbot_command("cloudflare")
-        self.assertIn("dns-cloudflare", cmd)
-        self.assertIn("example.com", cmd)
+    parser.add_argument(
+        "--hostname",
+        type=str,
+        default="brother-printer.local",
+        help="Printer hostname (default: brother-printer.local)"
+    )
+    parser.add_argument(
+        "--ip-address",
+        type=str,
+        default="192.168.1.100",
+        help="Printer IP address (default: 192.168.1.100)"
+    )
+    parser.add_argument(
+        "--domain",
+        type=str,
+        default="printer.example.com",
+        help="Certificate domain name (default: printer.example.com)"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=443,
+        help="HTTPS port (default: 443)"
+    )
+    parser.add_argument(
+        "--certificate",
+        type=str,
+        default="/etc/letsencrypt/live/printer.example.com/fullchain.pem",
+        help="Path to certificate file"
+    )
+    parser.add_argument(
+        "--key",
+        type=str,
+        default="/etc/letsencrypt/live/printer.example.com/privkey.pem",
+        help="Path to private key file"
+    )
+    parser.add_argument(
+        "--report-format",
+        type=str,
+        choices=["json", "text"],
+        default="text",
+        help="Output report format (default: text)"
+    )
+    parser.add_argument(
+        "--run-tests",
+        action="store_true",
+        help="Run unit tests instead of validation"
+    )
     
-    def test_certbot_command_manual(self):
-        """Test Certbot command generation for manual DNS."""
-        cmd = self.certbot.generate_certbot_command("manual")
-        self.assertIn("manual", cmd)
-        self.assertIn("example.com", cmd
+    args = parser.parse_args()
+    
+    if args.run_tests:
+        loader = unittest.TestLoader()
+        suite = unittest.TestSuite()
+        
+        suite.addTests(loader.loadTestsFromTestCase(TestCertificateValidator))
+        suite.addTests(loader.loadTestsFromTestCase(TestPrinterConnectivityValidator))
+        suite.addTests(loader.loadTestsFromTestCase(TestCertbotIntegration))
+        
+        runner = unittest.TextTestRunner(verbosity=2)
+        result = runner.run(suite)
+        
+        return 0 if result.wasSuccessful() else 1
+    
+    config = PrinterConfig(
+        hostname=args.hostname,
+        ip_address=args.ip_address,
+        domain=args.domain,
+        port=args.port,
+        certificate_path=args.certificate,
+        key_path=args.key
+    )
+    
+    validation_results = {}
+    
+    is_valid, errors = PrinterConnectivityValidator.validate_printer_config(config)
+    validation_results["printer_config"] = {
+        "valid": is_valid,
+        "message": ", ".join(errors) if errors else "Configuration valid"
+    }
+    
+    cert_valid, cert_msg = CertificateValidator.validate_certificate_file(config.certificate_path)
+    validation_results["certificate_file"] = {
+        "valid": cert_valid,
+        "message": cert_msg
+    }
+    
+    key_valid, key_msg = CertificateValidator.validate_private_key_file(config.key_path)
+    validation_results["private_key_file"] = {
+        "valid": key_valid,
+        "message": key_msg
+    }
+    
+    domain_valid, domain_msg = CertificateValidator.validate_domain_format(config.domain)
+    validation_results["domain_format"] = {
+        "valid": domain_valid,
+        "message": domain_msg
+    }
+    
+    ip_valid, ip_msg = CertificateValidator.validate_ip_address(config.ip_address)
+    validation_results["ip_address_format"] = {
+        "valid": ip_valid,
+        "message": ip_msg
+    }
+    
+    if args.report_format == "json":
+        report = ValidationReport.generate_json_report(config, validation_results)
+    else:
+        report = ValidationReport.generate_text_report(config, validation_results)
+    
+    print(report)
+    
+    all_valid = all(v.get("valid", False) for v in validation_results.values())
+    return 0 if all_valid else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
