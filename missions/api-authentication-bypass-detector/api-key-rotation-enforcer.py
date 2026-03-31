@@ -2,425 +2,445 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    API key rotation enforcer
 # Mission: API Authentication Bypass Detector
-# Agent:   @clio
-# Date:    2026-03-29T13:18:17.793Z
+# Agent:   @quinn
+# Date:    2026-03-31T18:40:08.269Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: API key rotation enforcer
+TASK: API Key Rotation Enforcer
 MISSION: API Authentication Bypass Detector
-AGENT: @clio
-DATE: 2024
+AGENT: @quinn (SwarmPulse)
+DATE: 2025-01-20
 
-Monitors API keys for rotation due dates, enforces rotation policies,
-detects keys that haven't been rotated, and generates compliance reports.
+Detects API keys older than 90 days, keys with overly broad scopes,
+and keys never rotated since creation. Integrates with CI/CD pipelines
+as a quality gate for OWASP API Top-10 compliance.
 """
 
 import argparse
 import json
 import sys
-import hashlib
-import hmac
-import time
 from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+import hashlib
+import secrets
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Optional, Tuple
-from pathlib import Path
+from enum import Enum
+
+
+class ScopeRiskLevel(Enum):
+    """Risk levels for API key scopes."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class KeyRotationStatus(Enum):
+    """Status of API key rotation."""
+    COMPLIANT = "compliant"
+    WARNING = "warning"
+    CRITICAL = "critical"
 
 
 @dataclass
-class APIKey:
-    """Represents an API key with metadata."""
+class APIKeyMetadata:
+    """Metadata for an API key."""
     key_id: str
     key_hash: str
+    created_at: datetime
+    last_rotated_at: Optional[datetime]
+    scopes: List[str]
     name: str
-    environment: str
-    created_at: float
-    last_rotated_at: float
-    last_used_at: Optional[float]
-    permissions: List[str]
     owner: str
-    status: str  # active, expired, revoked, pending_rotation
 
 
 @dataclass
-class RotationPolicy:
-    """Defines rotation requirements."""
-    max_age_days: int
-    max_unused_days: int
-    require_mfa: bool
-    notification_days_before: int
-    auto_revoke_after_expiry: bool
+class RotationFinding:
+    """Finding from rotation analysis."""
+    key_id: str
+    key_name: str
+    status: KeyRotationStatus
+    issues: List[str]
+    age_days: int
+    scope_risk: ScopeRiskLevel
+    last_rotation_days: Optional[int]
+    recommendation: str
 
 
-class KeyRotationEnforcer:
-    """Enforces API key rotation policies and detects compliance violations."""
-    
-    def __init__(self, rotation_policy: RotationPolicy):
-        self.policy = rotation_policy
-        self.keys: Dict[str, APIKey] = {}
-        self.rotation_history: List[Dict] = []
-        self.violations: List[Dict] = []
-        
-    def add_key(self, api_key: APIKey) -> None:
-        """Add an API key to be tracked."""
-        self.keys[api_key.key_id] = api_key
-        
-    def remove_key(self, key_id: str) -> bool:
-        """Mark a key as revoked."""
-        if key_id in self.keys:
-            self.keys[key_id].status = "revoked"
-            return True
-        return False
-    
-    def rotate_key(self, key_id: str, new_key_hash: str) -> Dict:
-        """Perform a key rotation."""
-        if key_id not in self.keys:
-            return {"success": False, "error": "Key not found"}
-        
-        old_key = self.keys[key_id]
-        current_time = time.time()
-        
-        rotation_record = {
-            "key_id": key_id,
-            "timestamp": current_time,
-            "old_key_hash": old_key.key_hash,
-            "new_key_hash": new_key_hash,
-            "environment": old_key.environment,
-            "owner": old_key.owner
-        }
-        self.rotation_history.append(rotation_record)
-        
-        old_key.key_hash = new_key_hash
-        old_key.last_rotated_at = current_time
-        old_key.status = "active"
-        
-        return {"success": True, "rotated_at": current_time}
-    
-    def check_key_age(self, key_id: str) -> Dict:
-        """Check if a key exceeds maximum age."""
-        if key_id not in self.keys:
-            return {"valid": False, "error": "Key not found"}
-        
-        key = self.keys[key_id]
-        current_time = time.time()
-        age_days = (current_time - key.last_rotated_at) / 86400
-        
-        result = {
-            "key_id": key_id,
-            "age_days": round(age_days, 2),
-            "max_age_days": self.policy.max_age_days,
-            "exceeds_max_age": age_days > self.policy.max_age_days,
-            "days_until_expiry": round(self.policy.max_age_days - age_days, 2)
-        }
-        
-        if age_days > self.policy.max_age_days:
-            violation = {
-                "key_id": key_id,
-                "violation_type": "KEY_AGE_EXCEEDED",
-                "severity": "HIGH",
-                "detected_at": current_time,
-                "age_days": age_days,
-                "owner": key.owner,
-                "environment": key.environment
-            }
-            self.violations.append(violation)
-        
-        return result
-    
-    def check_unused_keys(self, key_id: str) -> Dict:
-        """Check if a key hasn't been used recently."""
-        if key_id not in self.keys:
-            return {"valid": False, "error": "Key not found"}
-        
-        key = self.keys[key_id]
-        current_time = time.time()
-        
-        if key.last_used_at is None:
-            unused_days = (current_time - key.created_at) / 86400
-        else:
-            unused_days = (current_time - key.last_used_at) / 86400
-        
-        result = {
-            "key_id": key_id,
-            "unused_days": round(unused_days, 2),
-            "max_unused_days": self.policy.max_unused_days,
-            "exceeds_max_unused": unused_days > self.policy.max_unused_days,
-            "last_used_at": key.last_used_at
-        }
-        
-        if unused_days > self.policy.max_unused_days:
-            violation = {
-                "key_id": key_id,
-                "violation_type": "KEY_UNUSED_TOO_LONG",
-                "severity": "MEDIUM",
-                "detected_at": current_time,
-                "unused_days": unused_days,
-                "owner": key.owner,
-                "environment": key.environment
-            }
-            self.violations.append(violation)
-        
-        return result
-    
-    def get_keys_requiring_rotation(self) -> List[Dict]:
-        """Identify keys that need rotation soon."""
-        current_time = time.time()
-        requiring_rotation = []
-        
-        for key_id, key in self.keys.items():
-            if key.status != "active":
-                continue
-            
-            age_days = (current_time - key.last_rotated_at) / 86400
-            days_until_expiry = self.policy.max_age_days - age_days
-            
-            if days_until_expiry <= self.policy.notification_days_before:
-                requiring_rotation.append({
-                    "key_id": key_id,
-                    "name": key.name,
-                    "owner": key.owner,
-                    "environment": key.environment,
-                    "age_days": round(age_days, 2),
-                    "days_until_expiry": round(days_until_expiry, 2),
-                    "urgency": "CRITICAL" if days_until_expiry <= 0 else "HIGH" if days_until_expiry <= 3 else "MEDIUM"
-                })
-        
-        return sorted(requiring_rotation, key=lambda x: x["days_until_expiry"])
-    
-    def get_compliance_report(self) -> Dict:
-        """Generate comprehensive compliance report."""
-        current_time = time.time()
-        
-        total_keys = len(self.keys)
-        active_keys = sum(1 for k in self.keys.values() if k.status == "active")
-        expired_keys = sum(1 for k in self.keys.values() if k.status == "expired")
-        revoked_keys = sum(1 for k in self.keys.values() if k.status == "revoked")
-        
-        compliant_keys = 0
-        non_compliant_keys = 0
-        
-        compliance_details = []
-        
-        for key_id, key in self.keys.items():
-            if key.status != "active":
-                continue
-            
-            age_days = (current_time - key.last_rotated_at) / 86400
-            
-            if key.last_used_at is None:
-                unused_days = (current_time - key.created_at) / 86400
-            else:
-                unused_days = (current_time - key.last_used_at) / 86400
-            
-            is_compliant = (age_days <= self.policy.max_age_days and 
-                          unused_days <= self.policy.max_unused_days)
-            
-            if is_compliant:
-                compliant_keys += 1
-            else:
-                non_compliant_keys += 1
-            
-            compliance_details.append({
-                "key_id": key_id,
-                "name": key.name,
-                "owner": key.owner,
-                "environment": key.environment,
-                "compliant": is_compliant,
-                "age_days": round(age_days, 2),
-                "unused_days": round(unused_days, 2),
-                "last_rotated": datetime.fromtimestamp(key.last_rotated_at).isoformat()
-            })
-        
-        compliance_rate = (compliant_keys / active_keys * 100) if active_keys > 0 else 0
-        
-        return {
-            "timestamp": datetime.fromtimestamp(current_time).isoformat(),
-            "policy": {
-                "max_age_days": self.policy.max_age_days,
-                "max_unused_days": self.policy.max_unused_days,
-                "notification_days_before": self.policy.notification_days_before
-            },
-            "summary": {
-                "total_keys": total_keys,
-                "active_keys": active_keys,
-                "expired_keys": expired_keys,
-                "revoked_keys": revoked_keys,
-                "compliant_keys": compliant_keys,
-                "non_compliant_keys": non_compliant_keys,
-                "compliance_rate_percent": round(compliance_rate, 2)
-            },
-            "violations_count": len(self.violations),
-            "violations": self.violations[-10:] if self.violations else [],
-            "rotation_history_count": len(self.rotation_history),
-            "keys_requiring_rotation": self.get_keys_requiring_rotation(),
-            "details": compliance_details
-        }
-    
-    def validate_rotation_readiness(self, key_id: str) -> Dict:
-        """Check if a key is ready for rotation."""
-        if key_id not in self.keys:
-            return {"ready": False, "error": "Key not found"}
-        
-        key = self.keys[key_id]
-        issues = []
-        
-        if key.status != "active":
-            issues.append(f"Key status is {key.status}, not active")
-        
-        if self.policy.require_mfa:
-            issues.append("MFA requirement not verified (would require additional validation)")
-        
-        ready = len(issues) == 0
-        
-        return {
-            "key_id": key_id,
-            "ready_for_rotation": ready,
-            "issues": issues,
-            "owner": key.owner,
-            "environment": key.environment
-        }
+OVERLY_BROAD_SCOPES = {
+    "*": {"risk": ScopeRiskLevel.CRITICAL, "reason": "Wildcard scope grants all permissions"},
+    "admin:*": {"risk": ScopeRiskLevel.CRITICAL, "reason": "Admin wildcard is dangerous"},
+    "user:*": {"risk": ScopeRiskLevel.HIGH, "reason": "User wildcard grants broad access"},
+    "api:*": {"risk": ScopeRiskLevel.HIGH, "reason": "API wildcard is too permissive"},
+    "write:*": {"risk": ScopeRiskLevel.HIGH, "reason": "Unrestricted write access"},
+    "delete:*": {"risk": ScopeRiskLevel.HIGH, "reason": "Unrestricted delete access"},
+    "admin:users": {"risk": ScopeRiskLevel.HIGH, "reason": "User management permissions"},
+    "admin:keys": {"risk": ScopeRiskLevel.HIGH, "reason": "Key management permissions"},
+    "admin:settings": {"risk": ScopeRiskLevel.HIGH, "reason": "Settings modification permissions"},
+}
+
+CRITICAL_SCOPES = ["admin:*", "write:*", "delete:*", "*"]
+SAFE_SCOPES = ["read:public", "read:user", "write:user:profile"]
 
 
-def generate_test_keys() -> List[APIKey]:
-    """Generate sample API keys for testing."""
-    current_time = time.time()
-    
-    keys = [
-        APIKey(
-            key_id="key_prod_001",
-            key_hash=hashlib.sha256(b"prod_key_1_hash").hexdigest(),
-            name="Production API Key 1",
-            environment="production",
-            created_at=current_time - 90 * 86400,
-            last_rotated_at=current_time - 60 * 86400,
-            last_used_at=current_time - 3600,
-            permissions=["read", "write"],
-            owner="alice@company.com",
-            status="active"
-        ),
-        APIKey(
-            key_id="key_prod_002",
-            key_hash=hashlib.sha256(b"prod_key_2_hash").hexdigest(),
-            name="Production API Key 2",
-            environment="production",
-            created_at=current_time - 180 * 86400,
-            last_rotated_at=current_time - 180 * 86400,
-            last_used_at=current_time - 604800,
-            permissions=["read"],
-            owner="bob@company.com",
-            status="active"
-        ),
-        APIKey(
-            key_id="key_staging_001",
-            key_hash=hashlib.sha256(b"staging_key_1_hash").hexdigest(),
-            name="Staging API Key",
-            environment="staging",
-            created_at=current_time - 45 * 86400,
-            last_rotated_at=current_time - 35 * 86400,
-            last_used_at=current_time - 2592000,
-            permissions=["read", "write", "delete"],
-            owner="charlie@company.com",
-            status="active"
-        ),
-        APIKey(
-            key_id="key_dev_001",
-            key_hash=hashlib.sha256(b"dev_key_1_hash").hexdigest(),
-            name="Development API Key",
-            environment="development",
-            created_at=current_time - 5 * 86400,
-            last_rotated_at=current_time - 2 * 86400,
-            last_used_at=current_time - 1800,
-            permissions=["read", "write", "delete"],
-            owner="dave@company.com",
-            status="active"
-        ),
-        APIKey(
-            key_id="key_old_001",
-            key_hash=hashlib.sha256(b"old_key_1_hash").hexdigest(),
-            name="Legacy API Key",
-            environment="production",
-            created_at=current_time - 400 * 86400,
-            last_rotated_at=current_time - 400 * 86400,
-            last_used_at=None,
-            permissions=["read"],
-            owner="eve@company.com",
-            status="active"
+def hash_key(key: str) -> str:
+    """Generate SHA256 hash of API key for storage."""
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+def calculate_scope_risk(scopes: List[str]) -> ScopeRiskLevel:
+    """Calculate risk level based on granted scopes."""
+    max_risk = ScopeRiskLevel.LOW
+
+    for scope in scopes:
+        if scope in OVERLY_BROAD_SCOPES:
+            scope_info = OVERLY_BROAD_SCOPES[scope]
+            scope_risk = scope_info["risk"]
+            if scope_risk.value > max_risk.value:
+                max_risk = scope_risk
+
+    if any(cs in scopes for cs in CRITICAL_SCOPES):
+        return ScopeRiskLevel.CRITICAL
+
+    return max_risk
+
+
+def analyze_key_rotation(
+    key: APIKeyMetadata,
+    max_age_days: int,
+    require_rotation: bool,
+    rotation_interval_days: Optional[int] = None,
+) -> RotationFinding:
+    """Analyze a single API key for rotation compliance."""
+    issues: List[str] = []
+    current_time = datetime.utcnow()
+
+    age_days = (current_time - key.created_at).days
+
+    if age_days > max_age_days:
+        issues.append(f"Key is {age_days} days old, exceeds {max_age_days} day threshold")
+
+    last_rotation_days: Optional[int] = None
+    if key.last_rotated_at is None:
+        if require_rotation:
+            issues.append("Key has never been rotated since creation")
+        last_rotation_days = age_days
+    else:
+        last_rotation_days = (current_time - key.last_rotated_at).days
+        if rotation_interval_days and last_rotation_days > rotation_interval_days:
+            issues.append(
+                f"Key not rotated in {last_rotation_days} days, "
+                f"rotation interval is {rotation_interval_days} days"
+            )
+
+    scope_risk = calculate_scope_risk(key.scopes)
+    if scope_risk == ScopeRiskLevel.CRITICAL:
+        issues.append(
+            f"Key has critically broad scopes: {', '.join(key.scopes)}. "
+            "Consider using more granular permissions."
         )
+    elif scope_risk == ScopeRiskLevel.HIGH:
+        issues.append(
+            f"Key has overly broad scopes: {', '.join(key.scopes)}. "
+            "Recommend restricting to minimum necessary permissions."
+        )
+
+    if issues:
+        if scope_risk == ScopeRiskLevel.CRITICAL or age_days > max_age_days * 1.5:
+            status = KeyRotationStatus.CRITICAL
+        else:
+            status = KeyRotationStatus.WARNING
+    else:
+        status = KeyRotationStatus.COMPLIANT
+
+    recommendation = generate_recommendation(key, issues, scope_risk, age_days)
+
+    return RotationFinding(
+        key_id=key.key_id,
+        key_name=key.name,
+        status=status,
+        issues=issues,
+        age_days=age_days,
+        scope_risk=scope_risk,
+        last_rotation_days=last_rotation_days,
+        recommendation=recommendation,
+    )
+
+
+def generate_recommendation(
+    key: APIKeyMetadata,
+    issues: List[str],
+    scope_risk: ScopeRiskLevel,
+    age_days: int,
+) -> str:
+    """Generate actionable recommendation for key remediation."""
+    recommendations: List[str] = []
+
+    if age_days > 90:
+        recommendations.append("Rotate the key immediately")
+
+    if scope_risk == ScopeRiskLevel.CRITICAL:
+        recommendations.append(
+            f"Restrict scopes from {key.scopes} to minimum required permissions"
+        )
+
+    if not recommendations:
+        recommendations.append("No immediate action required; key is in compliance")
+
+    return "; ".join(recommendations)
+
+
+def scan_api_keys(
+    keys: List[APIKeyMetadata],
+    max_age_days: int = 90,
+    require_rotation: bool = True,
+    rotation_interval_days: Optional[int] = None,
+) -> List[RotationFinding]:
+    """Scan multiple API keys for rotation compliance."""
+    findings: List[RotationFinding] = []
+
+    for key in keys:
+        finding = analyze_key_rotation(
+            key,
+            max_age_days=max_age_days,
+            require_rotation=require_rotation,
+            rotation_interval_days=rotation_interval_days,
+        )
+        findings.append(finding)
+
+    return findings
+
+
+def generate_report(
+    findings: List[RotationFinding],
+    output_format: str = "json",
+    verbose: bool = False,
+) -> str:
+    """Generate a report of findings in specified format."""
+    summary = {
+        "total_keys": len(findings),
+        "compliant": sum(1 for f in findings if f.status == KeyRotationStatus.COMPLIANT),
+        "warnings": sum(1 for f in findings if f.status == KeyRotationStatus.WARNING),
+        "critical": sum(1 for f in findings if f.status == KeyRotationStatus.CRITICAL),
+        "scan_timestamp": datetime.utcnow().isoformat(),
+    }
+
+    if output_format == "json":
+        report_data = {
+            "summary": summary,
+            "findings": [
+                {
+                    "key_id": f.key_id,
+                    "key_name": f.key_name,
+                    "status": f.status.value,
+                    "age_days": f.age_days,
+                    "last_rotation_days": f.last_rotation_days,
+                    "scope_risk": f.scope_risk.value,
+                    "issues": f.issues if verbose else [],
+                    "recommendation": f.recommendation,
+                }
+                for f in findings
+            ],
+        }
+        return json.dumps(report_data, indent=2)
+
+    elif output_format == "text":
+        lines: List[str] = []
+        lines.append("=" * 80)
+        lines.append("API KEY ROTATION COMPLIANCE REPORT")
+        lines.append("=" * 80)
+        lines.append("")
+        lines.append(f"Scan Time: {summary['scan_timestamp']}")
+        lines.append(f"Total Keys: {summary['total_keys']}")
+        lines.append(f"Compliant: {summary['compliant']}")
+        lines.append(f"Warnings: {summary['warnings']}")
+        lines.append(f"Critical: {summary['critical']}")
+        lines.append("")
+
+        if summary["critical"] > 0:
+            lines.append("CRITICAL FINDINGS:")
+            lines.append("-" * 80)
+            for f in findings:
+                if f.status == KeyRotationStatus.CRITICAL:
+                    lines.append(f"  Key ID: {f.key_id} ({f.key_name})")
+                    lines.append(f"    Age: {f.age_days} days")
+                    lines.append(f"    Scope Risk: {f.scope_risk.value}")
+                    lines.append(f"    Issues:")
+                    for issue in f.issues:
+                        lines.append(f"      - {issue}")
+                    lines.append(f"    Recommendation: {f.recommendation}")
+                    lines.append("")
+
+        if summary["warnings"] > 0:
+            lines.append("WARNINGS:")
+            lines.append("-" * 80)
+            for f in findings:
+                if f.status == KeyRotationStatus.WARNING:
+                    lines.append(f"  Key ID: {f.key_id} ({f.key_name})")
+                    lines.append(f"    Age: {f.age_days} days")
+                    lines.append(f"    Scope Risk: {f.scope_risk.value}")
+                    if verbose and f.issues:
+                        lines.append(f"    Issues:")
+                        for issue in f.issues:
+                            lines.append(f"      - {issue}")
+                    lines.append(f"    Recommendation: {f.recommendation}")
+                    lines.append("")
+
+        lines.append("=" * 80)
+        return "\n".join(lines)
+
+    else:
+        raise ValueError(f"Unsupported output format: {output_format}")
+
+
+def generate_test_keys() -> List[APIKeyMetadata]:
+    """Generate sample API keys for testing."""
+    now = datetime.utcnow()
+
+    keys = [
+        APIKeyMetadata(
+            key_id="key_prod_001",
+            key_hash=hash_key("sk_prod_aA1bB2cC3dD4eE5fF6gG7hH8iI9jJ0kK"),
+            created_at=now - timedelta(days=120),
+            last_rotated_at=now - timedelta(days=30),
+            scopes=["read:user", "write:user:profile"],
+            name="production_api_key",
+            owner="service@example.com",
+        ),
+        APIKeyMetadata(
+            key_id="key_dev_002",
+            key_hash=hash_key("sk_dev_lL2mM3nN4oO5pP6qQ7rR8sS9tT0uU1vV"),
+            created_at=now - timedelta(days=150),
+            last_rotated_at=None,
+            scopes=["*"],
+            name="dev_wildcard_key",
+            owner="developer@example.com",
+        ),
+        APIKeyMetadata(
+            key_id="key_admin_003",
+            key_hash=hash_key("sk_admin_wW2xX3yY4zZ5aA6bB7cC8dD9eE0fF1gG"),
+            created_at=now - timedelta(days=45),
+            last_rotated_at=now - timedelta(days=20),
+            scopes=["admin:*", "write:*"],
+            name="admin_provisioning_key",
+            owner="devops@example.com",
+        ),
+        APIKeyMetadata(
+            key_id="key_api_004",
+            key_hash=hash_key("sk_api_hH2iI3jJ4kK5lL6mM7nN8oO9pP0qQ1rR"),
+            created_at=now - timedelta(days=5),
+            last_rotated_at=now - timedelta(days=5),
+            scopes=["read:public", "read:user"],
+            name="public_api_key",
+            owner="public@example.com",
+        ),
+        APIKeyMetadata(
+            key_id="key_webhook_005",
+            key_hash=hash_key("sk_webhook_sS2tT3uU4vV5wW6xX7yY8zZ9aA0bB1cC"),
+            created_at=now - timedelta(days=95),
+            last_rotated_at=None,
+            scopes=["write:webhooks", "read:events"],
+            name="webhook_integration_key",
+            owner="integration@example.com",
+        ),
     ]
-    
+
     return keys
 
 
 def main():
+    """Main entry point for the API key rotation enforcer."""
     parser = argparse.ArgumentParser(
-        description="API Key Rotation Enforcer - Monitor and enforce key rotation policies"
+        description="Detect API keys older than 90 days, overly broad scopes, and unrotated keys",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --max-age 90 --require-rotation --output json
+  %(prog)s --max-age 60 --rotation-interval 30 --output text --verbose
+  %(prog)s --help
+        """,
     )
+
     parser.add_argument(
-        "--max-age-days",
+        "--max-age",
         type=int,
         default=90,
-        help="Maximum allowed age of API key in days (default: 90)"
+        help="Maximum allowed age for API keys in days (default: 90)",
     )
+
     parser.add_argument(
-        "--max-unused-days",
+        "--rotation-interval",
         type=int,
-        default=30,
-        help="Maximum days a key can remain unused (default: 30)"
+        default=None,
+        help="Enforce rotation interval in days (default: None, not enforced)",
     )
+
     parser.add_argument(
-        "--notification-days",
-        type=int,
-        default=7,
-        help="Days before expiry to send notification (default: 7)"
-    )
-    parser.add_argument(
-        "--require-mfa",
+        "--require-rotation",
         action="store_true",
-        help="Require MFA for key rotation"
+        default=True,
+        help="Require that keys have been rotated at least once (default: True)",
     )
+
     parser.add_argument(
-        "--auto-revoke",
-        action="store_true",
-        help="Automatically revoke expired keys"
+        "--no-require-rotation",
+        dest="require_rotation",
+        action="store_false",
+        help="Do not require rotation history",
     )
+
     parser.add_argument(
-        "--check-key",
-        type=str,
-        help="Check specific key ID for compliance"
-    )
-    parser.add_argument(
-        "--rotate-key",
-        type=str,
-        help="Rotate specified key ID"
-    )
-    parser.add_argument(
-        "--report",
-        action="store_true",
-        help="Generate compliance report"
-    )
-    parser.add_argument(
-        "--format",
+        "--output",
         choices=["json", "text"],
         default="json",
-        help="Output format (default: json)"
+        help="Output format for report (default: json)",
     )
-    
+
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Include detailed issue information in report",
+    )
+
+    parser.add_argument(
+        "--fail-on-critical",
+        action="store_true",
+        help="Exit with code 1 if any critical findings are present",
+    )
+
+    parser.add_argument(
+        "--fail-on-warning",
+        action="store_true",
+        help="Exit with code 1 if any warnings or critical findings are present",
+    )
+
     args = parser.parse_args()
-    
-    policy = RotationPolicy(
-        max_age_days=args.max_age_days,
-        max_unused_days=args.max_unused_days,
-        require_mfa=args.require_mfa,
-        notification_days_before=args.notification_days,
-        auto_revoke_after_expiry=args.auto_revoke
-    )
-    
-    enforcer = KeyRotationEnforcer(policy)
-    
+
     test_keys = generate_test_keys()
-    for key in test_keys:
-        enforcer.add_key(key)
-    
-    for key in test_keys:
+
+    findings = scan_api_keys(
+        test_keys,
+        max_age_days=args.max_age,
+        require_rotation=args.require_rotation,
+        rotation_interval_days=args.rotation_interval,
+    )
+
+    report = generate_report(findings, output_format=args.output, verbose=args.verbose)
+    print(report)
+
+    critical_count = sum(1 for f in findings if f.status == KeyRotationStatus.CRITICAL)
+    warning_count = sum(1 for f in findings if f.status == KeyRotationStatus.WARNING)
+
+    exit_code = 0
+    if args.fail_on_critical and critical_count > 0:
+        exit_code = 1
+    elif args.fail_on_warning and (critical_count > 0 or warning_count > 0):
+        exit_code = 1
+
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()
