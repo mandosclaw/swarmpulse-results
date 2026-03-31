@@ -2,446 +2,540 @@
 # ─────────────────────────────────────────────────────────────
 # Task:    JWT confusion test suite
 # Mission: API Authentication Bypass Detector
-# Agent:   @clio
-# Date:    2026-03-29T13:17:19.879Z
+# Agent:   @sue
+# Date:    2026-03-31T18:39:30.005Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-JWT Confusion Test Suite
-Mission: API Authentication Bypass Detector
-Agent: @clio
-SwarmPulse Network
-Date: 2024
+JWT Confusion Test Suite - API Authentication Bypass Detector
+MISSION: API Authentication Bypass Detector
+AGENT: @sue (SwarmPulse)
+DATE: 2024
+TASK: JWT confusion test suite - Test for alg:none, RS→HS confusion, weak secrets, exp bypass
 """
 
-import argparse
 import json
 import base64
 import hmac
 import hashlib
+import argparse
 import sys
+import re
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timedelta
+from urllib.parse import urljoin
 
+def base64_url_decode(data: str) -> str:
+    """Safely decode base64url encoded JWT component."""
+    padding = 4 - len(data) % 4
+    if padding and padding != 4:
+        data += '=' * padding
+    try:
+        return base64.urlsafe_b64decode(data).decode('utf-8')
+    except Exception:
+        return ""
 
-class JWTConfusionTester:
-    """Detects JWT vulnerabilities including algorithm confusion attacks."""
-    
-    def __init__(self, secret: str = "", verbose: bool = False):
-        self.secret = secret
-        self.verbose = verbose
-        self.test_results = []
-        
-    def log(self, message: str):
-        if self.verbose:
-            print(f"[*] {message}", file=sys.stderr)
-    
-    def parse_jwt(self, token: str) -> Optional[Dict]:
-        """Parse JWT and return header, payload, signature."""
-        try:
-            parts = token.split('.')
-            if len(parts) != 3:
-                return None
-            
-            header = json.loads(base64.urlsafe_b64decode(parts[0] + '=='))
-            payload = json.loads(base64.urlsafe_b64decode(parts[1] + '=='))
-            signature = parts[2]
-            
-            return {
-                'header': header,
-                'payload': payload,
-                'signature': signature,
-                'parts': parts
-            }
-        except Exception as e:
-            self.log(f"Failed to parse JWT: {e}")
+def base64_url_encode(data: bytes) -> str:
+    """Encode bytes to base64url format."""
+    return base64.urlsafe_b64encode(data).rstrip(b'=').decode('utf-8')
+
+def parse_jwt(token: str) -> Optional[Dict]:
+    """Parse JWT token into header, payload, signature."""
+    try:
+        parts = token.split('.')
+        if len(parts) != 3:
             return None
+        
+        header_str = base64_url_decode(parts[0])
+        payload_str = base64_url_decode(parts[1])
+        signature = parts[2]
+        
+        if not header_str or not payload_str:
+            return None
+            
+        header = json.loads(header_str)
+        payload = json.loads(payload_str)
+        
+        return {
+            'header': header,
+            'payload': payload,
+            'signature': signature,
+            'raw_header': parts[0],
+            'raw_payload': parts[1],
+            'raw_signature': parts[2]
+        }
+    except Exception:
+        return None
+
+def check_alg_none(token_data: Dict) -> Dict:
+    """Test for alg:none vulnerability."""
+    result = {
+        'test': 'alg:none',
+        'vulnerable': False,
+        'details': '',
+        'severity': 'CRITICAL'
+    }
     
-    def create_jwt(self, payload: Dict, secret: str, algorithm: str = "HS256") -> str:
-        """Create a JWT with specified algorithm."""
-        header = {"alg": algorithm, "typ": "JWT"}
+    header = token_data.get('header', {})
+    alg = header.get('alg', '').lower()
+    
+    if alg == 'none':
+        result['vulnerable'] = True
+        result['details'] = 'JWT algorithm set to "none" - signature verification bypassed'
+    
+    return result
+
+def check_algorithm_confusion(token_data: Dict, public_key: str) -> Dict:
+    """Test for RS→HS confusion vulnerability."""
+    result = {
+        'test': 'algorithm_confusion_rs_to_hs',
+        'vulnerable': False,
+        'details': '',
+        'severity': 'CRITICAL'
+    }
+    
+    header = token_data.get('header', {})
+    alg = header.get('alg', '').lower()
+    
+    if alg.startswith('rs') or alg.startswith('ps'):
+        result['details'] = f'Token uses asymmetric algorithm {alg}. Verify public key is not used as HMAC secret.'
+        if public_key and len(public_key) > 0:
+            result['vulnerable'] = True
+            result['details'] += ' - Public key available; RS/PS→HS confusion is possible.'
+    
+    return result
+
+def check_weak_secret(secret: str) -> Dict:
+    """Test for weak secret patterns."""
+    result = {
+        'test': 'weak_secret',
+        'vulnerable': False,
+        'details': '',
+        'severity': 'HIGH'
+    }
+    
+    if not secret:
+        result['vulnerable'] = True
+        result['details'] = 'No secret provided for HMAC verification'
+        return result
+    
+    weak_patterns = [
+        (r'^(123|password|secret|key|test|demo|admin|user)$', 'Common dictionary word'),
+        (r'^[a-zA-Z0-9]{1,8}$', 'Very short secret (≤8 chars)'),
+        (r'^[0-9]+$', 'Numeric only'),
+        (r'^[a-z]+$', 'Lowercase only'),
+        (r'^[A-Z]+$', 'Uppercase only'),
+    ]
+    
+    for pattern, reason in weak_patterns:
+        if re.match(pattern, secret, re.IGNORECASE):
+            result['vulnerable'] = True
+            result['details'] = f'Weak secret detected: {reason}'
+            break
+    
+    if len(secret) < 32 and not result['vulnerable']:
+        result['details'] = f'Short secret ({len(secret)} chars) - consider minimum 32 chars'
+    
+    return result
+
+def check_exp_bypass(token_data: Dict) -> Dict:
+    """Test for expired token bypass or missing exp claim."""
+    result = {
+        'test': 'expiration_bypass',
+        'vulnerable': False,
+        'details': '',
+        'severity': 'HIGH'
+    }
+    
+    payload = token_data.get('payload', {})
+    
+    if 'exp' not in payload:
+        result['vulnerable'] = True
+        result['details'] = 'No "exp" claim found - token expiration not enforced'
+        return result
+    
+    exp = payload.get('exp')
+    if not isinstance(exp, (int, float)):
+        result['details'] = 'Invalid exp claim format'
+        return result
+    
+    current_time = datetime.now().timestamp()
+    if exp < current_time:
+        result['vulnerable'] = True
+        result['details'] = f'Token expired at {datetime.fromtimestamp(exp).isoformat()}'
+    else:
+        exp_date = datetime.fromtimestamp(exp).isoformat()
+        time_left = int(exp - current_time)
+        result['details'] = f'Token expires at {exp_date} ({time_left} seconds remaining)'
+    
+    return result
+
+def check_nbf_bypass(token_data: Dict) -> Dict:
+    """Test for 'not before' claim bypass."""
+    result = {
+        'test': 'nbf_bypass',
+        'vulnerable': False,
+        'details': '',
+        'severity': 'MEDIUM'
+    }
+    
+    payload = token_data.get('payload', {})
+    
+    if 'nbf' not in payload:
+        result['details'] = 'No "nbf" (not before) claim - early token activation possible'
+        return result
+    
+    nbf = payload.get('nbf')
+    if not isinstance(nbf, (int, float)):
+        result['details'] = 'Invalid nbf claim format'
+        return result
+    
+    current_time = datetime.now().timestamp()
+    if nbf > current_time:
+        result['vulnerable'] = True
+        result['details'] = f'Token not yet valid (nbf in future)'
+    else:
+        result['details'] = f'Token valid since {datetime.fromtimestamp(nbf).isoformat()}'
+    
+    return result
+
+def check_kid_injection(token_data: Dict) -> Dict:
+    """Test for kid (key ID) injection vulnerability."""
+    result = {
+        'test': 'kid_injection',
+        'vulnerable': False,
+        'details': '',
+        'severity': 'HIGH'
+    }
+    
+    header = token_data.get('header', {})
+    kid = header.get('kid', '')
+    
+    if not kid:
+        result['details'] = 'No "kid" claim - cannot assess kid injection risk'
+        return result
+    
+    suspicious_patterns = [
+        (r'\.\./', 'Directory traversal pattern detected'),
+        (r'[;|`$()]', 'Command injection pattern detected'),
+        (r'<[^>]+>', 'HTML/XML injection pattern detected'),
+    ]
+    
+    for pattern, reason in suspicious_patterns:
+        if re.search(pattern, kid):
+            result['vulnerable'] = True
+            result['details'] = f'Suspicious kid value: {reason} - Value: {kid}'
+            break
+    
+    if not result['vulnerable']:
+        result['details'] = f'kid value present: {kid}'
+    
+    return result
+
+def check_jku_injection(token_data: Dict) -> Dict:
+    """Test for jku (JWK Set URL) injection vulnerability."""
+    result = {
+        'test': 'jku_injection',
+        'vulnerable': False,
+        'details': '',
+        'severity': 'CRITICAL'
+    }
+    
+    header = token_data.get('header', {})
+    jku = header.get('jku', '')
+    
+    if not jku:
+        result['details'] = 'No "jku" claim in header'
+        return result
+    
+    if not isinstance(jku, str):
+        result['vulnerable'] = True
+        result['details'] = 'Invalid jku type (not string)'
+        return result
+    
+    if not jku.startswith('http'):
+        result['vulnerable'] = True
+        result['details'] = f'Suspicious jku URL (not http/https): {jku}'
+    else:
+        result['details'] = f'jku URL present: {jku}'
+    
+    return result
+
+def verify_hmac_signature(token_data: Dict, secret: str) -> Dict:
+    """Verify HMAC signature with given secret."""
+    result = {
+        'test': 'hmac_signature_verification',
+        'valid': False,
+        'details': ''
+    }
+    
+    try:
+        raw_header = token_data.get('raw_header', '')
+        raw_payload = token_data.get('raw_payload', '')
+        signature = token_data.get('raw_signature', '')
         
-        header_b64 = base64.urlsafe_b64encode(
-            json.dumps(header).encode()
-        ).decode().rstrip('=')
+        message = f'{raw_header}.{raw_payload}'.encode('utf-8')
+        secret_bytes = secret.encode('utf-8')
         
-        payload_b64 = base64.urlsafe_b64encode(
-            json.dumps(payload).encode()
-        ).decode().rstrip('=')
+        expected_sig = base64_url_encode(hmac.new(secret_bytes, message, hashlib.sha256).digest())
         
-        message = f"{header_b64}.{payload_b64}"
-        
-        if algorithm == "HS256":
-            signature = hmac.new(
-                secret.encode(),
-                message.encode(),
-                hashlib.sha256
-            ).digest()
-        elif algorithm == "HS512":
-            signature = hmac.new(
-                secret.encode(),
-                message.encode(),
-                hashlib.sha512
-            ).digest()
+        if expected_sig == signature:
+            result['valid'] = True
+            result['details'] = 'HMAC-SHA256 signature is valid'
         else:
-            return None
-        
-        signature_b64 = base64.urlsafe_b64encode(signature).decode().rstrip('=')
-        return f"{message}.{signature_b64}"
+            result['details'] = 'HMAC-SHA256 signature is invalid'
+    except Exception as e:
+        result['details'] = f'Signature verification error: {str(e)}'
     
-    def test_algorithm_confusion(self, token: str) -> Dict:
-        """Test for algorithm confusion vulnerability (HS256 vs RS256)."""
-        result = {
-            'test': 'algorithm_confusion',
-            'vulnerable': False,
-            'details': [],
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        parsed = self.parse_jwt(token)
-        if not parsed:
-            result['details'].append('Cannot parse token')
-            return result
-        
-        original_alg = parsed['header'].get('alg', '')
-        self.log(f"Original algorithm: {original_alg}")
-        
-        # Test 1: Modify algorithm to HS256 if originally RS256
-        if 'RS256' in original_alg or 'ES256' in original_alg:
-            modified_payload = parsed['payload'].copy()
-            forged_token = self.create_jwt(modified_payload, self.secret, "HS256")
-            
-            if forged_token:
-                result['vulnerable'] = True
-                result['details'].append(
-                    f"Algorithm can be downgraded from {original_alg} to HS256"
-                )
-                result['forged_token'] = forged_token
-                self.log(f"VULNERABLE: Algorithm confusion detected")
-        
-        # Test 2: Check for 'none' algorithm vulnerability
-        if parsed['header'].get('alg') == 'none':
-            result['vulnerable'] = True
-            result['details'].append("JWT uses 'none' algorithm (no signature verification)")
-            self.log("VULNERABLE: 'none' algorithm detected")
-        
-        return result
-    
-    def test_weak_signature(self, token: str, common_secrets: List[str]) -> Dict:
-        """Test for weak/guessable signature secrets."""
-        result = {
-            'test': 'weak_signature',
-            'vulnerable': False,
-            'details': [],
-            'cracked_secret': None,
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        parsed = self.parse_jwt(token)
-        if not parsed:
-            result['details'].append('Cannot parse token')
-            return result
-        
-        for secret_candidate in common_secrets:
-            forged = self.create_jwt(parsed['payload'], secret_candidate, 
-                                    parsed['header'].get('alg', 'HS256'))
-            if forged and forged.split('.')[-1] == parsed['signature']:
-                result['vulnerable'] = True
-                result['cracked_secret'] = secret_candidate
-                result['details'].append(f"Signature verified with weak secret: '{secret_candidate}'")
-                self.log(f"VULNERABLE: Weak secret cracked: {secret_candidate}")
-                break
-        
-        return result
-    
-    def test_signature_bypass(self, token: str) -> Dict:
-        """Test signature bypass by removing or manipulating signature."""
-        result = {
-            'test': 'signature_bypass',
-            'vulnerable': False,
-            'details': [],
-            'bypass_tokens': [],
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        parsed = self.parse_jwt(token)
-        if not parsed:
-            result['details'].append('Cannot parse token')
-            return result
-        
-        # Test 1: Empty signature
-        bypass_token_empty = f"{parsed['parts'][0]}.{parsed['parts'][1]}."
-        result['bypass_tokens'].append(bypass_token_empty)
-        result['vulnerable'] = True
-        result['details'].append("Empty signature bypass possible")
-        self.log("VULNERABLE: Empty signature bypass detected")
-        
-        # Test 2: Modified signature but same structure
-        modified_sig = base64.urlsafe_b64encode(b"0" * 32).decode().rstrip('=')
-        bypass_token_modified = f"{parsed['parts'][0]}.{parsed['parts'][1]}.{modified_sig}"
-        result['bypass_tokens'].append(bypass_token_modified)
-        
-        return result
-    
-    def test_payload_tampering(self, token: str) -> Dict:
-        """Test ability to tamper with JWT payload without signature validation."""
-        result = {
-            'test': 'payload_tampering',
-            'vulnerable': False,
-            'details': [],
-            'tampered_token': None,
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        parsed = self.parse_jwt(token)
-        if not parsed:
-            result['details'].append('Cannot parse token')
-            return result
-        
-        # Modify payload claim (e.g., change user_id or role)
-        tampered_payload = parsed['payload'].copy()
-        
-        if 'user_id' in tampered_payload:
-            original_id = tampered_payload['user_id']
-            tampered_payload['user_id'] = 99999
-            result['details'].append(f"Modified user_id from {original_id} to 99999")
-        
-        if 'role' in tampered_payload:
-            tampered_payload['role'] = 'admin'
-            result['details'].append("Escalated role to 'admin'")
-        
-        if 'admin' in tampered_payload:
-            tampered_payload['admin'] = True
-            result['details'].append("Set admin flag to True")
-        
-        # Create tampered token without re-signing (this would fail in reality, but tests the structure)
-        tampered_payload_b64 = base64.urlsafe_b64encode(
-            json.dumps(tampered_payload).encode()
-        ).decode().rstrip('=')
-        
-        tampered_token = f"{parsed['parts'][0]}.{tampered_payload_b64}.{parsed['signature']}"
-        result['tampered_token'] = tampered_token
-        
-        # This is vulnerable if server doesn't properly validate signature
-        result['vulnerable'] = True
-        result['details'].append("Payload can be tampered with original signature")
-        self.log("VULNERABLE: Payload tampering possible")
-        
-        return result
-    
-    def test_expiration_bypass(self, token: str) -> Dict:
-        """Test JWT expiration bypass."""
-        result = {
-            'test': 'expiration_bypass',
-            'vulnerable': False,
-            'details': [],
-            'extended_token': None,
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        parsed = self.parse_jwt(token)
-        if not parsed:
-            result['details'].append('Cannot parse token')
-            return result
-        
-        if 'exp' not in parsed['payload']:
-            result['details'].append("No expiration claim present")
-            return result
-        
-        original_exp = parsed['payload']['exp']
-        
-        # Modify expiration to future date
-        extended_payload = parsed['payload'].copy()
-        extended_payload['exp'] = int((datetime.now() + timedelta(days=365)).timestamp())
-        
-        result['vulnerable'] = True
-        result['details'].append(
-            f"Expiration extended from {original_exp} to {extended_payload['exp']}"
-        )
-        result['extended_token'] = json.dumps(extended_payload)
-        self.log("VULNERABLE: Token expiration can be extended")
-        
-        return result
-    
-    def test_kid_injection(self, token: str) -> Dict:
-        """Test for Key ID (kid) injection vulnerability."""
-        result = {
-            'test': 'kid_injection',
-            'vulnerable': False,
-            'details': [],
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        parsed = self.parse_jwt(token)
-        if not parsed:
-            result['details'].append('Cannot parse token')
-            return result
-        
-        if 'kid' in parsed['header']:
-            result['vulnerable'] = True
-            result['details'].append(
-                f"JWT uses 'kid' header: {parsed['header']['kid']}"
-            )
-            result['details'].append(
-                "Potential for path traversal or SQL injection via kid parameter"
-            )
-            self.log("VULNERABLE: kid injection possible")
-        
-        return result
-    
-    def test_jku_injection(self, token: str) -> Dict:
-        """Test for JSON Key URL (jku) injection vulnerability."""
-        result = {
-            'test': 'jku_injection',
-            'vulnerable': False,
-            'details': [],
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        parsed = self.parse_jwt(token)
-        if not parsed:
-            result['details'].append('Cannot parse token')
-            return result
-        
-        if 'jku' in parsed['header']:
-            result['vulnerable'] = True
-            result['details'].append(
-                f"JWT uses 'jku' header: {parsed['header']['jku']}"
-            )
-            result['details'].append(
-                "Potential for SSRF or use of attacker-controlled keys"
-            )
-            self.log("VULNERABLE: jku injection possible")
-        
-        return result
-    
-    def run_all_tests(self, token: str, weak_secrets: List[str] = None) -> Dict:
-        """Run all JWT confusion tests."""
-        if weak_secrets is None:
-            weak_secrets = [
-                'secret', 'password', '123456', 'admin', 'jwt_secret',
-                'my_secret_key', 'supersecret', 'test', 'key', ''
-            ]
-        
-        self.log("Starting JWT Confusion Test Suite")
-        
-        all_results = {
-            'scan_timestamp': datetime.now().isoformat(),
-            'token_analyzed': token[:20] + '...',
-            'tests': [],
-            'summary': {
-                'total_tests': 0,
-                'vulnerable_count': 0,
-                'passed_count': 0
-            }
-        }
-        
-        tests = [
-            self.test_algorithm_confusion,
-            lambda t: self.test_weak_signature(t, weak_secrets),
-            self.test_signature_bypass,
-            self.test_payload_tampering,
-            self.test_expiration_bypass,
-            self.test_kid_injection,
-            self.test_jku_injection,
-        ]
-        
-        for test_func in tests:
-            result = test_func(token)
-            all_results['tests'].append(result)
-            all_results['summary']['total_tests'] += 1
-            
-            if result['vulnerable']:
-                all_results['summary']['vulnerable_count'] += 1
-            else:
-                all_results['summary']['passed_count'] += 1
-        
-        return all_results
+    return result
 
+def create_forged_token(original_token_data: Dict, secret: str, new_payload: Dict) -> str:
+    """Create a forged JWT token with modified payload."""
+    try:
+        header = original_token_data.get('header', {})
+        
+        header_b64 = base64_url_encode(json.dumps(header).encode('utf-8'))
+        payload_b64 = base64_url_encode(json.dumps(new_payload).encode('utf-8'))
+        
+        message = f'{header_b64}.{payload_b64}'.encode('utf-8')
+        secret_bytes = secret.encode('utf-8')
+        signature = base64_url_encode(hmac.new(secret_bytes, message, hashlib.sha256).digest())
+        
+        return f'{header_b64}.{payload_b64}.{signature}'
+    except Exception as e:
+        return ""
+
+def scan_jwt_token(token: str, secret: Optional[str] = None, 
+                   public_key: Optional[str] = None) -> Dict:
+    """Comprehensive JWT vulnerability scan."""
+    results = {
+        'timestamp': datetime.now().isoformat(),
+        'token_valid': False,
+        'tests': [],
+        'vulnerabilities_found': 0,
+        'critical_issues': 0
+    }
+    
+    token_data = parse_jwt(token)
+    if not token_data:
+        results['tests'].append({
+            'test': 'token_parsing',
+            'vulnerable': True,
+            'details': 'Invalid JWT format',
+            'severity': 'CRITICAL'
+        })
+        results['critical_issues'] = 1
+        return results
+    
+    results['token_valid'] = True
+    
+    tests = [
+        check_alg_none(token_data),
+        check_algorithm_confusion(token_data, public_key or ""),
+        check_exp_bypass(token_data),
+        check_nbf_bypass(token_data),
+        check_kid_injection(token_data),
+        check_jku_injection(token_data),
+    ]
+    
+    if secret:
+        tests.append(check_weak_secret(secret))
+        tests.append(verify_hmac_signature(token_data, secret))
+    else:
+        tests.append({
+            'test': 'weak_secret',
+            'vulnerable': True,
+            'details': 'No secret provided for HMAC verification',
+            'severity': 'HIGH'
+        })
+    
+    results['tests'] = tests
+    
+    for test in tests:
+        if test.get('vulnerable'):
+            results['vulnerabilities_found'] += 1
+            if test.get('severity') == 'CRITICAL':
+                results['critical_issues'] += 1
+    
+    return results
+
+def generate_test_tokens() -> List[Tuple[str, str, str]]:
+    """Generate sample vulnerable JWT tokens for testing."""
+    tokens = []
+    
+    current_time = int(datetime.now().timestamp())
+    
+    weak_secret = "secret123"
+    header_alg_none = {"alg": "none", "typ": "JWT"}
+    payload_valid = {
+        "sub": "user123",
+        "name": "Test User",
+        "exp": current_time + 3600,
+        "iat": current_time
+    }
+    payload_no_exp = {
+        "sub": "user123",
+        "name": "Test User",
+        "iat": current_time
+    }
+    payload_expired = {
+        "sub": "user123",
+        "name": "Test User",
+        "exp": current_time - 3600,
+        "iat": current_time - 7200
+    }
+    
+    header_hs256 = {"alg": "HS256", "typ": "JWT"}
+    header_rs256 = {"alg": "RS256", "typ": "JWT", "kid": "../../../etc/passwd"}
+    header_jku = {"alg": "HS256", "typ": "JWT", "jku": "http://attacker.com/jwks.json"}
+    
+    def create_token(header, payload, secret):
+        header_b64 = base64_url_encode(json.dumps(header).encode('utf-8'))
+        payload_b64 = base64_url_encode(json.dumps(payload).encode('utf-8'))
+        message = f'{header_b64}.{payload_b64}'.encode('utf-8')
+        secret_bytes = secret.encode('utf-8')
+        signature = base64_url_encode(hmac.new(secret_bytes, message, hashlib.sha256).digest())
+        return f'{header_b64}.{payload_b64}.{signature}'
+    
+    tokens.append((
+        create_token(header_alg_none, payload_valid, ""),
+        "",
+        "Token with alg:none"
+    ))
+    
+    tokens.append((
+        create_token(header_hs256, payload_no_exp, weak_secret),
+        weak_secret,
+        "Token without exp claim"
+    ))
+    
+    tokens.append((
+        create_token(header_hs256, payload_expired, weak_secret),
+        weak_secret,
+        "Expired token"
+    ))
+    
+    tokens.append((
+        create_token(header_hs256, payload_valid, weak_secret),
+        weak_secret,
+        "Token with weak secret"
+    ))
+    
+    tokens.append((
+        create_token(header_rs256, payload_valid, weak_secret),
+        weak_secret,
+        "Token with kid injection"
+    ))
+    
+    tokens.append((
+        create_token(header_jku, payload_valid, weak_secret),
+        weak_secret,
+        "Token with jku injection"
+    ))
+    
+    return tokens
 
 def main():
     parser = argparse.ArgumentParser(
-        description='JWT Confusion Test Suite - Detect JWT Authentication Vulnerabilities'
+        description='JWT Confusion Test Suite - API Authentication Bypass Detector'
     )
     parser.add_argument(
         '--token',
         type=str,
-        help='JWT token to analyze',
-        default=None
+        help='JWT token to scan'
     )
     parser.add_argument(
         '--secret',
         type=str,
-        default='',
-        help='Secret key for JWT signing (for creating test tokens)'
+        default=None,
+        help='Secret key for HMAC verification'
     )
     parser.add_argument(
-        '--weak-secrets',
+        '--public-key',
         type=str,
-        nargs='+',
-        default=['secret', 'password', '123456', 'admin', 'jwt_secret', 'my_secret_key'],
-        help='List of weak secrets to test'
-    )
-    parser.add_argument(
-        '--output',
-        type=str,
-        choices=['json', 'text'],
-        default='json',
-        help='Output format'
-    )
-    parser.add_argument(
-        '--verbose',
-        action='store_true',
-        help='Enable verbose logging'
+        default=None,
+        help='Public key for RS256 confusion detection'
     )
     parser.add_argument(
         '--demo',
         action='store_true',
-        help='Run with demo tokens'
+        help='Run demo with sample vulnerable tokens'
+    )
+    parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output results as JSON'
+    )
+    parser.add_argument(
+        '--threshold',
+        type=str,
+        choices=['CRITICAL', 'HIGH', 'MEDIUM'],
+        default='MEDIUM',
+        help='Minimum severity threshold to report'
     )
     
     args = parser.parse_args()
     
-    tester = JWTConfusionTester(secret=args.secret, verbose=args.verbose)
-    
-    if args.demo or not args.token:
-        # Generate demo tokens
-        demo_payload = {
-            'sub': '1234567890',
-            'name': 'John Doe',
-            'user_id': 123,
-            'role': 'user',
-            'iat': int(datetime.now().timestamp()),
-            'exp': int((datetime.now() + timedelta(hours=1)).timestamp())
-        }
+    if args.demo:
+        print("=" * 80)
+        print("JWT CONFUSION TEST SUITE - DEMO MODE")
+        print("=" * 80)
         
-        # Valid token
-        valid_token = tester.create_jwt(demo_payload, 'my_secret_key', 'HS256')
-        print(f"Demo valid token: {valid_token}", file=sys.stderr)
+        test_tokens = generate_test_tokens()
+        all_results = []
         
-        # Token with weak secret
-        weak_token = tester.create_jwt(demo_payload, 'secret', 'HS256')
-        print(f"Demo weak secret token: {weak_token}", file=sys.stderr)
+        for token, secret, description in test_tokens:
+            print(f"\n[*] Testing: {description}")
+            print(f"    Token: {token[:50]}...")
+            
+            result = scan_jwt_token(token, secret)
+            all_results.append({
+                'description': description,
+                'result': result
+            })
+            
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                print(f"    Valid Token: {result['token_valid']}")
+                print(f"    Vulnerabilities: {result['vulnerabilities_found']}")
+                print(f"    Critical Issues: {result['critical_issues']}")
+                
+                for test in result['tests']:
+                    severity = test.get('severity', 'INFO')
+                    if test.get('vulnerable'):
+                        status = "VULNERABLE"
+                        print(f"    [{severity:8}] {test['test']:30} {status:12} - {test['details']}")
         
-        token = weak_token
+        print("\n" + "=" * 80)
+        print(f"SCAN COMPLETE - {len(test_tokens)} tokens tested")
+        print("=" * 80)
+        
+    elif args.token:
+        result = scan_jwt_token(args.token, args.secret, args.public_key)
+        
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Token Valid: {result['token_valid']}")
+            print(f"Vulnerabilities Found: {result['vulnerabilities_found']}")
+            print(f"Critical Issues: {result['critical_issues']}")
+            print("\nTest Results:")
+            
+            severity_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2}
+            threshold_level = severity_order.get(args.threshold, 2)
+            
+            for test in sorted(result['tests'], 
+                              key=lambda x: severity_order.get(x.get('severity', 'INFO'), 3)):
+                severity = test.get('severity', 'INFO')
+                if severity_order.get(severity, 3) <= threshold_level:
+                    status = "VULNERABLE" if test.get('vulnerable') else "PASS"
+                    print(f"  [{severity:8}] {test['test']:30} {status:12}")
+                    print(f"            {test['details']}")
     else:
-        token = args.token
-    
-    results = tester.run_all_tests(token, args.weak_secrets)
-    
-    if args.output == 'json':
-        print(json.dumps(results, indent=2))
-    else:
-        print(f"JWT Confusion Test Results")
-        print(f"Timestamp: {results['scan_timestamp']}")
-        print(f"Total Tests: {results['summary']['total_tests']}")
-        print(f"Vulnerable: {results['summary']['vulnerable_count']}")
-        print(f"Passed: {results['summary']['passed_count']}")
-        print()
-        
-        for test in results['tests']:
-            status = "VULNERABLE" if test['vulnerable'] else "PASSED"
-            print(f"[{status}] {test['test']}")
-            for detail in test.get('details', []):
-                print(f"  -
+        parser.print_help()
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
