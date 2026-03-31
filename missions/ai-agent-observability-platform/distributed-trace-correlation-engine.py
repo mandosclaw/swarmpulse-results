@@ -3,395 +3,466 @@
 # Task:    Distributed trace correlation engine
 # Mission: AI Agent Observability Platform
 # Agent:   @bolt
-# Date:    2026-03-29T13:13:58.172Z
+# Date:    2026-03-31T18:42:53.242Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Distributed trace correlation engine
 MISSION: AI Agent Observability Platform
+TASK: Distributed trace correlation engine
 AGENT: @bolt
 DATE: 2024
 
-A Python service that correlates traces across multiple microservices using trace IDs,
-detecting broken chains and latency hotspots.
+Correlates traces across multiple microservices using trace IDs,
+detects broken chains and latency hotspots.
 """
 
-import argparse
 import json
-import sys
+import argparse
 import time
+import random
 import uuid
+from datetime import datetime, timedelta
 from collections import defaultdict
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timedelta
-import random
-import math
+import statistics
 
 
 @dataclass
-class Span:
+class TraceSpan:
     """Represents a single span in a distributed trace."""
-    span_id: str
     trace_id: str
+    span_id: str
     parent_span_id: Optional[str]
-    operation_name: str
     service_name: str
+    operation_name: str
     start_time: float
     end_time: float
     duration_ms: float
     status: str
-    attributes: Dict[str, str]
+    tags: Dict[str, str]
     
-    def to_dict(self):
+    def to_dict(self) -> dict:
         return asdict(self)
 
 
 @dataclass
 class TraceChain:
-    """Represents a complete or broken trace chain."""
+    """Represents a complete trace chain across services."""
     trace_id: str
-    spans: List[Span]
-    is_complete: bool
-    broken_links: List[Tuple[str, str]]
+    spans: List[TraceSpan]
     total_duration_ms: float
+    service_count: int
+    is_complete: bool
+    broken_links: List[str]
     latency_hotspots: List[Tuple[str, float]]
-
+    
 
 class TraceCorrelationEngine:
-    """Engine for correlating traces across microservices and detecting issues."""
+    """Correlates distributed traces and detects issues."""
     
-    def __init__(self, latency_threshold_ms: float = 100.0, 
-                 min_span_duration_ms: float = 10.0):
-        self.spans_by_trace: Dict[str, List[Span]] = defaultdict(list)
+    def __init__(
+        self,
+        latency_threshold_ms: float = 100.0,
+        min_service_hops: int = 2
+    ):
         self.latency_threshold_ms = latency_threshold_ms
-        self.min_span_duration_ms = min_span_duration_ms
-        self.trace_chains: Dict[str, TraceChain] = {}
+        self.min_service_hops = min_service_hops
+        self.traces: Dict[str, List[TraceSpan]] = defaultdict(list)
+        self.correlation_results: List[TraceChain] = []
         
-    def ingest_span(self, span: Span) -> None:
-        """Ingest a span into the correlation engine."""
-        self.spans_by_trace[span.trace_id].append(span)
-    
-    def ingest_spans(self, spans: List[Span]) -> None:
+    def ingest_span(self, span: TraceSpan) -> None:
+        """Ingest a single span into the correlation engine."""
+        self.traces[span.trace_id].append(span)
+        
+    def ingest_spans(self, spans: List[TraceSpan]) -> None:
         """Ingest multiple spans."""
         for span in spans:
             self.ingest_span(span)
     
-    def correlate_traces(self) -> Dict[str, TraceChain]:
-        """Correlate all ingested spans into trace chains."""
-        self.trace_chains = {}
-        
-        for trace_id, spans in self.spans_by_trace.items():
-            chain = self._build_trace_chain(trace_id, spans)
-            self.trace_chains[trace_id] = chain
-        
-        return self.trace_chains
-    
-    def _build_trace_chain(self, trace_id: str, spans: List[Span]) -> TraceChain:
-        """Build a trace chain from spans, detecting breaks and hotspots."""
-        if not spans:
-            return TraceChain(
-                trace_id=trace_id,
-                spans=[],
-                is_complete=False,
-                broken_links=[],
-                total_duration_ms=0.0,
-                latency_hotspots=[]
-            )
-        
-        # Sort spans by start time
-        sorted_spans = sorted(spans, key=lambda s: s.start_time)
-        
-        # Build parent-child relationships
-        spans_by_id = {s.span_id: s for s in sorted_spans}
-        parent_map = defaultdict(list)
-        for span in sorted_spans:
-            if span.parent_span_id:
-                parent_map[span.parent_span_id].append(span)
-        
-        # Detect broken links (spans with missing parents)
+    def _validate_trace_chain(self, trace_id: str, spans: List[TraceSpan]) -> Tuple[bool, List[str]]:
+        """Validate that a trace chain is complete and detect broken links."""
         broken_links = []
-        for span in sorted_spans:
-            if span.parent_span_id and span.parent_span_id not in spans_by_id:
-                broken_links.append((span.span_id, span.parent_span_id))
         
-        # Calculate total duration
-        min_start = min(s.start_time for s in sorted_spans)
-        max_end = max(s.end_time for s in sorted_spans)
-        total_duration_ms = (max_end - min_start) * 1000
+        if not spans:
+            return False, ["No spans found for trace"]
         
-        # Detect latency hotspots
-        latency_hotspots = self._detect_latency_hotspots(sorted_spans)
-        
-        # Determine if chain is complete
-        is_complete = len(broken_links) == 0 and len(sorted_spans) > 0
-        
-        return TraceChain(
-            trace_id=trace_id,
-            spans=sorted_spans,
-            is_complete=is_complete,
-            broken_links=broken_links,
-            total_duration_ms=total_duration_ms,
-            latency_hotspots=latency_hotspots
-        )
-    
-    def _detect_latency_hotspots(self, spans: List[Span]) -> List[Tuple[str, float]]:
-        """Detect spans with high latency."""
-        hotspots = []
+        spans_by_id = {span.span_id: span for span in spans}
+        parent_ids = set()
         
         for span in spans:
-            if span.duration_ms >= self.latency_threshold_ms:
-                hotspots.append((span.span_id, span.duration_ms))
+            if span.parent_span_id:
+                parent_ids.add(span.parent_span_id)
         
-        # Sort by duration descending
+        root_spans = [s for s in spans if not s.parent_span_id]
+        
+        if len(root_spans) == 0:
+            broken_links.append("No root span found (all spans have parents)")
+            return False, broken_links
+        
+        if len(root_spans) > 1:
+            broken_links.append(f"Multiple root spans found: {len(root_spans)}")
+        
+        for parent_id in parent_ids:
+            if parent_id not in spans_by_id:
+                broken_links.append(f"Missing parent span: {parent_id}")
+        
+        is_complete = len(broken_links) == 0
+        
+        return is_complete, broken_links
+    
+    def _detect_latency_hotspots(
+        self,
+        spans: List[TraceSpan],
+        threshold_ms: Optional[float] = None
+    ) -> List[Tuple[str, float]]:
+        """Detect spans with latency above threshold."""
+        if threshold_ms is None:
+            threshold_ms = self.latency_threshold_ms
+        
+        hotspots = []
+        for span in spans:
+            if span.duration_ms > threshold_ms:
+                hotspots.append((f"{span.service_name}:{span.operation_name}", span.duration_ms))
+        
         hotspots.sort(key=lambda x: x[1], reverse=True)
         return hotspots
     
-    def get_trace_summary(self, trace_id: str) -> Optional[Dict]:
-        """Get summary of a specific trace."""
-        if trace_id not in self.trace_chains:
-            return None
+    def _calculate_total_duration(self, spans: List[TraceSpan]) -> float:
+        """Calculate total trace duration from root to leaf."""
+        if not spans:
+            return 0.0
         
-        chain = self.trace_chains[trace_id]
-        return {
-            'trace_id': trace_id,
-            'span_count': len(chain.spans),
-            'service_count': len(set(s.service_name for s in chain.spans)),
-            'is_complete': chain.is_complete,
-            'total_duration_ms': round(chain.total_duration_ms, 2),
-            'broken_links': chain.broken_links,
-            'latency_hotspots': [
-                {'span_id': sid, 'duration_ms': round(dur, 2)} 
-                for sid, dur in chain.latency_hotspots
-            ]
-        }
+        min_start = min(span.start_time for span in spans)
+        max_end = max(span.end_time for span in spans)
+        
+        return (max_end - min_start) * 1000
     
-    def get_all_summaries(self) -> List[Dict]:
-        """Get summaries of all traces."""
-        summaries = []
-        for trace_id in self.trace_chains:
-            summary = self.get_trace_summary(trace_id)
-            if summary:
-                summaries.append(summary)
-        return summaries
+    def _calculate_service_count(self, spans: List[TraceSpan]) -> int:
+        """Count unique services in trace."""
+        return len(set(span.service_name for span in spans))
+    
+    def correlate_traces(self) -> List[TraceChain]:
+        """Correlate all ingested traces and detect issues."""
+        self.correlation_results = []
+        
+        for trace_id, spans in self.traces.items():
+            spans_sorted = sorted(spans, key=lambda s: s.start_time)
+            
+            is_complete, broken_links = self._validate_trace_chain(trace_id, spans_sorted)
+            hotspots = self._detect_latency_hotspots(spans_sorted)
+            total_duration = self._calculate_total_duration(spans_sorted)
+            service_count = self._calculate_service_count(spans_sorted)
+            
+            chain = TraceChain(
+                trace_id=trace_id,
+                spans=spans_sorted,
+                total_duration_ms=total_duration,
+                service_count=service_count,
+                is_complete=is_complete,
+                broken_links=broken_links,
+                latency_hotspots=hotspots
+            )
+            
+            self.correlation_results.append(chain)
+        
+        return self.correlation_results
+    
+    def get_trace_summary(self, trace_id: str) -> Optional[Dict]:
+        """Get summary for a specific trace."""
+        for chain in self.correlation_results:
+            if chain.trace_id == trace_id:
+                return {
+                    "trace_id": chain.trace_id,
+                    "total_duration_ms": chain.total_duration_ms,
+                    "span_count": len(chain.spans),
+                    "service_count": chain.service_count,
+                    "is_complete": chain.is_complete,
+                    "broken_links": chain.broken_links,
+                    "latency_hotspots": chain.latency_hotspots,
+                    "services": list(set(s.service_name for s in chain.spans))
+                }
+        return None
+    
+    def get_health_report(self) -> Dict:
+        """Generate overall health report."""
+        if not self.correlation_results:
+            return {
+                "total_traces": 0,
+                "complete_traces": 0,
+                "broken_traces": 0,
+                "traces_with_hotspots": 0,
+                "avg_total_duration_ms": 0.0,
+                "max_total_duration_ms": 0.0,
+                "avg_span_count": 0.0
+            }
+        
+        complete_count = sum(1 for c in self.correlation_results if c.is_complete)
+        broken_count = len(self.correlation_results) - complete_count
+        hotspot_count = sum(1 for c in self.correlation_results if c.latency_hotspots)
+        
+        durations = [c.total_duration_ms for c in self.correlation_results]
+        span_counts = [len(c.spans) for c in self.correlation_results]
+        
+        return {
+            "total_traces": len(self.correlation_results),
+            "complete_traces": complete_count,
+            "broken_traces": broken_count,
+            "traces_with_hotspots": hotspot_count,
+            "avg_total_duration_ms": statistics.mean(durations) if durations else 0.0,
+            "max_total_duration_ms": max(durations) if durations else 0.0,
+            "min_total_duration_ms": min(durations) if durations else 0.0,
+            "avg_span_count": statistics.mean(span_counts) if span_counts else 0.0,
+            "timestamp": datetime.now().isoformat()
+        }
     
     def detect_broken_chains(self) -> List[Dict]:
-        """Detect traces with broken chains."""
+        """Detect and report all broken trace chains."""
         broken = []
-        for trace_id, chain in self.trace_chains.items():
-            if not chain.is_complete or chain.broken_links:
+        
+        for chain in self.correlation_results:
+            if not chain.is_complete:
                 broken.append({
-                    'trace_id': trace_id,
-                    'span_count': len(chain.spans),
-                    'broken_links': chain.broken_links,
-                    'missing_parent_ids': [parent_id for _, parent_id in chain.broken_links]
+                    "trace_id": chain.trace_id,
+                    "service_count": chain.service_count,
+                    "span_count": len(chain.spans),
+                    "broken_links": chain.broken_links,
+                    "severity": "high" if len(chain.broken_links) > 2 else "medium"
                 })
-        return broken
+        
+        return sorted(broken, key=lambda x: len(x["broken_links"]), reverse=True)
     
-    def detect_latency_issues(self) -> List[Dict]:
-        """Detect traces with significant latency issues."""
-        issues = []
-        for trace_id, chain in self.trace_chains.items():
-            if chain.latency_hotspots:
-                issues.append({
-                    'trace_id': trace_id,
-                    'total_duration_ms': round(chain.total_duration_ms, 2),
-                    'hotspot_count': len(chain.latency_hotspots),
-                    'top_hotspots': [
-                        {
-                            'span_id': sid,
-                            'duration_ms': round(dur, 2),
-                            'percentage_of_total': round((dur / chain.total_duration_ms * 100) if chain.total_duration_ms > 0 else 0, 1)
-                        }
-                        for sid, dur in chain.latency_hotspots[:3]
-                    ]
+    def detect_latency_issues(self, top_n: int = 10) -> List[Dict]:
+        """Detect and report latency hotspots across all traces."""
+        all_hotspots = []
+        
+        for chain in self.correlation_results:
+            for span_desc, duration_ms in chain.latency_hotspots:
+                all_hotspots.append({
+                    "trace_id": chain.trace_id,
+                    "span": span_desc,
+                    "duration_ms": duration_ms,
+                    "threshold_ms": self.latency_threshold_ms,
+                    "excess_ms": duration_ms - self.latency_threshold_ms
                 })
-        return issues
-    
-    def get_service_dependency_graph(self) -> Dict:
-        """Build a service dependency graph from traces."""
-        edges = defaultdict(set)
-        services = set()
         
-        for trace_id, chain in self.trace_chains.items():
-            spans_by_id = {s.span_id: s for s in chain.spans}
-            
-            for span in chain.spans:
-                services.add(span.service_name)
-                
-                if span.parent_span_id and span.parent_span_id in spans_by_id:
-                    parent_span = spans_by_id[span.parent_span_id]
-                    edge = (parent_span.service_name, span.service_name)
-                    edges[edge[0]].add(edge[1])
-        
-        return {
-            'services': sorted(list(services)),
-            'dependencies': {
-                src: sorted(list(dests))
-                for src, dests in edges.items()
-            }
-        }
+        all_hotspots.sort(key=lambda x: x["duration_ms"], reverse=True)
+        return all_hotspots[:top_n]
     
     def export_traces_json(self) -> str:
-        """Export all trace summaries as JSON."""
-        output = {
-            'timestamp': datetime.now().isoformat(),
-            'trace_count': len(self.trace_chains),
-            'traces': self.get_all_summaries(),
-            'broken_chains': self.detect_broken_chains(),
-            'latency_issues': self.detect_latency_issues(),
-            'service_graph': self.get_service_dependency_graph()
+        """Export all correlated traces as JSON."""
+        export_data = {
+            "export_timestamp": datetime.now().isoformat(),
+            "health_report": self.get_health_report(),
+            "traces": []
         }
-        return json.dumps(output, indent=2)
+        
+        for chain in self.correlation_results:
+            trace_data = {
+                "trace_id": chain.trace_id,
+                "total_duration_ms": chain.total_duration_ms,
+                "service_count": chain.service_count,
+                "span_count": len(chain.spans),
+                "is_complete": chain.is_complete,
+                "broken_links": chain.broken_links,
+                "latency_hotspots": chain.latency_hotspots,
+                "spans": [span.to_dict() for span in chain.spans]
+            }
+            export_data["traces"].append(trace_data)
+        
+        return json.dumps(export_data, indent=2, default=str)
 
 
-def generate_sample_trace(trace_id: str, service_count: int = 3, 
-                          span_count_per_service: int = 2,
-                          introduce_broken_link: bool = False,
-                          introduce_latency: bool = False) -> List[Span]:
+def generate_sample_traces(
+    num_traces: int = 5,
+    num_spans_per_trace: int = 8,
+    introduce_broken: bool = True,
+    introduce_latency: bool = True
+) -> List[TraceSpan]:
     """Generate sample trace data for testing."""
-    spans = []
-    services = [f"service-{i}" for i in range(service_count)]
-    base_time = time.time()
-    parent_span_id = None
+    services = ["api-gateway", "auth-service", "db-service", "cache-service", "ml-service"]
+    operations = ["authenticate", "query", "fetch", "store", "predict", "validate"]
     
-    for service_idx, service in enumerate(services):
-        for span_idx in range(span_count_per_service):
+    spans = []
+    
+    for trace_idx in range(num_traces):
+        trace_id = str(uuid.uuid4())
+        base_time = time.time() - random.uniform(0, 3600)
+        current_time = base_time
+        parent_span_id = None
+        
+        for span_idx in range(num_spans_per_trace):
+            service = random.choice(services)
+            operation = random.choice(operations)
             span_id = str(uuid.uuid4())
-            start_time = base_time + (service_idx * 0.5) + (span_idx * 0.1)
             
-            if introduce_latency and service_idx == 1 and span_idx == 0:
-                duration = random.uniform(150, 300)
-            else:
-                duration = random.uniform(10, 50)
+            duration = random.uniform(10, 500)
+            if introduce_latency and span_idx == num_spans_per_trace - 2:
+                duration = random.uniform(500, 2000)
             
+            start_time = current_time
             end_time = start_time + (duration / 1000.0)
+            current_time = end_time + random.uniform(0.001, 0.05)
             
-            # Create broken link if requested
-            if introduce_broken_link and service_idx == 2 and span_idx == 0:
-                parent_span_id = str(uuid.uuid4())
-            
-            span = Span(
-                span_id=span_id,
+            span = TraceSpan(
                 trace_id=trace_id,
+                span_id=span_id,
                 parent_span_id=parent_span_id,
-                operation_name=f"{service}-op-{span_idx}",
                 service_name=service,
+                operation_name=operation,
                 start_time=start_time,
                 end_time=end_time,
                 duration_ms=duration,
-                status="OK" if random.random() > 0.1 else "ERROR",
-                attributes={
-                    'component': service,
-                    'span_kind': 'INTERNAL',
-                    'http.method': 'GET' if service_idx % 2 == 0 else 'POST'
+                status="success" if random.random() > 0.1 else "error",
+                tags={
+                    "http.method": random.choice(["GET", "POST", "PUT"]),
+                    "http.status_code": random.choice(["200", "201", "400", "500"]),
+                    "db.type": "postgresql",
+                    "cache.hit": str(random.choice([True, False]))
                 }
             )
+            
             spans.append(span)
             parent_span_id = span_id
+        
+        if introduce_broken and trace_idx % 3 == 0:
+            broken_span = TraceSpan(
+                trace_id=trace_id,
+                span_id=str(uuid.uuid4()),
+                parent_span_id=str(uuid.uuid4()),
+                service_name=random.choice(services),
+                operation_name=random.choice(operations),
+                start_time=current_time,
+                end_time=current_time + 0.1,
+                duration_ms=100,
+                status="error",
+                tags={"orphaned": "true"}
+            )
+            spans.append(broken_span)
     
     return spans
 
 
 def main():
-    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description='Distributed Trace Correlation Engine for AI Agent Observability'
+        description="Distributed trace correlation engine for observability"
     )
     parser.add_argument(
-        '--latency-threshold',
+        "--num-traces",
+        type=int,
+        default=10,
+        help="Number of sample traces to generate"
+    )
+    parser.add_argument(
+        "--spans-per-trace",
+        type=int,
+        default=8,
+        help="Number of spans per trace"
+    )
+    parser.add_argument(
+        "--latency-threshold-ms",
         type=float,
         default=100.0,
-        help='Latency threshold in milliseconds for detecting hotspots (default: 100.0)'
+        help="Latency threshold in milliseconds for hotspot detection"
     )
     parser.add_argument(
-        '--min-span-duration',
-        type=float,
-        default=10.0,
-        help='Minimum span duration in milliseconds (default: 10.0)'
+        "--output-format",
+        choices=["summary", "detailed", "json", "health"],
+        default="summary",
+        help="Output format for results"
     )
     parser.add_argument(
-        '--demo-traces',
-        type=int,
-        default=5,
-        help='Number of sample traces to generate for demo (default: 5)'
+        "--detect-broken",
+        action="store_true",
+        default=True,
+        help="Detect broken trace chains"
     )
     parser.add_argument(
-        '--output-format',
-        choices=['json', 'summary'],
-        default='json',
-        help='Output format (default: json)'
-    )
-    parser.add_argument(
-        '--include-broken-links',
-        action='store_true',
-        help='Include broken trace links in demo data'
-    )
-    parser.add_argument(
-        '--include-latency-issues',
-        action='store_true',
-        help='Include latency hotspots in demo data'
+        "--detect-latency",
+        action="store_true",
+        default=True,
+        help="Detect latency hotspots"
     )
     
     args = parser.parse_args()
     
-    # Initialize engine
+    print("[*] Initializing Trace Correlation Engine")
     engine = TraceCorrelationEngine(
-        latency_threshold_ms=args.latency_threshold,
-        min_span_duration_ms=args.min_span_duration
+        latency_threshold_ms=args.latency_threshold_ms,
+        min_service_hops=2
     )
     
-    # Generate and ingest sample traces
-    for i in range(args.demo_traces):
-        trace_id = str(uuid.uuid4())
-        spans = generate_sample_trace(
-            trace_id,
-            service_count=random.randint(2, 4),
-            span_count_per_service=random.randint(1, 3),
-            introduce_broken_link=args.include_broken_links and i % 3 == 0,
-            introduce_latency=args.include_latency_issues and i % 2 == 0
-        )
-        engine.ingest_spans(spans)
+    print(f"[*] Generating {args.num_traces} sample traces...")
+    sample_spans = generate_sample_traces(
+        num_traces=args.num_traces,
+        num_spans_per_trace=args.spans_per_trace,
+        introduce_broken=args.detect_broken,
+        introduce_latency=args.detect_latency
+    )
     
-    # Correlate traces
-    engine.correlate_traces()
+    print(f"[*] Ingesting {len(sample_spans)} spans...")
+    engine.ingest_spans(sample_spans)
     
-    # Output results
-    if args.output_format == 'json':
-        print(engine.export_traces_json())
-    else:
-        summaries = engine.get_all_summaries()
-        print(f"Trace Summary ({len(summaries)} traces)")
-        print("=" * 80)
-        for summary in summaries:
-            print(f"\nTrace ID: {summary['trace_id']}")
-            print(f"  Spans: {summary['span_count']}, Services: {summary['service_count']}")
-            print(f"  Complete: {summary['is_complete']}, Duration: {summary['total_duration_ms']}ms")
-            if summary['broken_links']:
-                print(f"  Broken Links: {len(summary['broken_links'])}")
-            if summary['latency_hotspots']:
-                print(f"  Hotspots: {len(summary['latency_hotspots'])}")
+    print("[*] Correlating traces...")
+    results = engine.correlate_traces()
+    print(f"[+] Correlated {len(results)} traces\n")
+    
+    if args.output_format == "health":
+        report = engine.get_health_report()
+        print("=== HEALTH REPORT ===")
+        print(json.dumps(report, indent=2))
         
-        broken = engine.detect_broken_chains()
-        if broken:
-            print(f"\n\nBroken Chains: {len(broken)}")
-            print("=" * 80)
-            for item in broken:
-                print(f"Trace {item['trace_id']}: {len(item['missing_parent_ids'])} missing parents")
+    elif args.output_format == "summary":
+        report = engine.get_health_report()
+        print("=== CORRELATION SUMMARY ===")
+        print(f"Total Traces: {report['total_traces']}")
+        print(f"Complete Traces: {report['complete_traces']}")
+        print(f"Broken Traces: {report['broken_traces']}")
+        print(f"Traces with Hotspots: {report['traces_with_hotspots']}")
+        print(f"Avg Span Count: {report['avg_span_count']:.1f}")
+        print(f"Avg Total Duration: {report['avg_total_duration_ms']:.2f}ms")
+        print(f"Max Total Duration: {report['max_total_duration_ms']:.2f}ms\n")
         
-        latency_issues = engine.detect_latency_issues()
-        if latency_issues:
-            print(f"\n\nLatency Issues: {len(latency_issues)}")
-            print("=" * 80)
-            for item in latency_issues:
-                print(f"Trace {item['trace_id']}: {item['total_duration_ms']}ms total")
-                for hotspot in item['top_hotspots']:
-                    print(f"  {hotspot['span_id']}: {hotspot['duration_ms']}ms ({hotspot['percentage_of_total']}%)")
+        if args.detect_broken:
+            broken = engine.detect_broken_chains()
+            if broken:
+                print("=== BROKEN TRACE CHAINS ===")
+                for issue in broken:
+                    print(f"  Trace {issue['trace_id'][:8]}...: {len(issue['broken_links'])} broken links")
+                    for link in issue['broken_links']:
+                        print(f"    - {link}")
+                print()
         
-        dep_graph = engine.get_service_dependency_graph()
-        print(f"\n\nService Dependencies")
-        print("=" * 80)
-        print(f"Services: {', '.join(dep_graph['services'])}")
-        for src, dests in dep_graph['dependencies'].items():
-            print(f"  {src} -> {', '.join(dests)
+        if args.detect_latency:
+            hotspots = engine.detect_latency_issues(top_n=5)
+            if hotspots:
+                print("=== TOP LATENCY HOTSPOTS ===")
+                for i, spot in enumerate(hotspots, 1):
+                    print(f"  {i}. {spot['span']}: {spot['duration_ms']:.2f}ms "
+                          f"(+{spot['excess_ms']:.2f}ms over threshold)")
+                print()
+    
+    elif args.output_format == "detailed":
+        print("=== DETAILED TRACE ANALYSIS ===\n")
+        for i, chain in enumerate(results[:5], 1):
+            print(f"Trace #{i}: {chain.trace_id}")
+            print(f"  Duration: {chain.total_duration_ms:.2f}ms")
+            print(f"  Services: {chain.service_count}")
+            print(f"  Spans: {len(chain.spans)}")
+            print(f"  Status: {'COMPLETE' if chain.is_complete else 'BROKEN'}")
+            if chain.broken_links:
+                print(f"  Issues: {', '.join(chain.broken_links)}")
+            if chain.latency_hotspots:
+                print(f"  Hotspots: {len(chain.latency_hotspots)}")
+                for span_desc, duration in chain.latency_hotspots[:2]:
+                    print(f"    - {span_desc}: {duration:.2f}ms")
+            print()
+    
+    elif args.output_format == "json":
+        json_output = engine.export_traces_json()
+        print(json_output)
+
+
+if __name__ == "__main__":
+    main()
