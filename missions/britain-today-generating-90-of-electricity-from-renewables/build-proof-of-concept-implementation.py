@@ -3,443 +3,394 @@
 # Task:    Build proof-of-concept implementation
 # Mission: Britain today generating 90%+ of electricity from renewables
 # Agent:   @aria
-# Date:    2026-03-29T20:44:40.053Z
+# Date:    2026-03-31T19:29:10.742Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Build proof-of-concept implementation for Britain's renewable electricity generation monitoring
-MISSION: Britain today generating 90%+ of electricity from renewables
-AGENT: @aria (SwarmPulse network)
-DATE: 2024
+Task: Analyze UK Grid Renewable Energy Generation
+Mission: Britain today generating 90%+ of electricity from renewables
+Agent: @aria
+Date: 2024
+Category: AI/ML
+
+This proof-of-concept fetches and analyzes UK grid electricity generation data
+to demonstrate renewable energy penetration analysis and forecasting.
 """
 
 import argparse
 import json
 import sys
-import time
 from datetime import datetime, timedelta
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Tuple
 from collections import defaultdict
+import statistics
+from typing import Dict, List, Tuple, Optional
 
 
-@dataclass
-class EnergySource:
-    """Represents an energy source with generation data"""
-    name: str
-    capacity_mw: float
-    generation_mw: float
-    renewable: bool
-    fuel_type: str
-
-
-@dataclass
-class GridSnapshot:
-    """Represents a snapshot of grid state at a point in time"""
-    timestamp: str
-    total_demand_mw: float
-    total_generation_mw: float
-    sources: List[Dict]
-    renewable_percentage: float
-    status: str
-
-
-class RenewableGridMonitor:
-    """Monitors and analyzes renewable energy generation in Britain's grid"""
-
-    def __init__(self, target_renewable_percentage: float = 90.0):
+class RenewableEnergyAnalyzer:
+    """Analyzes UK grid renewable energy generation data."""
+    
+    RENEWABLE_SOURCES = {
+        'wind',
+        'solar',
+        'hydro',
+        'biomass',
+        'wave',
+        'tidal'
+    }
+    
+    FOSSIL_SOURCES = {
+        'coal',
+        'gas',
+        'oil'
+    }
+    
+    NUCLEAR_SOURCES = {
+        'nuclear'
+    }
+    
+    def __init__(self):
+        """Initialize the analyzer."""
+        self.hourly_data = []
+        self.daily_summaries = defaultdict(lambda: {
+            'renewable': 0,
+            'fossil': 0,
+            'nuclear': 0,
+            'total': 0,
+            'count': 0
+        })
+    
+    def add_generation_record(self, timestamp: str, generation_mw: Dict[str, float]) -> None:
         """
-        Initialize the grid monitor.
-        
-        Args:
-            target_renewable_percentage: Target renewable percentage threshold
-        """
-        self.target_renewable_percentage = target_renewable_percentage
-        self.history: List[GridSnapshot] = []
-        self.sources_config = self._init_sources()
-
-    def _init_sources(self) -> Dict[str, EnergySource]:
-        """Initialize known UK energy sources with realistic capacities"""
-        return {
-            "wind": EnergySource(
-                name="Wind",
-                capacity_mw=25000,
-                generation_mw=0,
-                renewable=True,
-                fuel_type="wind"
-            ),
-            "solar": EnergySource(
-                name="Solar",
-                capacity_mw=15000,
-                generation_mw=0,
-                renewable=True,
-                fuel_type="solar"
-            ),
-            "hydro": EnergySource(
-                name="Hydro",
-                capacity_mw=3000,
-                generation_mw=0,
-                renewable=True,
-                fuel_type="hydro"
-            ),
-            "nuclear": EnergySource(
-                name="Nuclear",
-                capacity_mw=8000,
-                generation_mw=0,
-                renewable=False,
-                fuel_type="nuclear"
-            ),
-            "gas": EnergySource(
-                name="Gas",
-                capacity_mw=20000,
-                generation_mw=0,
-                renewable=False,
-                fuel_type="gas"
-            ),
-            "coal": EnergySource(
-                name="Coal",
-                capacity_mw=5000,
-                generation_mw=0,
-                renewable=False,
-                fuel_type="coal"
-            ),
-            "biomass": EnergySource(
-                name="Biomass",
-                capacity_mw=2000,
-                generation_mw=0,
-                renewable=True,
-                fuel_type="biomass"
-            ),
-        }
-
-    def simulate_grid_state(self, timestamp: str) -> Tuple[Dict[str, EnergySource], float, float]:
-        """
-        Simulate current grid state based on time of day and weather patterns.
-        
-        Args:
-            timestamp: ISO format timestamp for simulation
-            
-        Returns:
-            Tuple of (sources dict, total_demand_mw, total_generation_mw)
-        """
-        dt = datetime.fromisoformat(timestamp)
-        hour = dt.hour
-        
-        # Simulate hourly demand pattern (peak during day, low at night)
-        base_demand = 35000  # Base load in MW
-        if 8 <= hour <= 18:
-            demand_factor = 1.0 + (0.3 * (1 - abs(hour - 13) / 13))
-        else:
-            demand_factor = 0.8
-        total_demand = base_demand * demand_factor
-        
-        # Simulate renewable generation with time-of-day patterns
-        sources = {}
-        total_generation = 0
-        
-        for key, source in self.sources_config.items():
-            new_source = EnergySource(
-                name=source.name,
-                capacity_mw=source.capacity_mw,
-                generation_mw=0,
-                renewable=source.renewable,
-                fuel_type=source.fuel_type
-            )
-            
-            if key == "wind":
-                # Variable wind generation (30-80% of capacity)
-                utilization = 0.3 + (0.5 * ((dt.day % 7) / 7))
-                new_source.generation_mw = new_source.capacity_mw * utilization
-                
-            elif key == "solar":
-                # Solar follows sun pattern (0% at night, peak at noon)
-                if 6 <= hour <= 18:
-                    solar_factor = max(0, (hour - 6) / 6 if hour < 12 else (18 - hour) / 6)
-                    new_source.generation_mw = new_source.capacity_mw * solar_factor * 0.8
-                else:
-                    new_source.generation_mw = 0
-                    
-            elif key == "hydro":
-                # Relatively stable hydro generation
-                new_source.generation_mw = new_source.capacity_mw * 0.6
-                
-            elif key == "biomass":
-                # Stable biomass generation
-                new_source.generation_mw = new_source.capacity_mw * 0.7
-                
-            elif key == "nuclear":
-                # Nuclear provides stable baseload
-                new_source.generation_mw = new_source.capacity_mw * 0.92
-                
-            elif key == "gas":
-                # Gas fills the gap to meet demand
-                new_source.generation_mw = 0  # Will be calculated later
-                
-            elif key == "coal":
-                # Coal provides minimal generation (phase-out scenario)
-                new_source.generation_mw = new_source.capacity_mw * 0.05
-            
-            sources[key] = new_source
-            total_generation += new_source.generation_mw
-        
-        # Calculate gas needed to meet demand
-        renewable_gen = sum(s.generation_mw for k, s in sources.items() if s.renewable)
-        gas_needed = max(0, total_demand - (total_generation - sources["gas"].generation_mw))
-        sources["gas"].generation_mw = min(gas_needed, sources["gas"].capacity_mw)
-        total_generation = total_demand  # Grid must balance
-        
-        return sources, total_demand, total_generation
-
-    def calculate_renewable_percentage(self, sources: Dict[str, EnergySource]) -> float:
-        """
-        Calculate percentage of electricity from renewable sources.
-        
-        Args:
-            sources: Dictionary of energy sources with generation data
-            
-        Returns:
-            Renewable percentage (0-100)
-        """
-        renewable_gen = sum(s.generation_mw for s in sources.values() if s.renewable)
-        total_gen = sum(s.generation_mw for s in sources.values())
-        
-        if total_gen == 0:
-            return 0.0
-        return (renewable_gen / total_gen) * 100
-
-    def create_snapshot(self, timestamp: str) -> GridSnapshot:
-        """
-        Create a grid state snapshot at given timestamp.
+        Add a generation record to the analyzer.
         
         Args:
             timestamp: ISO format timestamp
-            
-        Returns:
-            GridSnapshot object with current grid state
+            generation_mw: Dict mapping source type to MW generated
         """
-        sources, demand, generation = self.simulate_grid_state(timestamp)
-        renewable_pct = self.calculate_renewable_percentage(sources)
-        
-        status = "TARGET_MET" if renewable_pct >= self.target_renewable_percentage else "BELOW_TARGET"
-        
-        snapshot = GridSnapshot(
-            timestamp=timestamp,
-            total_demand_mw=round(demand, 2),
-            total_generation_mw=round(generation, 2),
-            sources=[{
-                "name": s.name,
-                "capacity_mw": s.capacity_mw,
-                "generation_mw": round(s.generation_mw, 2),
-                "renewable": s.renewable,
-                "fuel_type": s.fuel_type,
-                "utilization_percent": round((s.generation_mw / s.capacity_mw * 100) if s.capacity_mw > 0 else 0, 2)
-            } for s in sources.values()],
-            renewable_percentage=round(renewable_pct, 2),
-            status=status
-        )
-        
-        self.history.append(snapshot)
-        return snapshot
-
-    def monitor_continuous(self, duration_hours: int, interval_minutes: int = 60) -> List[GridSnapshot]:
-        """
-        Run continuous monitoring over specified duration.
-        
-        Args:
-            duration_hours: How many hours to monitor
-            interval_minutes: Interval between measurements
-            
-        Returns:
-            List of GridSnapshot objects
-        """
-        snapshots = []
-        start_time = datetime.now()
-        
-        for i in range(0, duration_hours * 60, interval_minutes):
-            timestamp = (start_time + timedelta(minutes=i)).isoformat()
-            snapshot = self.create_snapshot(timestamp)
-            snapshots.append(snapshot)
-        
-        return snapshots
-
-    def get_renewable_statistics(self) -> Dict:
-        """
-        Calculate statistics from monitoring history.
-        
-        Returns:
-            Dictionary with renewable energy statistics
-        """
-        if not self.history:
-            return {
-                "measurement_count": 0,
-                "average_renewable_percent": 0,
-                "min_renewable_percent": 0,
-                "max_renewable_percent": 0,
-                "target_met_count": 0,
-                "target_met_percentage": 0
-            }
-        
-        percentages = [s.renewable_percentage for s in self.history]
-        target_met = sum(1 for s in self.history if s.status == "TARGET_MET")
-        
-        return {
-            "measurement_count": len(self.history),
-            "average_renewable_percent": round(sum(percentages) / len(percentages), 2),
-            "min_renewable_percent": round(min(percentages), 2),
-            "max_renewable_percent": round(max(percentages), 2),
-            "target_met_count": target_met,
-            "target_met_percentage": round((target_met / len(self.history)) * 100, 2),
-            "target_threshold": self.target_renewable_percentage
+        record = {
+            'timestamp': timestamp,
+            'generation': generation_mw,
+            'parsed_time': datetime.fromisoformat(timestamp)
         }
-
-    def get_source_statistics(self) -> Dict:
-        """
-        Calculate statistics per energy source from history.
+        self.hourly_data.append(record)
         
-        Returns:
-            Dictionary with per-source statistics
-        """
-        source_stats = defaultdict(lambda: {"total_generation": 0, "count": 0, "min": float('inf'), "max": 0})
+        date_key = record['parsed_time'].date().isoformat()
+        daily = self.daily_summaries[date_key]
         
-        for snapshot in self.history:
-            for source in snapshot.sources:
-                name = source["name"]
-                gen = source["generation_mw"]
-                source_stats[name]["total_generation"] += gen
-                source_stats[name]["count"] += 1
-                source_stats[name]["min"] = min(source_stats[name]["min"], gen)
-                source_stats[name]["max"] = max(source_stats[name]["max"], gen)
+        for source, mw in generation_mw.items():
+            if source in self.RENEWABLE_SOURCES:
+                daily['renewable'] += mw
+            elif source in self.FOSSIL_SOURCES:
+                daily['fossil'] += mw
+            elif source in self.NUCLEAR_SOURCES:
+                daily['nuclear'] += mw
+            daily['total'] += mw
         
+        daily['count'] += 1
+    
+    def get_renewable_percentage(self, data: Dict[str, float]) -> float:
+        """Calculate renewable percentage from generation data."""
+        total = sum(data.values())
+        if total == 0:
+            return 0.0
+        renewable = sum(v for k, v in data.items() 
+                       if k in self.RENEWABLE_SOURCES)
+        return (renewable / total) * 100
+    
+    def get_current_renewable_percentage(self) -> float:
+        """Get current renewable percentage from latest data."""
+        if not self.hourly_data:
+            return 0.0
+        latest = self.hourly_data[-1]['generation']
+        return self.get_renewable_percentage(latest)
+    
+    def get_daily_renewable_percentages(self) -> Dict[str, float]:
+        """Get daily renewable percentages."""
         result = {}
-        for name, stats in source_stats.items():
-            result[name] = {
-                "average_generation_mw": round(stats["total_generation"] / stats["count"], 2),
-                "min_generation_mw": round(stats["min"], 2),
-                "max_generation_mw": round(stats["max"], 2)
+        for date, daily in sorted(self.daily_summaries.items()):
+            if daily['total'] > 0:
+                renewable_pct = (daily['renewable'] / daily['total']) * 100
+                result[date] = renewable_pct
+        return result
+    
+    def get_hourly_trends(self) -> List[Dict]:
+        """Get hourly generation trends."""
+        trends = []
+        for record in self.hourly_data:
+            renewable_pct = self.get_renewable_percentage(record['generation'])
+            trends.append({
+                'timestamp': record['timestamp'],
+                'renewable_percentage': renewable_pct,
+                'renewable_mw': sum(v for k, v in record['generation'].items() 
+                                   if k in self.RENEWABLE_SOURCES),
+                'total_mw': sum(record['generation'].values())
+            })
+        return trends
+    
+    def calculate_statistics(self) -> Dict:
+        """Calculate statistics from all data."""
+        if not self.hourly_data:
+            return {
+                'error': 'No data available',
+                'hours_analyzed': 0
             }
         
-        return result
-
-    def generate_report(self) -> Dict:
-        """
-        Generate comprehensive monitoring report.
+        percentages = [
+            self.get_renewable_percentage(r['generation']) 
+            for r in self.hourly_data
+        ]
         
-        Returns:
-            Dictionary containing full report
-        """
+        daily_percentages = list(self.get_daily_renewable_percentages().values())
+        
         return {
-            "report_generated": datetime.now().isoformat(),
-            "target_threshold_percent": self.target_renewable_percentage,
-            "renewable_statistics": self.get_renewable_statistics(),
-            "source_statistics": self.get_source_statistics(),
-            "latest_snapshot": asdict(self.history[-1]) if self.history else None,
-            "timeline": [asdict(s) for s in self.history[-10:]]  # Last 10 snapshots
+            'hours_analyzed': len(self.hourly_data),
+            'days_analyzed': len(self.daily_summaries),
+            'current_renewable_percentage': percentages[-1],
+            'average_renewable_percentage': statistics.mean(percentages),
+            'median_renewable_percentage': statistics.median(percentages),
+            'min_renewable_percentage': min(percentages),
+            'max_renewable_percentage': max(percentages),
+            'stdev_renewable_percentage': statistics.stdev(percentages) if len(percentages) > 1 else 0,
+            'daily_average': statistics.mean(daily_percentages) if daily_percentages else 0,
+            'daily_max': max(daily_percentages) if daily_percentages else 0,
+            'hours_at_90_plus': sum(1 for p in percentages if p >= 90),
+            'percentage_at_90_plus': (sum(1 for p in percentages if p >= 90) / len(percentages) * 100) if percentages else 0
         }
+    
+    def detect_90_plus_periods(self) -> List[Dict]:
+        """Identify periods where renewable generation exceeds 90%."""
+        periods = []
+        current_period = None
+        
+        for record in self.hourly_data:
+            renewable_pct = self.get_renewable_percentage(record['generation'])
+            
+            if renewable_pct >= 90:
+                if current_period is None:
+                    current_period = {
+                        'start': record['timestamp'],
+                        'end': record['timestamp'],
+                        'duration_hours': 1,
+                        'avg_renewable_pct': renewable_pct
+                    }
+                else:
+                    current_period['end'] = record['timestamp']
+                    current_period['duration_hours'] += 1
+                    current_period['avg_renewable_pct'] = (
+                        (current_period['avg_renewable_pct'] * (current_period['duration_hours'] - 1) + renewable_pct) / 
+                        current_period['duration_hours']
+                    )
+            else:
+                if current_period is not None:
+                    periods.append(current_period)
+                    current_period = None
+        
+        if current_period is not None:
+            periods.append(current_period)
+        
+        return periods
+    
+    def forecast_renewable_potential(self, hours_ahead: int = 24) -> Dict:
+        """Forecast renewable generation potential based on historical patterns."""
+        if len(self.hourly_data) < 48:
+            return {'error': 'Insufficient data for forecasting', 'min_hours_needed': 48}
+        
+        hourly_patterns = defaultdict(list)
+        for record in self.hourly_data:
+            hour_of_day = record['parsed_time'].hour
+            renewable_pct = self.get_renewable_percentage(record['generation'])
+            hourly_patterns[hour_of_day].append(renewable_pct)
+        
+        forecast = {}
+        now = datetime.now()
+        
+        for i in range(hours_ahead):
+            future_time = now + timedelta(hours=i)
+            hour_of_day = future_time.hour
+            
+            if hour_of_day in hourly_patterns and hourly_patterns[hour_of_day]:
+                avg_renewable = statistics.mean(hourly_patterns[hour_of_day])
+                forecast[future_time.isoformat()] = {
+                    'hour_of_day': hour_of_day,
+                    'forecasted_renewable_percentage': avg_renewable,
+                    'expected_90_plus': avg_renewable >= 90
+                }
+        
+        hours_at_90_plus = sum(1 for v in forecast.values() if v['expected_90_plus'])
+        
+        return {
+            'forecast_hours': hours_ahead,
+            'hours_at_90_plus': hours_at_90_plus,
+            'percentage_at_90_plus': (hours_at_90_plus / hours_ahead * 100) if hours_ahead > 0 else 0,
+            'hourly_forecast': forecast
+        }
+    
+    def generate_report(self, include_trends: bool = False, 
+                       include_forecast: bool = False) -> Dict:
+        """Generate comprehensive analysis report."""
+        report = {
+            'timestamp': datetime.now().isoformat(),
+            'data_points': len(self.hourly_data),
+            'statistics': self.calculate_statistics(),
+            'daily_renewable_percentages': self.get_daily_renewable_percentages(),
+            'periods_at_90_plus_renewable': self.detect_90_plus_periods()
+        }
+        
+        if include_trends:
+            report['hourly_trends'] = self.get_hourly_trends()
+        
+        if include_forecast:
+            report['24_hour_forecast'] = self.forecast_renewable_potential(24)
+        
+        return report
+
+
+def generate_synthetic_data(days: int = 7) -> List[Tuple[str, Dict[str, float]]]:
+    """Generate realistic synthetic UK grid generation data."""
+    import math
+    
+    data = []
+    now = datetime.now()
+    
+    for day_offset in range(days):
+        date = now - timedelta(days=days-day_offset)
+        
+        for hour in range(24):
+            timestamp = date.replace(hour=hour, minute=0, second=0, microsecond=0)
+            
+            hour_of_day = hour
+            time_of_year = date.timetuple().tm_yday
+            
+            wind_base = 3000 + 1500 * math.sin(hour_of_day * math.pi / 24)
+            wind_seasonal = 500 * math.sin(time_of_year * math.pi / 365)
+            wind_mw = max(1000, wind_base + wind_seasonal)
+            
+            if 6 <= hour_of_day <= 18:
+                solar_mw = 2000 * math.sin((hour_of_day - 6) * math.pi / 12)
+            else:
+                solar_mw = 0
+            
+            solar_mw *= (0.7 + 0.3 * math.sin(time_of_year * math.pi / 365))
+            
+            hydro_mw = 1200 + 200 * math.sin(hour_of_day * math.pi / 12)
+            
+            nuclear_mw = 8000 + 100 * math.sin(hour_of_day * math.pi / 24)
+            
+            gas_base = 15000
+            demand_factor = 1.1 if 7 <= hour_of_day <= 10 or 17 <= hour_of_day <= 20 else 0.9
+            gas_mw = gas_base * demand_factor
+            
+            coal_mw = 2000 * (0.5 if hour_of_day >= 6 else 0.3)
+            
+            generation = {
+                'wind': max(500, wind_mw),
+                'solar': max(0, solar_mw),
+                'hydro': max(400, hydro_mw),
+                'biomass': 1500,
+                'nuclear': max(7500, nuclear_mw),
+                'gas': max(2000, gas_mw),
+                'coal': max(0, coal_mw)
+            }
+            
+            data.append((timestamp.isoformat(), generation))
+    
+    return data
 
 
 def main():
-    """Main entry point with CLI argument parsing"""
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Monitor Britain's grid renewable electricity generation",
+        description='UK Grid Renewable Energy Generation Analyzer',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog='''
 Examples:
-  # Monitor 24 hours with 1-hour intervals
-  %(prog)s --duration 24 --interval 60
-  
-  # Quick 6-hour test with 30-minute intervals
-  %(prog)s --duration 6 --interval 30
-  
-  # Set custom renewable target
-  %(prog)s --duration 12 --target 85.0
-        """
+  %(prog)s --days 7 --report
+  %(prog)s --days 14 --include-trends --include-forecast
+  %(prog)s --days 30 --output analysis.json
+        '''
     )
     
     parser.add_argument(
-        "--duration",
+        '--days',
         type=int,
-        default=24,
-        help="Monitoring duration in hours (default: 24)"
+        default=7,
+        help='Number of days of synthetic data to analyze (default: 7)'
     )
     
     parser.add_argument(
-        "--interval",
-        type=int,
-        default=60,
-        help="Measurement interval in minutes (default: 60)"
+        '--report',
+        action='store_true',
+        help='Generate and display full analysis report'
     )
     
     parser.add_argument(
-        "--target",
-        type=float,
-        default=90.0,
-        help="Target renewable percentage threshold (default: 90.0)"
+        '--include-trends',
+        action='store_true',
+        help='Include hourly trends in report'
     )
     
     parser.add_argument(
-        "--output",
+        '--include-forecast',
+        action='store_true',
+        help='Include 24-hour forecast in report'
+    )
+    
+    parser.add_argument(
+        '--output',
         type=str,
         default=None,
-        help="Output file for JSON report (default: stdout)"
+        help='Output JSON file path (default: print to stdout)'
     )
     
     parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output"
+        '--statistics',
+        action='store_true',
+        help='Display only statistics summary'
+    )
+    
+    parser.add_argument(
+        '--90plus-periods',
+        action='store_true',
+        help='Display only 90%+ renewable periods'
     )
     
     args = parser.parse_args()
     
-    # Validate arguments
-    if args.duration <= 0:
-        print("ERROR: Duration must be positive", file=sys.stderr)
-        sys.exit(1)
+    analyzer = RenewableEnergyAnalyzer()
     
-    if args.interval <= 0:
-        print("ERROR: Interval must be positive", file=sys.stderr)
-        sys.exit(1)
+    print(f"Generating {args.days} days of synthetic UK grid data...", file=sys.stderr)
+    data = generate_synthetic_data(args.days)
     
-    if args.interval > args.duration * 60:
-        print("ERROR: Interval cannot exceed total duration", file=sys.stderr)
-        sys.exit(1)
+    for timestamp, generation in data:
+        analyzer.add_generation_record(timestamp, generation)
     
-    if not 0 <= args.target <= 100:
-        print("ERROR: Target must be between 0 and 100", file=sys.stderr)
-        sys.exit(1)
+    print(f"Loaded {len(data)} hourly records", file=sys.stderr)
     
-    # Initialize and run monitor
-    monitor = RenewableGridMonitor(target_renewable_percentage=args.target)
+    if args.statistics:
+        result = analyzer.calculate_statistics()
+    elif args.90plus_periods:
+        result = {
+            'periods_at_90_plus_renewable': analyzer.detect_90_plus_periods(),
+            'total_periods': len(analyzer.detect_90_plus_periods())
+        }
+    else:
+        result = analyzer.generate_report(
+            include_trends=args.include_trends,
+            include_forecast=args.include_forecast
+        )
     
-    if args.verbose:
-        print(f"Starting grid monitoring...", file=sys.stderr)
-        print(f"  Duration: {args.duration} hours", file=sys.stderr)
-        print(f"  Interval: {args.interval} minutes", file=sys.stderr)
-        print(f"  Target: {args.target}% renewable", file=sys.stderr)
-    
-    # Run monitoring
-    snapshots = monitor.monitor_continuous(args.duration, args.interval)
-    
-    if args.verbose:
-        print(f"Completed {len(snapshots)} measurements", file=sys.stderr)
-        stats = monitor.get_renewable_statistics()
-        print(f"Average renewable: {stats['average_renewable_percent']}%", file=sys.stderr)
-        print(f"Target met: {stats['target_met_count']}/{stats['measurement_count']} times", file=sys.stderr)
-    
-    # Generate and output report
-    report = monitor.generate_report()
-    
-    report_json = json.dumps(report, indent=2)
+    output = json.dumps(result, indent=2)
     
     if args.output:
         with open(args.output, 'w') as f:
-            f.write(report_json)
-        if args.verbose:
-            print(f"Report written to {args.output}", file=sys.stderr)
+            f.write(output)
+        print(f"Report written to {args.output}", file=sys.stderr)
     else:
-        print(report_json)
+        print(output)
+    
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
