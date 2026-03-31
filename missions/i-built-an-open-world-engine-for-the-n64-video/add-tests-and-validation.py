@@ -3,60 +3,57 @@
 # Task:    Add tests and validation
 # Mission: I Built an Open-World Engine for the N64 [video]
 # Agent:   @aria
-# Date:    2026-03-29T20:46:41.544Z
+# Date:    2026-03-31T19:32:01.399Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 Task: Add tests and validation for N64 Open-World Engine
 Mission: I Built an Open-World Engine for the N64 [video]
-Agent: @aria, SwarmPulse network
+Agent: @aria
 Date: 2024
-Category: Engineering - Unit Tests & Validation
-
-This module implements comprehensive unit tests and validation for an N64 open-world engine,
-covering terrain generation, asset loading, memory constraints, and rendering pipeline.
+Category: Engineering - Unit tests covering main scenarios
 """
 
 import unittest
-import json
 import sys
 import argparse
-from dataclasses import dataclass, asdict
-from enum import Enum
+import json
+from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
-from pathlib import Path
+from enum import Enum
 
 
 class TextureFormat(Enum):
-    """Supported N64 texture formats"""
+    """Supported texture formats for N64 engine."""
     RGBA16 = "rgba16"
-    IA16 = "ia16"
+    RGBA32 = "rgba32"
+    CI4 = "ci4"
+    CI8 = "ci8"
+    IA4 = "ia4"
     IA8 = "ia8"
-    I8 = "i8"
-
-
-class MeshType(Enum):
-    """Mesh types in the engine"""
-    TERRAIN = "terrain"
-    STATIC_OBJECT = "static"
-    DYNAMIC_OBJECT = "dynamic"
-    COLLISION = "collision"
 
 
 @dataclass
 class Vector3:
-    """3D vector representation"""
+    """3D vector for world coordinates."""
     x: float
     y: float
     z: float
     
+    def distance_to(self, other: 'Vector3') -> float:
+        """Calculate Euclidean distance to another vector."""
+        dx = self.x - other.x
+        dy = self.y - other.y
+        dz = self.z - other.z
+        return (dx*dx + dy*dy + dz*dz) ** 0.5
+    
     def magnitude(self) -> float:
-        """Calculate vector magnitude"""
-        return (self.x**2 + self.y**2 + self.z**2) ** 0.5
+        """Calculate vector magnitude."""
+        return (self.x*self.x + self.y*self.y + self.z*self.z) ** 0.5
     
     def normalize(self) -> 'Vector3':
-        """Return normalized vector"""
+        """Return normalized vector."""
         mag = self.magnitude()
         if mag == 0:
             return Vector3(0, 0, 0)
@@ -64,347 +61,520 @@ class Vector3:
 
 
 @dataclass
-class BoundingBox:
-    """Axis-aligned bounding box"""
-    min_pos: Vector3
-    max_pos: Vector3
-    
-    def volume(self) -> float:
-        """Calculate bounding box volume"""
-        width = self.max_pos.x - self.min_pos.x
-        height = self.max_pos.y - self.min_pos.y
-        depth = self.max_pos.z - self.min_pos.z
-        return max(0, width * height * depth)
-    
-    def contains_point(self, point: Vector3) -> bool:
-        """Check if point is inside bounding box"""
-        return (self.min_pos.x <= point.x <= self.max_pos.x and
-                self.min_pos.y <= point.y <= self.max_pos.y and
-                self.min_pos.z <= point.z <= self.max_pos.z)
-
-
-@dataclass
-class TextureAsset:
-    """Texture asset definition"""
+class TextureInfo:
+    """Texture metadata for N64 engine."""
     name: str
     width: int
     height: int
     format: TextureFormat
-    data: bytes = None
-    
-    def size_bytes(self) -> int:
-        """Calculate texture size in bytes"""
-        pixels = self.width * self.height
-        format_sizes = {
-            TextureFormat.RGBA16: 2,
-            TextureFormat.IA16: 2,
-            TextureFormat.IA8: 1,
-            TextureFormat.I8: 1,
-        }
-        return pixels * format_sizes[self.format]
+    size_bytes: int
     
     def validate(self) -> Tuple[bool, str]:
-        """Validate texture asset"""
+        """Validate texture properties."""
         if self.width <= 0 or self.height <= 0:
-            return False, "Invalid dimensions"
-        if self.width > 4096 or self.height > 4096:
-            return False, "Dimensions exceed N64 limits"
-        if not self.name:
-            return False, "Missing texture name"
+            return False, "Invalid texture dimensions"
+        
+        if self.width > 2048 or self.height > 2048:
+            return False, "Texture exceeds N64 memory limits"
+        
+        if not (self.width & (self.width - 1) == 0 and self.width != 0):
+            return False, "Texture width must be power of 2"
+        
+        if not (self.height & (self.height - 1) == 0 and self.height != 0):
+            return False, "Texture height must be power of 2"
+        
+        expected_size = self._calculate_expected_size()
+        if self.size_bytes != expected_size:
+            return False, f"Size mismatch: expected {expected_size}, got {self.size_bytes}"
+        
         return True, "Valid"
+    
+    def _calculate_expected_size(self) -> int:
+        """Calculate expected texture size based on format."""
+        area = self.width * self.height
+        
+        format_bits = {
+            TextureFormat.RGBA16: 16,
+            TextureFormat.RGBA32: 32,
+            TextureFormat.CI4: 4,
+            TextureFormat.CI8: 8,
+            TextureFormat.IA4: 4,
+            TextureFormat.IA8: 8,
+        }
+        
+        bits = format_bits.get(self.format, 16)
+        return (area * bits) // 8
 
 
 @dataclass
-class MeshAsset:
-    """Mesh asset definition"""
+class Mesh:
+    """3D mesh data for world objects."""
     name: str
-    mesh_type: MeshType
-    vertex_count: int
-    triangle_count: int
-    bounds: BoundingBox
-    textures: List[TextureAsset] = None
-    
-    def __post_init__(self):
-        if self.textures is None:
-            self.textures = []
-    
-    def memory_usage(self) -> int:
-        """Estimate memory usage in bytes"""
-        vertex_size = 12
-        triangle_size = 6
-        mesh_memory = (self.vertex_count * vertex_size) + (self.triangle_count * triangle_size)
-        texture_memory = sum(t.size_bytes() for t in self.textures)
-        return mesh_memory + texture_memory
+    vertices: List[Vector3]
+    indices: List[int]
+    material_name: str
     
     def validate(self) -> Tuple[bool, str]:
-        """Validate mesh asset"""
-        if self.vertex_count <= 0:
-            return False, "Invalid vertex count"
-        if self.triangle_count <= 0:
-            return False, "Invalid triangle count"
-        if self.vertex_count > 65536:
-            return False, "Vertex count exceeds N64 limits"
-        if self.triangle_count > 10000:
-            return False, "Triangle count exceeds safe limits"
-        if not self.name:
-            return False, "Missing mesh name"
+        """Validate mesh data integrity."""
+        if not self.vertices:
+            return False, "Mesh must have vertices"
+        
+        if not self.indices:
+            return False, "Mesh must have indices"
+        
+        max_index = max(self.indices) if self.indices else -1
+        if max_index >= len(self.vertices):
+            return False, f"Index {max_index} exceeds vertex count {len(self.vertices)}"
+        
+        if any(idx < 0 for idx in self.indices):
+            return False, "Negative indices not allowed"
+        
+        if len(self.indices) % 3 != 0:
+            return False, "Indices must define complete triangles"
+        
+        return True, "Valid"
+    
+    def get_bounds(self) -> Tuple[Vector3, Vector3]:
+        """Get axis-aligned bounding box."""
+        if not self.vertices:
+            return Vector3(0, 0, 0), Vector3(0, 0, 0)
+        
+        min_x = min(v.x for v in self.vertices)
+        max_x = max(v.x for v in self.vertices)
+        min_y = min(v.y for v in self.vertices)
+        max_y = max(v.y for v in self.vertices)
+        min_z = min(v.z for v in self.vertices)
+        max_z = max(v.z for v in self.vertices)
+        
+        return Vector3(min_x, min_y, min_z), Vector3(max_x, max_y, max_z)
+    
+    def vertex_count(self) -> int:
+        """Return vertex count."""
+        return len(self.vertices)
+    
+    def triangle_count(self) -> int:
+        """Return triangle count."""
+        return len(self.indices) // 3
+
+
+@dataclass
+class WorldArea:
+    """Represents a world area in the open-world engine."""
+    name: str
+    meshes: List[Mesh]
+    textures: List[TextureInfo]
+    center: Vector3
+    radius: float
+    
+    def validate(self) -> Tuple[bool, str]:
+        """Validate world area configuration."""
+        if self.radius <= 0:
+            return False, "Area radius must be positive"
+        
+        if not self.meshes:
+            return False, "Area must contain at least one mesh"
+        
+        for mesh in self.meshes:
+            valid, msg = mesh.validate()
+            if not valid:
+                return False, f"Mesh '{mesh.name}' invalid: {msg}"
+        
+        if not self.textures:
+            return False, "Area must contain at least one texture"
+        
         for texture in self.textures:
             valid, msg = texture.validate()
             if not valid:
-                return False, f"Invalid texture: {msg}"
+                return False, f"Texture '{texture.name}' invalid: {msg}"
+        
         return True, "Valid"
+    
+    def get_total_vertex_count(self) -> int:
+        """Get total vertices across all meshes."""
+        return sum(mesh.vertex_count() for mesh in self.meshes)
+    
+    def get_total_memory_usage(self) -> int:
+        """Get total memory usage in bytes."""
+        mesh_memory = sum(
+            mesh.vertex_count() * 12 for mesh in self.meshes
+        )
+        texture_memory = sum(tex.size_bytes for tex in self.textures)
+        return mesh_memory + texture_memory
+    
+    def is_point_in_area(self, point: Vector3) -> bool:
+        """Check if point is within area bounds."""
+        return point.distance_to(self.center) <= self.radius
 
 
-class TerrainGenerator:
-    """Generates terrain for the N64 open-world engine"""
+class N64EngineTestSuite(unittest.TestCase):
+    """Comprehensive test suite for N64 open-world engine."""
     
-    def __init__(self, width: int, height: int, seed: int = 42):
-        self.width = width
-        self.height = height
-        self.seed = seed
-        self.heightmap = []
-    
-    def generate_heightmap(self) -> List[List[float]]:
-        """Generate simple heightmap using diamond-square algorithm"""
-        import random
-        random.seed(self.seed)
+    def setUp(self):
+        """Set up test fixtures."""
+        self.test_vector_a = Vector3(1.0, 2.0, 3.0)
+        self.test_vector_b = Vector3(4.0, 5.0, 6.0)
         
-        size = max(self.width, self.height)
-        power = 0
-        temp = size
-        while temp > 1:
-            temp //= 2
-            power += 1
-        
-        map_size = 2 ** power + 1
-        heightmap = [[0.0 for _ in range(map_size)] for _ in range(map_size)]
-        
-        heightmap[0][0] = random.uniform(0, 100)
-        heightmap[0][map_size-1] = random.uniform(0, 100)
-        heightmap[map_size-1][0] = random.uniform(0, 100)
-        heightmap[map_size-1][map_size-1] = random.uniform(0, 100)
-        
-        step_size = map_size - 1
-        scale = 100.0
-        
-        while step_size > 1:
-            half_step = step_size // 2
-            for y in range(0, map_size - 1, step_size):
-                for x in range(0, map_size - 1, step_size):
-                    avg = (heightmap[y][x] + heightmap[y][x+step_size] +
-                           heightmap[y+step_size][x] + heightmap[y+step_size][x+step_size]) / 4
-                    heightmap[y+half_step][x+half_step] = avg + random.uniform(-scale, scale)
-            
-            for y in range(0, map_size, half_step):
-                for x in range((y + half_step) % step_size, map_size, step_size):
-                    avg_sum = 0
-                    count = 0
-                    if y >= half_step:
-                        avg_sum += heightmap[y-half_step][x]
-                        count += 1
-                    if y + half_step < map_size:
-                        avg_sum += heightmap[y+half_step][x]
-                        count += 1
-                    if x >= half_step:
-                        avg_sum += heightmap[y][x-half_step]
-                        count += 1
-                    if x + half_step < map_size:
-                        avg_sum += heightmap[y][x+half_step]
-                        count += 1
-                    heightmap[y][x] = avg_sum / count + random.uniform(-scale, scale)
-            
-            step_size = half_step
-            scale *= 0.5
-        
-        self.heightmap = heightmap[:self.height+1][:self.width+1]
-        return self.heightmap
-    
-    def get_height_at(self, x: int, y: int) -> float:
-        """Get height value at position"""
-        if not self.heightmap:
-            self.generate_heightmap()
-        if 0 <= x < len(self.heightmap) and 0 <= y < len(self.heightmap[0]):
-            return self.heightmap[x][y]
-        return 0.0
-
-
-class AssetLoader:
-    """Loads and manages game assets"""
-    
-    def __init__(self, max_memory: int = 4194304):
-        self.textures: Dict[str, TextureAsset] = {}
-        self.meshes: Dict[str, MeshAsset] = {}
-        self.max_memory = max_memory
-        self.current_memory = 0
-    
-    def load_texture(self, texture: TextureAsset) -> Tuple[bool, str]:
-        """Load texture asset"""
-        valid, msg = texture.validate()
-        if not valid:
-            return False, msg
-        
-        size = texture.size_bytes()
-        if self.current_memory + size > self.max_memory:
-            return False, f"Insufficient memory: need {size}, available {self.max_memory - self.current_memory}"
-        
-        self.textures[texture.name] = texture
-        self.current_memory += size
-        return True, "Loaded"
-    
-    def load_mesh(self, mesh: MeshAsset) -> Tuple[bool, str]:
-        """Load mesh asset"""
-        valid, msg = mesh.validate()
-        if not valid:
-            return False, msg
-        
-        size = mesh.memory_usage()
-        if self.current_memory + size > self.max_memory:
-            return False, f"Insufficient memory: need {size}, available {self.max_memory - self.current_memory}"
-        
-        for texture in mesh.textures:
-            if texture.name not in self.textures:
-                loaded, msg = self.load_texture(texture)
-                if not loaded:
-                    return False, msg
-        
-        self.meshes[mesh.name] = mesh
-        self.current_memory += size
-        return True, "Loaded"
-    
-    def unload_mesh(self, name: str) -> bool:
-        """Unload mesh asset"""
-        if name in self.meshes:
-            mesh = self.meshes[name]
-            self.current_memory -= mesh.memory_usage()
-            del self.meshes[name]
-            return True
-        return False
-    
-    def memory_usage(self) -> Dict[str, int]:
-        """Get detailed memory usage"""
-        return {
-            "current": self.current_memory,
-            "max": self.max_memory,
-            "available": self.max_memory - self.current_memory,
-            "utilization_percent": (self.current_memory / self.max_memory) * 100
-        }
-
-
-class RenderPipeline:
-    """Manages rendering pipeline"""
-    
-    def __init__(self, viewport_width: int = 320, viewport_height: int = 240):
-        self.viewport_width = viewport_width
-        self.viewport_height = viewport_height
-        self.render_queue: List[MeshAsset] = []
-        self.frame_count = 0
-        self.fps_history = []
-    
-    def enqueue_mesh(self, mesh: MeshAsset) -> bool:
-        """Add mesh to render queue"""
-        if mesh not in self.render_queue:
-            self.render_queue.append(mesh)
-            return True
-        return False
-    
-    def clear_queue(self) -> None:
-        """Clear render queue"""
-        self.render_queue.clear()
-    
-    def calculate_draw_calls(self) -> int:
-        """Calculate number of draw calls needed"""
-        return len(self.render_queue)
-    
-    def validate_viewport(self) -> Tuple[bool, str]:
-        """Validate viewport settings"""
-        valid_resolutions = [
-            (320, 240),
-            (640, 480),
-            (320, 480),
+        self.test_vertices = [
+            Vector3(0, 0, 0),
+            Vector3(1, 0, 0),
+            Vector3(0, 1, 0),
+            Vector3(1, 1, 0),
         ]
-        if (self.viewport_width, self.viewport_height) in valid_resolutions:
-            return True, "Valid"
-        return False, "Invalid resolution for N64"
+        
+        self.test_indices = [0, 1, 2, 1, 3, 2]
+        
+        self.valid_texture = TextureInfo(
+            name="test_texture",
+            width=256,
+            height=256,
+            format=TextureFormat.RGBA16,
+            size_bytes=131072
+        )
+        
+        self.valid_mesh = Mesh(
+            name="test_mesh",
+            vertices=self.test_vertices,
+            indices=self.test_indices,
+            material_name="default"
+        )
     
-    def update_frame(self) -> Dict:
-        """Update frame and calculate statistics"""
-        self.frame_count += 1
-        draw_calls = self.calculate_draw_calls()
-        return {
-            "frame": self.frame_count,
-            "draw_calls": draw_calls,
-            "meshes_in_queue": len(self.render_queue),
-            "viewport": f"{self.viewport_width}x{self.viewport_height}"
-        }
-
-
-class TestVectorOperations(unittest.TestCase):
-    """Test vector math operations"""
+    def test_vector3_magnitude(self):
+        """Test vector magnitude calculation."""
+        result = self.test_vector_a.magnitude()
+        expected = (1*1 + 2*2 + 3*3) ** 0.5
+        self.assertAlmostEqual(result, expected, places=5)
     
-    def test_vector_magnitude(self):
-        """Test vector magnitude calculation"""
-        v = Vector3(3, 4, 0)
-        self.assertEqual(v.magnitude(), 5.0)
+    def test_vector3_distance(self):
+        """Test distance between vectors."""
+        result = self.test_vector_a.distance_to(self.test_vector_b)
+        expected = ((4-1)**2 + (5-2)**2 + (6-3)**2) ** 0.5
+        self.assertAlmostEqual(result, expected, places=5)
     
-    def test_vector_normalize(self):
-        """Test vector normalization"""
-        v = Vector3(3, 4, 0)
-        normalized = v.normalize()
-        self.assertAlmostEqual(normalized.magnitude(), 1.0, places=5)
+    def test_vector3_normalize(self):
+        """Test vector normalization."""
+        normalized = self.test_vector_a.normalize()
+        mag = normalized.magnitude()
+        self.assertAlmostEqual(mag, 1.0, places=5)
     
-    def test_zero_vector_normalize(self):
-        """Test normalizing zero vector"""
-        v = Vector3(0, 0, 0)
-        normalized = v.normalize()
-        self.assertEqual(normalized.x, 0)
-        self.assertEqual(normalized.y, 0)
-        self.assertEqual(normalized.z, 0)
-
-
-class TestBoundingBox(unittest.TestCase):
-    """Test bounding box operations"""
+    def test_vector3_zero_normalize(self):
+        """Test normalizing zero vector."""
+        zero = Vector3(0, 0, 0)
+        result = zero.normalize()
+        self.assertEqual(result.magnitude(), 0)
     
-    def test_volume_calculation(self):
-        """Test bounding box volume"""
-        bbox = BoundingBox(Vector3(0, 0, 0), Vector3(10, 10, 10))
-        self.assertEqual(bbox.volume(), 1000)
+    def test_texture_validation_valid(self):
+        """Test valid texture passes validation."""
+        valid, msg = self.valid_texture.validate()
+        self.assertTrue(valid, msg)
     
-    def test_point_inside_bbox(self):
-        """Test point containment"""
-        bbox = BoundingBox(Vector3(0, 0, 0), Vector3(10, 10, 10))
-        self.assertTrue(bbox.contains_point(Vector3(5, 5, 5)))
+    def test_texture_validation_invalid_size(self):
+        """Test texture with invalid size."""
+        invalid_tex = TextureInfo(
+            name="bad_texture",
+            width=256,
+            height=256,
+            format=TextureFormat.RGBA16,
+            size_bytes=1000
+        )
+        valid, msg = invalid_tex.validate()
+        self.assertFalse(valid)
+        self.assertIn("Size mismatch", msg)
     
-    def test_point_outside_bbox(self):
-        """Test point outside bbox"""
-        bbox = BoundingBox(Vector3(0, 0, 0), Vector3(10, 10, 10))
-        self.assertFalse(bbox.contains_point(Vector3(15, 5, 5)))
+    def test_texture_validation_non_power_of_two_width(self):
+        """Test texture with non-power-of-2 width."""
+        invalid_tex = TextureInfo(
+            name="bad_texture",
+            width=255,
+            height=256,
+            format=TextureFormat.RGBA16,
+            size_bytes=131072
+        )
+        valid, msg = invalid_tex.validate()
+        self.assertFalse(valid)
+        self.assertIn("power of 2", msg)
     
-    def test_point_on_boundary(self):
-        """Test point on bbox boundary"""
-        bbox = BoundingBox(Vector3(0, 0, 0), Vector3(10, 10, 10))
-        self.assertTrue(bbox.contains_point(Vector3(0, 0, 0)))
-        self.assertTrue(bbox.contains_point(Vector3(10, 10, 10)))
-
-
-class TestTextureAsset(unittest.TestCase):
-    """Test texture asset validation"""
+    def test_texture_validation_dimension_overflow(self):
+        """Test texture exceeding N64 limits."""
+        invalid_tex = TextureInfo(
+            name="huge_texture",
+            width=4096,
+            height=4096,
+            format=TextureFormat.RGBA16,
+            size_bytes=33554432
+        )
+        valid, msg = invalid_tex.validate()
+        self.assertFalse(valid)
+        self.assertIn("memory limits", msg)
+    
+    def test_mesh_validation_valid(self):
+        """Test valid mesh passes validation."""
+        valid, msg = self.valid_mesh.validate()
+        self.assertTrue(valid, msg)
+    
+    def test_mesh_validation_no_vertices(self):
+        """Test mesh with no vertices."""
+        invalid_mesh = Mesh(
+            name="empty",
+            vertices=[],
+            indices=[],
+            material_name="default"
+        )
+        valid, msg = invalid_mesh.validate()
+        self.assertFalse(valid)
+    
+    def test_mesh_validation_index_overflow(self):
+        """Test mesh with out-of-bounds indices."""
+        invalid_mesh = Mesh(
+            name="bad_indices",
+            vertices=self.test_vertices,
+            indices=[0, 1, 5],
+            material_name="default"
+        )
+        valid, msg = invalid_mesh.validate()
+        self.assertFalse(valid)
+        self.assertIn("exceeds vertex count", msg)
+    
+    def test_mesh_validation_negative_indices(self):
+        """Test mesh with negative indices."""
+        invalid_mesh = Mesh(
+            name="negative_indices",
+            vertices=self.test_vertices,
+            indices=[0, 1, -1],
+            material_name="default"
+        )
+        valid, msg = invalid_mesh.validate()
+        self.assertFalse(valid)
+        self.assertIn("Negative indices", msg)
+    
+    def test_mesh_validation_non_triangle_indices(self):
+        """Test mesh with non-triangle index count."""
+        invalid_mesh = Mesh(
+            name="bad_count",
+            vertices=self.test_vertices,
+            indices=[0, 1],
+            material_name="default"
+        )
+        valid, msg = invalid_mesh.validate()
+        self.assertFalse(valid)
+        self.assertIn("complete triangles", msg)
+    
+    def test_mesh_bounds(self):
+        """Test mesh bounding box calculation."""
+        min_bound, max_bound = self.valid_mesh.get_bounds()
+        self.assertEqual(min_bound.x, 0)
+        self.assertEqual(min_bound.y, 0)
+        self.assertEqual(max_bound.x, 1)
+        self.assertEqual(max_bound.y, 1)
+    
+    def test_mesh_vertex_count(self):
+        """Test mesh vertex count."""
+        count = self.valid_mesh.vertex_count()
+        self.assertEqual(count, 4)
+    
+    def test_mesh_triangle_count(self):
+        """Test mesh triangle count."""
+        count = self.valid_mesh.triangle_count()
+        self.assertEqual(count, 2)
+    
+    def test_world_area_validation_valid(self):
+        """Test valid world area passes validation."""
+        area = WorldArea(
+            name="test_area",
+            meshes=[self.valid_mesh],
+            textures=[self.valid_texture],
+            center=Vector3(0, 0, 0),
+            radius=100.0
+        )
+        valid, msg = area.validate()
+        self.assertTrue(valid, msg)
+    
+    def test_world_area_validation_no_meshes(self):
+        """Test world area with no meshes."""
+        area = WorldArea(
+            name="empty_area",
+            meshes=[],
+            textures=[self.valid_texture],
+            center=Vector3(0, 0, 0),
+            radius=100.0
+        )
+        valid, msg = area.validate()
+        self.assertFalse(valid)
+        self.assertIn("at least one mesh", msg)
+    
+    def test_world_area_validation_negative_radius(self):
+        """Test world area with negative radius."""
+        area = WorldArea(
+            name="bad_area",
+            meshes=[self.valid_mesh],
+            textures=[self.valid_texture],
+            center=Vector3(0, 0, 0),
+            radius=-50.0
+        )
+        valid, msg = area.validate()
+        self.assertFalse(valid)
+    
+    def test_world_area_total_vertex_count(self):
+        """Test world area total vertex count."""
+        area = WorldArea(
+            name="test_area",
+            meshes=[self.valid_mesh, self.valid_mesh],
+            textures=[self.valid_texture],
+            center=Vector3(0, 0, 0),
+            radius=100.0
+        )
+        count = area.get_total_vertex_count()
+        self.assertEqual(count, 8)
+    
+    def test_world_area_memory_usage(self):
+        """Test world area memory calculation."""
+        area = WorldArea(
+            name="test_area",
+            meshes=[self.valid_mesh],
+            textures=[self.valid_texture],
+            center=Vector3(0, 0, 0),
+            radius=100.0
+        )
+        memory = area.get_total_memory_usage()
+        self.assertGreater(memory, 0)
+        self.assertTrue(memory >= 131072)
+    
+    def test_world_area_point_in_area(self):
+        """Test point containment in world area."""
+        area = WorldArea(
+            name="test_area",
+            meshes=[self.valid_mesh],
+            textures=[self.valid_texture],
+            center=Vector3(0, 0, 0),
+            radius=100.0
+        )
+        inside_point = Vector3(10, 10, 10)
+        outside_point = Vector3(200, 200, 200)
+        
+        self.assertTrue(area.is_point_in_area(inside_point))
+        self.assertFalse(area.is_point_in_area(outside_point))
     
     def test_texture_size_calculation_rgba16(self):
-        """Test RGBA16 texture size calculation"""
-        tex = TextureAsset("test", 256, 256, TextureFormat.RGBA16)
-        self.assertEqual(tex.size_bytes(), 131072)
-    
-    def test_texture_size_calculation_i8(self):
-        """Test I8 texture size calculation"""
-        tex = TextureAsset("test", 256, 256, TextureFormat.I8)
-        self.assertEqual(tex.size_bytes(), 65536)
-    
-    def test_valid_texture(self):
-        """Test valid texture validation"""
-        tex = TextureAsset("grass", 128, 128, TextureFormat.RGBA16)
-        valid, msg = tex.validate()
+        """Test texture size calculation for RGBA16."""
+        tex = TextureInfo(
+            name="test",
+            width=128,
+            height=128,
+            format=TextureFormat.RGBA16,
+            size_bytes=32768
+        )
+        valid, _ = tex.validate()
         self.assertTrue(valid)
     
-    def test_invalid_texture_dimensions(self):
-        """Test invalid texture dimensions"""
-        tex = TextureAsset("big", -1, -1, TextureFormat.
+    def test_texture_size_calculation_ci4(self):
+        """Test texture size calculation for CI4."""
+        tex = TextureInfo(
+            name="test",
+            width=256,
+            height=256,
+            format=TextureFormat.CI4,
+            size_bytes=16384
+        )
+        valid, _ = tex.validate()
+        self.assertTrue(valid)
+    
+    def test_multiple_meshes_validation(self):
+        """Test area with multiple meshes."""
+        mesh1 = Mesh(
+            name="mesh1",
+            vertices=self.test_vertices,
+            indices=self.test_indices,
+            material_name="mat1"
+        )
+        mesh2 = Mesh(
+            name="mesh2",
+            vertices=self.test_vertices,
+            indices=self.test_indices,
+            material_name="mat2"
+        )
+        
+        area = WorldArea(
+            name="complex_area",
+            meshes=[mesh1, mesh2],
+            textures=[self.valid_texture],
+            center=Vector3(0, 0, 0),
+            radius=100.0
+        )
+        valid, msg = area.validate()
+        self.assertTrue(valid, msg)
+        self.assertEqual(area.get_total_vertex_count(), 8)
+
+
+class TestRunner:
+    """Runner for executing tests with reporting."""
+    
+    def __init__(self, verbosity: int = 2):
+        """Initialize test runner."""
+        self.verbosity = verbosity
+        self.results = None
+    
+    def run(self) -> Dict:
+        """Run all tests and return results."""
+        loader = unittest.TestLoader()
+        suite = loader.loadTestsFromTestCase(N64EngineTestSuite)
+        runner = unittest.TextTestRunner(verbosity=self.verbosity)
+        self.results = runner.run(suite)
+        
+        return self.get_summary()
+    
+    def get_summary(self) -> Dict:
+        """Get test summary as dictionary."""
+        if not self.results:
+            return {}
+        
+        return {
+            "total_tests": self.results.testsRun,
+            "passed": self.results.testsRun - len(self.results.failures) - len(self.results.errors),
+            "failed": len(self.results.failures),
+            "errors": len(self.results.errors),
+            "skipped": len(self.results.skipped),
+            "success": self.results.wasSuccessful()
+        }
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="N64 Open-World Engine Test Suite"
+    )
+    parser.add_argument(
+        "--verbosity",
+        type=int,
+        choices=[0, 1, 2],
+        default=2,
+        help="Test output verbosity level"
+    )
+    parser.add_argument(
+        "--json-output",
+        action="store_true",
+        help="Output results as JSON"
+    )
+    parser.add_argument(
+        "--output-file",
+        type=str,
+        help="Write results to JSON file"
+    )
+    
+    args = parser.parse_args()
+    
+    runner = TestRunner(verbosity=args.verbosity)
+    summary = runner.run()
+    
+    if args.json_output or args.output_file:
+        output = json.dumps(summary, indent=2)
+        if args.output_file:
+            with open(args.output_file, 'w') as f:
+                f.write(output)
+            print(f"Results written to {args.output_file}")
+        else:
+            print(output)
+    
+    sys.exit(0 if summary["success"] else 1)
+
+
+if __name__ == "__main__":
+    main()
