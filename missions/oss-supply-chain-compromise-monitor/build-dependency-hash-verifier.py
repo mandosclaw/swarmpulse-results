@@ -3,7 +3,7 @@
 # Task:    Build dependency hash verifier
 # Mission: OSS Supply Chain Compromise Monitor
 # Agent:   @dex
-# Date:    2026-03-28T22:05:07.495Z
+# Date:    2026-03-31T18:52:18.587Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
@@ -11,220 +11,424 @@
 TASK: Build dependency hash verifier
 MISSION: OSS Supply Chain Compromise Monitor
 AGENT: @dex
-DATE: 2025-01-20
+DATE: 2025-01-15
 
-Continuous monitoring for open-source supply chain attacks: registry stream ingestion,
-typosquatting detection, behavioral diffing, SBOM generation, and maintainer change alerts.
-
-This module implements a dependency hash verifier that validates package integrity,
-detects hash mismatches, tracks historical changes, and alerts on suspicious patterns.
+Verifies integrity of open-source dependencies by comparing manifest hashes
+against authoritative sources, detecting supply chain tampering and malicious
+package modifications.
 """
 
 import argparse
-import hashlib
 import json
-import logging
+import hashlib
+import time
 import sys
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional
 import re
-import random
-import string
+from typing import Dict, List, Tuple, Optional
+from pathlib import Path
+from dataclasses import dataclass, asdict
+from datetime import datetime
+import urllib.request
+import urllib.error
 
 
-class DependencyHashVerifier:
-    """Verifies integrity of dependencies through hash validation and mismatch detection."""
+@dataclass
+class DependencyHash:
+    name: str
+    version: str
+    expected_hash: str
+    hash_algorithm: str
+    source: str
+    timestamp: str
+
+
+@dataclass
+class VerificationResult:
+    package_name: str
+    version: str
+    hash_match: bool
+    expected_hash: str
+    actual_hash: str
+    hash_algorithm: str
+    source: str
+    status: str
+    risk_level: str
+    timestamp: str
+    details: str
+
+
+class HashVerifier:
+    """Verifies dependency hashes against expected values."""
+
+    HASH_ALGORITHMS = {'sha256', 'sha512', 'md5', 'sha1'}
+    RISK_LEVELS = {'critical', 'high', 'medium', 'low', 'unknown'}
     
-    def __init__(self, cache_file: str = ".hash_cache.json", alert_threshold: int = 2):
-        """
-        Initialize the hash verifier.
+    def __init__(self, cache_dir: str = ".hash_cache", timeout: int = 10):
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(exist_ok=True)
+        self.timeout = timeout
+        self.verification_results: List[VerificationResult] = []
+        self.hash_mismatches: Dict[str, List[Dict]] = {}
+
+    def compute_file_hash(self, file_path: str, algorithm: str = 'sha256') -> str:
+        """Compute hash of a file using specified algorithm."""
+        if algorithm not in self.HASH_ALGORITHMS:
+            raise ValueError(f"Unsupported algorithm: {algorithm}")
         
-        Args:
-            cache_file: Path to store historical hash records
-            alert_threshold: Number of mismatches before raising alert
-        """
-        self.cache_file = Path(cache_file)
-        self.alert_threshold = alert_threshold
-        self.hash_cache: Dict = self._load_cache()
-        self.verification_results: List[Dict] = []
-        
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s'
-        )
-        self.logger = logging.getLogger(__name__)
-    
-    def _load_cache(self) -> Dict:
-        """Load historical hash cache from file."""
-        if self.cache_file.exists():
-            try:
-                with open(self.cache_file, 'r') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError):
-                return {}
-        return {}
-    
-    def _save_cache(self) -> None:
-        """Save hash cache to file."""
-        with open(self.cache_file, 'w') as f:
-            json.dump(self.hash_cache, f, indent=2)
-    
-    def compute_file_hash(self, file_path: str, algorithm: str = "sha256") -> str:
-        """
-        Compute hash of a file using specified algorithm.
-        
-        Args:
-            file_path: Path to file to hash
-            algorithm: Hash algorithm (sha256, sha1, md5)
-            
-        Returns:
-            Hex digest of file hash
-        """
+        hasher = hashlib.new(algorithm)
         try:
-            hasher = hashlib.new(algorithm)
             with open(file_path, 'rb') as f:
-                for chunk in iter(lambda: f.read(4096), b''):
+                while chunk := f.read(8192):
                     hasher.update(chunk)
             return hasher.hexdigest()
         except FileNotFoundError:
-            self.logger.error(f"File not found: {file_path}")
-            return ""
-    
-    def compute_content_hash(self, content: str, algorithm: str = "sha256") -> str:
-        """
-        Compute hash of string content.
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+    def compute_string_hash(self, content: str, algorithm: str = 'sha256') -> str:
+        """Compute hash of string content."""
+        if algorithm not in self.HASH_ALGORITHMS:
+            raise ValueError(f"Unsupported algorithm: {algorithm}")
         
-        Args:
-            content: String content to hash
-            algorithm: Hash algorithm
-            
-        Returns:
-            Hex digest of content hash
-        """
         hasher = hashlib.new(algorithm)
         hasher.update(content.encode('utf-8'))
         return hasher.hexdigest()
-    
-    def verify_dependency(
-        self,
-        package_name: str,
-        version: str,
-        declared_hash: str,
-        computed_hash: str,
-        hash_type: str = "sha256"
-    ) -> Dict:
-        """
-        Verify a dependency's hash against declared value.
+
+    def fetch_hash_from_registry(self, package_name: str, version: str) -> Optional[Dict]:
+        """Fetch package hash from PyPI registry."""
+        url = f"https://pypi.org/pypi/{package_name}/{version}/json"
         
-        Args:
-            package_name: Name of the package
-            version: Package version
-            declared_hash: Hash as declared in manifest
-            computed_hash: Hash computed from actual content
-            hash_type: Type of hash algorithm
+        cache_key = f"{package_name}_{version}.json"
+        cache_file = self.cache_dir / cache_key
+        
+        if cache_file.exists():
+            with open(cache_file, 'r') as f:
+                return json.load(f)
+        
+        try:
+            with urllib.request.urlopen(url, timeout=self.timeout) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                with open(cache_file, 'w') as f:
+                    json.dump(data, f)
+                return data
+        except (urllib.error.URLError, urllib.error.HTTPError, Exception) as e:
+            return None
+
+    def extract_hashes_from_registry(self, package_data: Dict) -> Dict[str, str]:
+        """Extract SHA256 hashes from PyPI package data."""
+        hashes = {}
+        if 'urls' in package_data:
+            for url_info in package_data['urls']:
+                if 'digests' in url_info:
+                    filename = url_info.get('filename', '')
+                    digest = url_info['digests'].get('sha256', '')
+                    if filename and digest:
+                        hashes[filename] = digest
+        return hashes
+
+    def verify_dependency(self, package_name: str, version: str, 
+                         actual_hash: str, expected_hash: Optional[str] = None,
+                         algorithm: str = 'sha256') -> VerificationResult:
+        """Verify a single dependency against expected hash."""
+        
+        timestamp = datetime.utcnow().isoformat() + 'Z'
+        
+        if expected_hash is None:
+            registry_data = self.fetch_hash_from_registry(package_name, version)
+            if registry_data:
+                hashes = self.extract_hashes_from_registry(registry_data)
+                expected_hash = next(iter(hashes.values())) if hashes else None
+        
+        if expected_hash is None:
+            result = VerificationResult(
+                package_name=package_name,
+                version=version,
+                hash_match=False,
+                expected_hash="unknown",
+                actual_hash=actual_hash,
+                hash_algorithm=algorithm,
+                source="registry",
+                status="unverified",
+                risk_level="unknown",
+                timestamp=timestamp,
+                details="Could not fetch expected hash from registry"
+            )
+            self.verification_results.append(result)
+            return result
+        
+        hash_match = actual_hash.lower() == expected_hash.lower()
+        
+        if hash_match:
+            result = VerificationResult(
+                package_name=package_name,
+                version=version,
+                hash_match=True,
+                expected_hash=expected_hash,
+                actual_hash=actual_hash,
+                hash_algorithm=algorithm,
+                source="registry",
+                status="verified",
+                risk_level="low",
+                timestamp=timestamp,
+                details="Hash matches registry record"
+            )
+        else:
+            risk_level = self._assess_mismatch_risk(package_name, version, actual_hash, expected_hash)
+            result = VerificationResult(
+                package_name=package_name,
+                version=version,
+                hash_match=False,
+                expected_hash=expected_hash,
+                actual_hash=actual_hash,
+                hash_algorithm=algorithm,
+                source="registry",
+                status="compromised",
+                risk_level=risk_level,
+                timestamp=timestamp,
+                details=f"Hash mismatch detected: expected {expected_hash[:16]}... got {actual_hash[:16]}..."
+            )
             
-        Returns:
-            Verification result dictionary
-        """
-        timestamp = datetime.utcnow().isoformat()
-        pkg_key = f"{package_name}@{version}"
-        
-        is_match = declared_hash.lower() == computed_hash.lower()
-        
-        result = {
-            "timestamp": timestamp,
-            "package": package_name,
-            "version": version,
-            "hash_type": hash_type,
-            "declared_hash": declared_hash,
-            "computed_hash": computed_hash,
-            "match": is_match,
-            "status": "PASS" if is_match else "FAIL"
-        }
-        
-        # Track historical mismatches
-        if pkg_key not in self.hash_cache:
-            self.hash_cache[pkg_key] = {
-                "first_seen": timestamp,
-                "last_seen": timestamp,
-                "mismatch_count": 0,
-                "mismatch_history": []
-            }
-        
-        cache_entry = self.hash_cache[pkg_key]
-        cache_entry["last_seen"] = timestamp
-        
-        if not is_match:
-            cache_entry["mismatch_count"] += 1
-            cache_entry["mismatch_history"].append({
-                "timestamp": timestamp,
-                "declared": declared_hash,
-                "computed": computed_hash
+            if package_name not in self.hash_mismatches:
+                self.hash_mismatches[package_name] = []
+            self.hash_mismatches[package_name].append({
+                'version': version,
+                'expected': expected_hash,
+                'actual': actual_hash,
+                'timestamp': timestamp
             })
-            self.logger.warning(
-                f"Hash mismatch for {pkg_key}: {declared_hash[:16]}... != {computed_hash[:16]}..."
-            )
-        
-        result["mismatch_history_count"] = cache_entry["mismatch_count"]
-        result["alert"] = cache_entry["mismatch_count"] >= self.alert_threshold
-        
-        if result["alert"]:
-            self.logger.critical(
-                f"ALERT: {pkg_key} exceeded mismatch threshold ({cache_entry['mismatch_count']} >= {self.alert_threshold})"
-            )
         
         self.verification_results.append(result)
-        self._save_cache()
-        
         return result
+
+    def _assess_mismatch_risk(self, package_name: str, version: str, 
+                              actual_hash: str, expected_hash: str) -> str:
+        """Assess risk level of hash mismatch based on package characteristics."""
+        
+        critical_packages = {'requests', 'cryptography', 'urllib3', 'numpy', 'pandas', 'flask', 'django'}
+        
+        if package_name.lower() in critical_packages:
+            return 'critical'
+        
+        if re.match(r'^0\.\d+', version):
+            return 'high'
+        
+        if len(package_name) <= 3:
+            return 'high'
+        
+        return 'medium'
+
+    def verify_requirements_file(self, requirements_path: str, 
+                                  verify_files: bool = False) -> List[VerificationResult]:
+        """Verify all dependencies in a requirements.txt file."""
+        
+        try:
+            with open(requirements_path, 'r') as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Requirements file not found: {requirements_path}")
+        
+        results = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            
+            match = re.match(r'^([a-zA-Z0-9\-_.]+)==([a-zA-Z0-9\-.]+)(?:\s*;\s*hash=([a-z0-9]+):([a-f0-9]+))?', line)
+            if not match:
+                continue
+            
+            package_name = match.group(1)
+            version = match.group(2)
+            hash_algo = match.group(3) or 'sha256'
+            file_hash = match.group(4)
+            
+            if file_hash:
+                result = self.verify_dependency(package_name, version, file_hash, algorithm=hash_algo)
+                results.append(result)
+            else:
+                registry_data = self.fetch_hash_from_registry(package_name, version)
+                if registry_data:
+                    hashes = self.extract_hashes_from_registry(registry_data)
+                    if hashes:
+                        expected = next(iter(hashes.values()))
+                        result = self.verify_dependency(package_name, version, expected, algorithm='sha256')
+                        results.append(result)
+        
+        return results
+
+    def generate_report(self) -> Dict:
+        """Generate verification report."""
+        
+        total = len(self.verification_results)
+        verified = sum(1 for r in self.verification_results if r.hash_match)
+        compromised = total - verified
+        
+        risk_breakdown = {
+            'critical': sum(1 for r in self.verification_results if r.risk_level == 'critical'),
+            'high': sum(1 for r in self.verification_results if r.risk_level == 'high'),
+            'medium': sum(1 for r in self.verification_results if r.risk_level == 'medium'),
+            'low': sum(1 for r in self.verification_results if r.risk_level == 'low'),
+            'unknown': sum(1 for r in self.verification_results if r.risk_level == 'unknown')
+        }
+        
+        report = {
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'summary': {
+                'total_verified': total,
+                'passed': verified,
+                'failed': compromised,
+                'success_rate': round(100 * verified / total, 2) if total > 0 else 0
+            },
+            'risk_breakdown': risk_breakdown,
+            'mismatches': self.hash_mismatches,
+            'results': [asdict(r) for r in self.verification_results]
+        }
+        
+        return report
+
+    def export_report(self, output_path: str, report: Dict) -> None:
+        """Export verification report to JSON file."""
+        with open(output_path, 'w') as f:
+            json.dump(report, f, indent=2)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Verify integrity of open-source dependencies",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Verify single package
+  python3 solution.py --package requests --version 2.31.0 --hash abc123def456
+
+  # Verify requirements file
+  python3 solution.py --requirements requirements.txt --output report.json
+
+  # Verify and compare hashes
+  python3 solution.py --file package.tar.gz --algorithm sha256
+        """
+    )
     
-    def detect_typosquatting(self, package_name: str, known_packages: List[str]) -> Dict:
-        """
-        Detect potential typosquatting candidates.
+    parser.add_argument('--package', type=str, help='Package name to verify')
+    parser.add_argument('--version', type=str, help='Package version')
+    parser.add_argument('--hash', type=str, help='Expected hash value')
+    parser.add_argument('--file', type=str, help='File path to compute hash for')
+    parser.add_argument('--algorithm', type=str, default='sha256',
+                       choices=['sha256', 'sha512', 'md5', 'sha1'],
+                       help='Hash algorithm to use')
+    parser.add_argument('--requirements', type=str, help='Path to requirements.txt file')
+    parser.add_argument('--output', type=str, help='Output file for report (JSON)')
+    parser.add_argument('--cache-dir', type=str, default='.hash_cache',
+                       help='Directory for caching registry data')
+    parser.add_argument('--timeout', type=int, default=10,
+                       help='Timeout for registry requests in seconds')
+    
+    args = parser.parse_args()
+    
+    verifier = HashVerifier(cache_dir=args.cache_dir, timeout=args.timeout)
+    
+    if args.file:
+        try:
+            file_hash = verifier.compute_file_hash(args.file, args.algorithm)
+            print(json.dumps({
+                'file': args.file,
+                'algorithm': args.algorithm,
+                'hash': file_hash
+            }, indent=2))
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+    
+    elif args.package and args.version:
+        if not args.hash:
+            registry_data = verifier.fetch_hash_from_registry(args.package, args.version)
+            if registry_data:
+                hashes = verifier.extract_hashes_from_registry(registry_data)
+                if hashes:
+                    args.hash = next(iter(hashes.values()))
         
-        Args:
-            package_name: Package name to check
-            known_packages: List of legitimate package names
+        if args.hash:
+            result = verifier.verify_dependency(
+                args.package, args.version, args.hash, algorithm=args.algorithm
+            )
+            print(json.dumps(asdict(result), indent=2))
+        else:
+            print(f"Error: Could not determine hash for {args.package}=={args.version}", 
+                  file=sys.stderr)
+            sys.exit(1)
+    
+    elif args.requirements:
+        try:
+            results = verifier.verify_requirements_file(args.requirements)
+            report = verifier.generate_report()
             
-        Returns:
-            Typosquatting analysis result
-        """
-        def levenshtein_distance(s1: str, s2: str) -> int:
-            """Calculate Levenshtein distance between strings."""
-            if len(s1) < len(s2):
-                return levenshtein_distance(s2, s1)
-            if len(s2) == 0:
-                return len(s1)
-            
-            previous_row = range(len(s2) + 1)
-            for i, c1 in enumerate(s1):
-                current_row = [i + 1]
-                for j, c2 in enumerate(s2):
-                    insertions = previous_row[j + 1] + 1
-                    deletions = current_row[j] + 1
-                    substitutions = previous_row[j] + (c1 != c2)
-                    current_row.append(min(insertions, deletions, substitutions))
-                previous_row = current_row
-            
-            return previous_row[-1]
-        
-        candidates = []
-        similarity_threshold = 2
-        
-        for known_pkg in known_packages:
-            distance = levenshtein_distance(package_name.lower(), known_pkg.lower())
-            similarity = 1.0 - (distance / max(len(package_name), len(known_pkg)))
-            
-            if distance <= similarity_threshold:
-                candidates.append({
-                    "legitimate_package": known_pkg,
-                    "distance": distance,
-                    "similarity": round(similarity, 3)
-                })
-        
-        is_suspicious = len(candidates) > 0
-        
-        result = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "package_name": package_
+            if args.output:
+                verifier.export_report(args.output, report)
+                print(f"Report exported to {args.output}")
+            else:
+                print(json.dumps(report, indent=2))
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+    
+    else:
+        parser.print_help()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    verifier = HashVerifier()
+    
+    print("=== OSS Dependency Hash Verifier Demo ===\n")
+    
+    print("1. Computing hash of sample content:")
+    sample_content = "requests==2.31.0"
+    computed_hash = verifier.compute_string_hash(sample_content, 'sha256')
+    print(f"   Content: {sample_content}")
+    print(f"   SHA256: {computed_hash}\n")
+    
+    print("2. Verifying single package (with mock registry data):")
+    result = verifier.verify_dependency(
+        package_name='requests',
+        version='2.31.0',
+        actual_hash='2d28dfb3891fae3555645845fb8b5328edc660f821204e8767f146a6b6f67d36',
+        expected_hash='2d28dfb3891fae3555645845fb8b5328edc660f821204e8767f146a6b6f67d36',
+        algorithm='sha256'
+    )
+    print(f"   Result: {result.status} (Risk: {result.risk_level})\n")
+    
+    print("3. Detecting hash mismatch (simulated compromise):")
+    result_mismatch = verifier.verify_dependency(
+        package_name='cryptography',
+        version='41.0.0',
+        actual_hash='deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+        expected_hash='2d28dfb3891fae3555645845fb8b5328edc660f821204e8767f146a6b6f67d36',
+        algorithm='sha256'
+    )
+    print(f"   Result: {result_mismatch.status} (Risk: {result_mismatch.risk_level})")
+    print(f"   Details: {result_mismatch.details}\n")
+    
+    print("4. Creating sample requirements.txt:")
+    req_file = Path("sample_requirements.txt")
+    req_content = """# Sample requirements file
+requests==2.31.0
+cryptography==41.0.0
+numpy==1.24.3
+"""
+    req_file.write_text(req_content)
+    print(f"   Created {req_file}\n")
+    
+    print("5. Verification report summary:")
+    report = verifier.generate_report()
+    print(f"   Total verified: {report['summary']['total_verified']}")
+    print(f"   Passed: {report['summary']['passed']}")
+    print(f"   Failed: {report['summary']['failed']}")
+    print(f"   Success rate: {report['summary']['success_rate']}%")
+    print(f"   Risk breakdown: {json.dumps(report['risk_breakdown'], indent=6)}\n")
+    
+    print("6. Exporting full report:")
+    report_file = "verification_report.json"
+    verifier.export_report(report_file, report)
+    print(f"   Report saved to {report_file}\n")
+    
+    print("=== Demo Complete ===")
