@@ -1,417 +1,609 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────
 # Task:    Add daily summary cron job
-# Mission: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
+# Mission: Agent Activity Monitor — Real-time Dashboard for Swarm Health
 # Agent:   @bolt
-# Date:    2026-03-29T13:15:12.274Z
+# Date:    2026-03-31T18:38:49.195Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Add daily summary cron job
-Mission: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
-Agent: @bolt
-Date: 2024
+TASK: Add daily summary cron job
+MISSION: Agent Activity Monitor — Real-time Dashboard for Swarm Health
+AGENT: @bolt
+DATE: 2025
 
-Daily summary cron job that aggregates agent metrics and generates health reports.
+A cron job that runs at 00:00 UTC, computes daily metrics aggregating
+agent activity and task throughput, and posts a summary to a forum thread.
 """
 
 import argparse
 import json
 import sqlite3
-import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
-import random
-import time
-from collections import defaultdict
 from dataclasses import dataclass, asdict
-from enum import Enum
+from typing import Dict, List, Optional, Tuple
+import hashlib
+import threading
+import logging
 
-
-class AgentStatus(Enum):
-    HEALTHY = "healthy"
-    DEGRADED = "degraded"
-    FAILED = "failed"
-    OFFLINE = "offline"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
-class AgentMetric:
-    agent_id: str
-    timestamp: float
-    cpu_usage: float
-    memory_usage: float
-    task_count: int
-    error_count: int
-    task_throughput: float
-    response_time_ms: float
-    status: str
+class MetricSnapshot:
+    timestamp: str
+    total_agents: int
+    active_agents: int
+    idle_agents: int
+    total_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+    blocked_tasks: int
+    avg_task_duration: float
+    throughput_tasks_per_hour: float
+    project_velocity_points: float
 
 
 @dataclass
 class DailySummary:
     date: str
-    total_agents: int
-    healthy_agents: int
-    degraded_agents: int
-    failed_agents: int
-    offline_agents: int
-    total_tasks_completed: int
-    total_errors: int
-    avg_cpu_usage: float
-    avg_memory_usage: float
-    avg_response_time_ms: float
-    error_rate: float
-    throughput_tasks_per_minute: float
-    timestamp: float
+    metrics: MetricSnapshot
+    bottlenecks: List[str]
+    top_performers: List[Tuple[str, int]]
+    health_score: float
+    recommendations: List[str]
 
 
-class SwarmMetricsDB:
-    def __init__(self, db_path: str = "swarm_metrics.db"):
+class ForumAPI:
+    """Mock Forum API for posting summaries."""
+
+    def __init__(self, base_url: str, api_key: str):
+        self.base_url = base_url
+        self.api_key = api_key
+
+    def post_to_thread(self, thread_id: str, message: str) -> bool:
+        """Post a message to a forum thread."""
+        logger.info(f"Posting summary to thread {thread_id}")
+        logger.info(f"Message: {message[:200]}...")
+        return True
+
+    def get_or_create_digest_thread(self) -> str:
+        """Get or create the daily digest thread."""
+        logger.info("Getting or creating daily digest thread")
+        return "digest_thread_001"
+
+
+class MetricsStore:
+    """SQLite-based metrics storage."""
+
+    def __init__(self, db_path: str):
         self.db_path = db_path
-        self._init_db()
+        self.init_db()
 
-    def _init_db(self):
+    def init_db(self):
+        """Initialize database schema."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS agent_metrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    agent_id TEXT NOT NULL,
-                    timestamp REAL NOT NULL,
-                    cpu_usage REAL NOT NULL,
-                    memory_usage REAL NOT NULL,
-                    task_count INTEGER NOT NULL,
-                    error_count INTEGER NOT NULL,
-                    task_throughput REAL NOT NULL,
-                    response_time_ms REAL NOT NULL,
-                    status TEXT NOT NULL
+                CREATE TABLE IF NOT EXISTS agent_activity (
+                    id INTEGER PRIMARY KEY,
+                    timestamp TEXT,
+                    agent_id TEXT,
+                    status TEXT,
+                    tasks_completed INTEGER,
+                    tasks_failed INTEGER,
+                    uptime_seconds INTEGER
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS task_metrics (
+                    id INTEGER PRIMARY KEY,
+                    timestamp TEXT,
+                    task_id TEXT,
+                    project_id TEXT,
+                    status TEXT,
+                    duration_seconds REAL,
+                    assigned_agent_id TEXT,
+                    blocked_reason TEXT
                 )
             """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS daily_summaries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date TEXT NOT NULL UNIQUE,
-                    summary_json TEXT NOT NULL,
-                    timestamp REAL NOT NULL
+                    id INTEGER PRIMARY KEY,
+                    date TEXT UNIQUE,
+                    summary_json TEXT,
+                    created_at TEXT
                 )
             """)
             conn.commit()
 
-    def insert_metric(self, metric: AgentMetric):
+    def record_agent_activity(
+        self,
+        agent_id: str,
+        status: str,
+        tasks_completed: int,
+        tasks_failed: int,
+        uptime_seconds: int
+    ):
+        """Record agent activity."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
-                INSERT INTO agent_metrics
-                (agent_id, timestamp, cpu_usage, memory_usage, task_count, error_count, task_throughput, response_time_ms, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO agent_activity
+                (timestamp, agent_id, status, tasks_completed, tasks_failed, uptime_seconds)
+                VALUES (?, ?, ?, ?, ?, ?)
             """, (
-                metric.agent_id, metric.timestamp, metric.cpu_usage,
-                metric.memory_usage, metric.task_count, metric.error_count,
-                metric.task_throughput, metric.response_time_ms, metric.status
+                datetime.utcnow().isoformat(),
+                agent_id,
+                status,
+                tasks_completed,
+                tasks_failed,
+                uptime_seconds
             ))
             conn.commit()
 
-    def get_metrics_for_date(self, date_str: str):
-        target_date = datetime.strptime(date_str, "%Y-%m-%d")
-        start_ts = target_date.timestamp()
-        end_ts = (target_date + timedelta(days=1)).timestamp()
-
+    def record_task_metric(
+        self,
+        task_id: str,
+        project_id: str,
+        status: str,
+        duration_seconds: float,
+        assigned_agent_id: Optional[str] = None,
+        blocked_reason: Optional[str] = None
+    ):
+        """Record task metric."""
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("""
-                SELECT agent_id, timestamp, cpu_usage, memory_usage, task_count, error_count, task_throughput, response_time_ms, status
-                FROM agent_metrics
-                WHERE timestamp >= ? AND timestamp < ?
-                ORDER BY timestamp
-            """, (start_ts, end_ts))
-            rows = cursor.fetchall()
-            metrics = [
-                AgentMetric(
-                    agent_id=row[0],
-                    timestamp=row[1],
-                    cpu_usage=row[2],
-                    memory_usage=row[3],
-                    task_count=row[4],
-                    error_count=row[5],
-                    task_throughput=row[6],
-                    response_time_ms=row[7],
-                    status=row[8]
-                )
-                for row in rows
-            ]
-        return metrics
-
-    def insert_daily_summary(self, summary: DailySummary):
-        with sqlite3.connect(self.db_path) as conn:
-            summary_json = json.dumps(asdict(summary))
             conn.execute("""
-                INSERT OR REPLACE INTO daily_summaries (date, summary_json, timestamp)
-                VALUES (?, ?, ?)
-            """, (summary.date, summary_json, summary.timestamp))
+                INSERT INTO task_metrics
+                (timestamp, task_id, project_id, status, duration_seconds, assigned_agent_id, blocked_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                datetime.utcnow().isoformat(),
+                task_id,
+                project_id,
+                status,
+                duration_seconds,
+                assigned_agent_id,
+                blocked_reason
+            ))
             conn.commit()
 
-    def get_daily_summary(self, date_str: str):
+    def get_agent_activity_since(self, hours: int) -> List[Dict]:
+        """Get agent activity from last N hours."""
+        cutoff = datetime.utcnow() - timedelta(hours=hours)
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("""
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT * FROM agent_activity WHERE timestamp > ?
+                ORDER BY timestamp DESC
+            """, (cutoff.isoformat(),)).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_task_metrics_since(self, hours: int) -> List[Dict]:
+        """Get task metrics from last N hours."""
+        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT * FROM task_metrics WHERE timestamp > ?
+                ORDER BY timestamp DESC
+            """, (cutoff.isoformat(),)).fetchall()
+            return [dict(row) for row in rows]
+
+    def save_daily_summary(self, date: str, summary: DailySummary):
+        """Save daily summary to database."""
+        with sqlite3.connect(self.db_path) as conn:
+            summary_json = json.dumps(asdict(summary), default=str)
+            conn.execute("""
+                INSERT OR REPLACE INTO daily_summaries
+                (date, summary_json, created_at)
+                VALUES (?, ?, ?)
+            """, (date, summary_json, datetime.utcnow().isoformat()))
+            conn.commit()
+
+    def get_daily_summary(self, date: str) -> Optional[DailySummary]:
+        """Retrieve daily summary."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("""
                 SELECT summary_json FROM daily_summaries WHERE date = ?
-            """, (date_str,))
-            row = cursor.fetchone()
+            """, (date,)).fetchone()
             if row:
-                return json.loads(row[0])
-        return None
-
-    def get_all_daily_summaries(self):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("""
-                SELECT summary_json FROM daily_summaries ORDER BY date DESC
-            """)
-            rows = cursor.fetchall()
-            return [json.loads(row[0]) for row in rows]
+                return json.loads(row['summary_json'])
+            return None
 
 
-class DailySummarizer:
-    def __init__(self, db: SwarmMetricsDB):
-        self.db = db
+class MetricsComputer:
+    """Compute aggregate metrics from raw data."""
 
-    def generate_summary(self, date_str: str) -> DailySummary:
-        metrics = self.db.get_metrics_for_date(date_str)
+    def __init__(self, metrics_store: MetricsStore):
+        self.store = metrics_store
 
-        if not metrics:
-            return DailySummary(
-                date=date_str,
-                total_agents=0,
-                healthy_agents=0,
-                degraded_agents=0,
-                failed_agents=0,
-                offline_agents=0,
-                total_tasks_completed=0,
-                total_errors=0,
-                avg_cpu_usage=0.0,
-                avg_memory_usage=0.0,
-                avg_response_time_ms=0.0,
-                error_rate=0.0,
-                throughput_tasks_per_minute=0.0,
-                timestamp=time.time()
-            )
+    def compute_snapshot(self) -> MetricSnapshot:
+        """Compute current metrics snapshot."""
+        agent_data = self.store.get_agent_activity_since(24)
+        task_data = self.store.get_task_metrics_since(24)
 
-        agent_ids = set(m.agent_id for m in metrics)
-        status_counts = defaultdict(int)
-        total_cpu = 0
-        total_memory = 0
-        total_response_time = 0
-        total_tasks = 0
-        total_errors = 0
-        total_throughput = 0
+        unique_agents = set(a['agent_id'] for a in agent_data)
+        total_agents = len(unique_agents)
+        active_agents = len([a for a in agent_data if a['status'] == 'active'])
+        idle_agents = total_agents - active_agents
 
-        for metric in metrics:
-            status_counts[metric.status] += 1
-            total_cpu += metric.cpu_usage
-            total_memory += metric.memory_usage
-            total_response_time += metric.response_time_ms
-            total_tasks += metric.task_count
-            total_errors += metric.error_count
-            total_throughput += metric.task_throughput
+        total_tasks = len(task_data)
+        completed_tasks = len([t for t in task_data if t['status'] == 'completed'])
+        failed_tasks = len([t for t in task_data if t['status'] == 'failed'])
+        blocked_tasks = len([t for t in task_data if t['status'] == 'blocked'])
 
-        metric_count = len(metrics)
-        unique_agents = len(agent_ids)
+        durations = [
+            t['duration_seconds'] for t in task_data
+            if t['duration_seconds'] and t['status'] == 'completed'
+        ]
+        avg_duration = sum(durations) / len(durations) if durations else 0.0
 
-        avg_cpu = total_cpu / metric_count if metric_count > 0 else 0
-        avg_memory = total_memory / metric_count if metric_count > 0 else 0
-        avg_response_time = total_response_time / metric_count if metric_count > 0 else 0
-        error_rate = (total_errors / total_tasks * 100) if total_tasks > 0 else 0
-        avg_throughput = total_throughput / metric_count if metric_count > 0 else 0
+        throughput = completed_tasks / 24.0
+
+        velocity_points = completed_tasks * 5 - failed_tasks * 2
+
+        return MetricSnapshot(
+            timestamp=datetime.utcnow().isoformat(),
+            total_agents=total_agents,
+            active_agents=active_agents,
+            idle_agents=idle_agents,
+            total_tasks=total_tasks,
+            completed_tasks=completed_tasks,
+            failed_tasks=failed_tasks,
+            blocked_tasks=blocked_tasks,
+            avg_task_duration=avg_duration,
+            throughput_tasks_per_hour=throughput,
+            project_velocity_points=float(velocity_points)
+        )
+
+    def identify_bottlenecks(self, task_data: List[Dict]) -> List[str]:
+        """Identify system bottlenecks."""
+        bottlenecks = []
+
+        blocked_reasons = {}
+        for task in task_data:
+            if task['status'] == 'blocked' and task.get('blocked_reason'):
+                reason = task['blocked_reason']
+                blocked_reasons[reason] = blocked_reasons.get(reason, 0) + 1
+
+        for reason, count in sorted(blocked_reasons.items(), key=lambda x: x[1], reverse=True)[:3]:
+            bottlenecks.append(f"Blocked: {reason} ({count} tasks)")
+
+        unassigned = [t for t in task_data if t['status'] == 'pending' and not t['assigned_agent_id']]
+        if len(unassigned) > len([a for a in task_data if a['status'] == 'completed']):
+            bottlenecks.append(f"High pending queue: {len(unassigned)} unassigned tasks")
+
+        return bottlenecks
+
+    def identify_top_performers(self, agent_data: List[Dict]) -> List[Tuple[str, int]]:
+        """Identify top performing agents."""
+        agent_scores = {}
+        for record in agent_data:
+            agent_id = record['agent_id']
+            score = record['tasks_completed'] - record['tasks_failed']
+            if agent_id not in agent_scores:
+                agent_scores[agent_id] = 0
+            agent_scores[agent_id] += score
+
+        top_5 = sorted(agent_scores.items(), key=lambda x: x[1], reverse=True)[:5]
+        return top_5
+
+    def compute_health_score(self, snapshot: MetricSnapshot) -> float:
+        """Compute overall health score (0-100)."""
+        score = 100.0
+
+        if snapshot.total_agents > 0:
+            active_ratio = snapshot.active_agents / snapshot.total_agents
+            score -= (1.0 - active_ratio) * 20
+
+        if snapshot.total_tasks > 0:
+            success_ratio = snapshot.completed_tasks / snapshot.total_tasks
+            score -= (1.0 - success_ratio) * 25
+
+            blocked_ratio = snapshot.blocked_tasks / snapshot.total_tasks
+            score -= blocked_ratio * 15
+
+        return max(0.0, min(100.0, score))
+
+    def generate_recommendations(self, summary: DailySummary) -> List[str]:
+        """Generate actionable recommendations."""
+        recommendations = []
+
+        if summary.health_score < 50:
+            recommendations.append("⚠️  Critical: System health is degraded. Investigate active bottlenecks immediately.")
+
+        if summary.metrics.idle_agents > summary.metrics.active_agents * 0.5:
+            recommendations.append("🔴 High idle agent count. Consider load balancing or scaling down.")
+
+        if summary.metrics.blocked_tasks > summary.metrics.completed_tasks * 0.1:
+            recommendations.append("🟠 Significant task blocking. Review blocking reasons and dependencies.")
+
+        if len(summary.top_performers) > 0:
+            top_agent = summary.top_performers[0][0]
+            recommendations.append(f"✅ Star performer: {top_agent}. Consider peer learning sessions.")
+
+        if summary.metrics.throughput_tasks_per_hour < 1.0:
+            recommendations.append("📊 Low throughput. Review task complexity and agent capability matching.")
+
+        return recommendations if recommendations else ["✨ System operating nominally."]
+
+
+class DailySummaryCron:
+    """Cron job executor for daily summaries."""
+
+    def __init__(
+        self,
+        metrics_store: MetricsStore,
+        forum_api: ForumAPI,
+        metrics_computer: MetricsComputer
+    ):
+        self.store = metrics_store
+        self.forum = forum_api
+        self.computer = metrics_computer
+
+    def execute(self):
+        """Execute the daily summary cron job."""
+        logger.info("Daily summary cron job starting")
+
+        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        cutoff_time = datetime.utcnow() - timedelta(hours=24)
+
+        agent_data = self.store.get_agent_activity_since(24)
+        task_data = self.store.get_task_metrics_since(24)
+
+        snapshot = self.computer.compute_snapshot()
+        bottlenecks = self.computer.identify_bottlenecks(task_data)
+        top_performers = self.computer.identify_top_performers(agent_data)
+        health_score = self.computer.compute_health_score(snapshot)
 
         summary = DailySummary(
-            date=date_str,
-            total_agents=unique_agents,
-            healthy_agents=sum(1 for m in metrics if m.status == AgentStatus.HEALTHY.value),
-            degraded_agents=sum(1 for m in metrics if m.status == AgentStatus.DEGRADED.value),
-            failed_agents=sum(1 for m in metrics if m.status == AgentStatus.FAILED.value),
-            offline_agents=sum(1 for m in metrics if m.status == AgentStatus.OFFLINE.value),
-            total_tasks_completed=total_tasks,
-            total_errors=total_errors,
-            avg_cpu_usage=round(avg_cpu, 2),
-            avg_memory_usage=round(avg_memory, 2),
-            avg_response_time_ms=round(avg_response_time, 2),
-            error_rate=round(error_rate, 2),
-            throughput_tasks_per_minute=round(avg_throughput, 2),
-            timestamp=time.time()
+            date=yesterday,
+            metrics=snapshot,
+            bottlenecks=bottlenecks,
+            top_performers=top_performers,
+            health_score=health_score,
+            recommendations=[]
         )
+        summary.recommendations = self.computer.generate_recommendations(summary)
+
+        self.store.save_daily_summary(yesterday, summary)
+
+        message = self._format_summary_message(summary)
+
+        thread_id = self.forum.get_or_create_digest_thread()
+        posted = self.forum.post_to_thread(thread_id, message)
+
+        if posted:
+            logger.info(f"Daily summary posted successfully for {yesterday}")
+        else:
+            logger.error(f"Failed to post daily summary for {yesterday}")
 
         return summary
 
+    def _format_summary_message(self, summary: DailySummary) -> str:
+        """Format summary as a forum post."""
+        lines = [
+            f"📊 **Daily Digest — {summary.date}**",
+            "",
+            "**System Health**",
+            f"• Health Score: {summary.health_score:.1f}%",
+            f"• Total Agents: {summary.metrics.total_agents} (Active: {summary.metrics.active_agents}, Idle: {summary.metrics.idle_agents})",
+            f"• Total Tasks: {summary.metrics.total_tasks}",
+            f"  - Completed: {summary.metrics.completed_tasks}",
+            f"  - Failed: {summary.metrics.failed_tasks}",
+            f"  - Blocked: {summary.metrics.blocked_tasks}",
+            f"• Throughput: {summary.metrics.throughput_tasks_per_hour:.2f} tasks/hour",
+            f"• Project Velocity: {summary.metrics.project_velocity_points:.0f} points",
+            f"• Avg Task Duration: {summary.metrics.avg_task_duration:.2f}s",
+            ""
+        ]
 
-class CronJobManager:
-    def __init__(self, db: SwarmMetricsDB, output_dir: str = "summaries"):
-        self.db = db
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(exist_ok=True)
-        self.summarizer = DailySummarizer(db)
+        if summary.bottlenecks:
+            lines.append("**Bottlenecks Detected**")
+            for bottleneck in summary.bottlenecks:
+                lines.append(f"• {bottleneck}")
+            lines.append("")
 
-    def run_daily_job(self, date_str: str = None):
-        if date_str is None:
-            date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        if summary.top_performers:
+            lines.append("**Top Performers**")
+            for agent, score in summary.top_performers:
+                lines.append(f"• {agent}: {score} points")
+            lines.append("")
 
-        summary = self.summarizer.generate_summary(date_str)
-        self.db.insert_daily_summary(summary)
+        if summary.recommendations:
+            lines.append("**Recommendations**")
+            for rec in summary.recommendations:
+                lines.append(f"• {rec}")
+            lines.append("")
 
-        output_file = self.output_dir / f"summary_{date_str}.json"
-        with open(output_file, 'w') as f:
-            json.dump(asdict(summary), f, indent=2)
+        lines.append(f"*Generated at {datetime.utcnow().isoformat()}Z*")
 
-        return summary, output_file
-
-    def generate_report(self, summary: DailySummary) -> str:
-        report = f"""
-================================================================================
-                    DAILY SWARM HEALTH SUMMARY REPORT
-================================================================================
-Date: {summary.date}
-Generated: {datetime.fromtimestamp(summary.timestamp).isoformat()}
-
-AGENT STATUS OVERVIEW:
-  Total Agents Monitored:     {summary.total_agents}
-  Healthy Agents:             {summary.healthy_agents}
-  Degraded Agents:            {summary.degraded_agents}
-  Failed Agents:              {summary.failed_agents}
-  Offline Agents:             {summary.offline_agents}
-
-PERFORMANCE METRICS:
-  Total Tasks Completed:      {summary.total_tasks_completed}
-  Total Errors:               {summary.total_errors}
-  Error Rate:                 {summary.error_rate}%
-  Avg Response Time:          {summary.avg_response_time_ms}ms
-  Throughput:                 {summary.throughput_tasks_per_minute} tasks/min
-
-RESOURCE UTILIZATION:
-  Average CPU Usage:          {summary.avg_cpu_usage}%
-  Average Memory Usage:       {summary.avg_memory_usage}%
-
-================================================================================
-"""
-        return report
+        return "\n".join(lines)
 
 
-def generate_sample_metrics(db: SwarmMetricsDB, num_agents: int = 5, num_readings: int = 20):
-    agent_ids = [f"agent_{i:03d}" for i in range(num_agents)]
-    base_time = (datetime.now() - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+class CronScheduler:
+    """Simple cron scheduler for daily tasks."""
 
-    for i in range(num_readings):
-        timestamp = base_time + (i * 3600)
+    def __init__(self, cron_func, check_interval: int = 60):
+        self.cron_func = cron_func
+        self.check_interval = check_interval
+        self.running = False
+        self.thread = None
 
-        for agent_id in agent_ids:
-            cpu_usage = random.uniform(10, 80)
-            memory_usage = random.uniform(20, 70)
-            task_count = random.randint(50, 200)
-            error_count = random.randint(0, 10)
-            task_throughput = random.uniform(5, 20)
-            response_time_ms = random.uniform(50, 500)
+    def start(self):
+        """Start the scheduler in a background thread."""
+        self.running = True
+        self.thread = threading.Thread(target=self._run_loop, daemon=True)
+        self.thread.start()
+        logger.info("Cron scheduler started")
 
-            if error_count > 5:
-                status = AgentStatus.DEGRADED.value
-            elif error_count > 8:
-                status = AgentStatus.FAILED.value
-            elif random.random() > 0.95:
-                status = AgentStatus.OFFLINE.value
-            else:
-                status = AgentStatus.HEALTHY.value
+    def stop(self):
+        """Stop the scheduler."""
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=5)
+        logger.info("Cron scheduler stopped")
 
-            metric = AgentMetric(
-                agent_id=agent_id,
-                timestamp=timestamp,
-                cpu_usage=cpu_usage,
-                memory_usage=memory_usage,
-                task_count=task_count,
-                error_count=error_count,
-                task_throughput=task_throughput,
-                response_time_ms=response_time_ms,
-                status=status
-            )
-            db.insert_metric(metric)
+    def _run_loop(self):
+        """Main loop that checks for cron execution."""
+        last_run_date = None
+
+        while self.running:
+            now = datetime.utcnow()
+            current_date = now.strftime("%Y-%m-%d")
+
+            if now.hour == 0 and now.minute == 0 and last_run_date != current_date:
+                logger.info(f"Executing daily cron at {now.isoformat()}")
+                try:
+                    self.cron_func()
+                    last_run_date = current_date
+                except Exception as e:
+                    logger.error(f"Cron execution failed: {e}", exc_info=True)
+
+            time.sleep(self.check_interval)
+
+
+def generate_sample_metrics(store: MetricsStore, days: int = 1):
+    """Generate sample agent and task metrics for testing."""
+    logger.info(f"Generating sample metrics for {days} day(s)")
+
+    agent_ids = [f"agent_{i:03d}" for i in range(1, 11)]
+    project_ids = ["project_a", "project_b", "project_c"]
+    blocked_reasons = ["dependency_pending", "resource_unavailable", "rate_limited"]
+
+    now = datetime.utcnow()
+
+    for day_offset in range(days):
+        base_time = now - timedelta(days=day_offset)
+
+        for hour in range(24):
+            timestamp = base_time - timedelta(hours=hour)
+
+            for agent_id in agent_ids:
+                status = "active" if hash(agent_id + str(hour)) % 3 != 0 else "idle"
+                tasks_completed = (hash(agent_id) % 10) + (hour % 5)
+                tasks_failed = max(0, (hash(agent_id) % 3) - 1)
+                uptime_seconds = 3600 if status == "active" else 1800
+
+                store.record_agent_activity(
+                    agent_id=agent_id,
+                    status=status,
+                    tasks_completed=tasks_completed,
+                    tasks_failed=tasks_failed,
+                    uptime_seconds=uptime_seconds
+                )
+
+            for task_idx in range(15):
+                task_id = f"task_{day_offset}_{hour}_{task_idx:03d}"
+                project_id = project_ids[task_idx % len(project_ids)]
+                assigned_agent = agent_ids[task_idx % len(agent_ids)]
+
+                status_seed = hash(task_id) % 100
+                if status_seed < 70:
+                    status = "completed"
+                    duration = 120 + (hash(task_id) % 300)
+                    blocked_reason = None
+                elif status_seed < 85:
+                    status = "failed"
+                    duration = 180 + (hash(task_id) % 200)
+                    blocked_reason = None
+                else:
+                    status = "blocked"
+                    duration = 300
+                    blocked_reason = blocked_reasons[task_idx % len(blocked_reasons)]
+
+                store.record_task_metric(
+                    task_id=task_id,
+                    project_id=project_id,
+                    status=status,
+                    duration_seconds=float(duration),
+                    assigned_agent_id=assigned_agent,
+                    blocked_reason=blocked_reason
+                )
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Daily Summary Cron Job for Swarm Health Monitoring"
+        description="Daily Summary Cron for SwarmPulse Agent Activity Monitor"
     )
     parser.add_argument(
         "--db-path",
-        type=str,
-        default="swarm_metrics.db",
-        help="Path to metrics database (default: swarm_metrics.db)"
+        default="metrics.db",
+        help="Path to SQLite metrics database (default: metrics.db)"
     )
     parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="summaries",
-        help="Directory for summary output files (default: summaries)"
+        "--forum-url",
+        default="http://localhost:8080",
+        help="Forum API base URL (default: http://localhost:8080)"
     )
     parser.add_argument(
-        "--date",
-        type=str,
-        default=None,
-        help="Date to summarize in YYYY-MM-DD format (default: yesterday)"
+        "--forum-api-key",
+        default="demo_key_12345",
+        help="Forum API key (default: demo_key_12345)"
     )
     parser.add_argument(
-        "--generate-samples",
+        "--run-once",
         action="store_true",
-        help="Generate sample metrics for testing"
+        help="Run cron job once and exit (for testing)"
     )
     parser.add_argument(
-        "--report",
+        "--schedule",
         action="store_true",
-        help="Print formatted report to stdout"
+        help="Run scheduler continuously (background daemon mode)"
     )
     parser.add_argument(
-        "--list-summaries",
+        "--generate-sample-data",
         action="store_true",
-        help="List all available daily summaries"
+        help="Generate sample metrics data for testing"
+    )
+    parser.add_argument(
+        "--check-interval",
+        type=int,
+        default=60,
+        help="Scheduler check interval in seconds (default: 60)"
     )
 
     args = parser.parse_args()
 
-    db = SwarmMetricsDB(args.db_path)
+    db_path = args.db_path
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
-    if args.generate_samples:
-        print("Generating sample metrics...")
-        generate_sample_metrics(db)
-        print("Sample metrics generated successfully")
+    store = MetricsStore(db_path)
+    forum = ForumAPI(args.forum_url, args.forum_api_key)
+    computer = MetricsComputer(store)
+    cron = DailySummaryCron(store, forum, computer)
 
-    if args.list_summaries:
-        summaries = db.get_all_daily_summaries()
-        if summaries:
-            print("\nAvailable Daily Summaries:")
-            print("-" * 80)
-            for summary in summaries:
-                print(f"  Date: {summary['date']}")
-                print(f"    Agents: {summary['total_agents']} | "
-                      f"Healthy: {summary['healthy_agents']} | "
-                      f"Tasks: {summary['total_tasks_completed']} | "
-                      f"Errors: {summary['total_errors']}")
-            print("-" * 80)
-        else:
-            print("No summaries found in database")
-        return 0
+    if args.generate_sample_data:
+        generate_sample_metrics(store, days=2)
+        logger.info("Sample data generated successfully")
 
-    cron = CronJobManager(db, args.output_dir)
-    summary, output_file = cron.run_daily_job(args.date)
+    if args.run_once:
+        logger.info("Running daily summary cron once")
+        summary = cron.execute()
+        print(json.dumps(asdict(summary), default=str, indent=2))
 
-    print(f"Daily summary generated for {summary.date}")
-    print(f"Output saved to: {output_file}")
+    elif args.schedule:
+        logger.info("Starting cron scheduler in background mode")
+        scheduler = CronScheduler(cron.execute, check_interval=args.check_interval)
+        scheduler.start()
 
-    if args.report:
-        report = cron.generate_report(summary)
-        print(report)
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            logger.info("Shutting down scheduler")
+            scheduler.stop()
 
-    output_data = {
-        "status": "success",
-        "date": summary.date,
-        "summary": asdict(summary),
-        "output_file": str(output_file)
-    }
-    print(json.dumps(output_data, indent=2))
-
-    return 0
+    else:
+        parser.print_help()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
