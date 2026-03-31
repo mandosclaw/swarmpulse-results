@@ -3,366 +3,412 @@
 # Task:    Write integration tests and edge cases
 # Mission: Allbirds is selling for $39 million. It raised nearly 10 times that amount in its IPO.
 # Agent:   @aria
-# Date:    2026-03-31T13:32:15.203Z
+# Date:    2026-03-31T13:32:29.289Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Integration tests and edge cases for Allbirds valuation collapse analysis
+TASK: Integration tests and edge cases for Allbirds market collapse analysis
 MISSION: Allbirds is selling for $39 million. It raised nearly 10 times that amount in its IPO.
-AGENT: @aria (SwarmPulse network)
-DATE: 2026-03-30
-CATEGORY: AI/ML
-SOURCE: TechCrunch - Allbirds valuation analysis
-DESCRIPTION: Write integration tests and edge cases covering failure modes and boundary conditions
+AGENT: @aria
+DATE: 2024
 """
 
+import argparse
 import json
 import sys
-import argparse
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Any
 from dataclasses import dataclass, asdict
+from datetime import datetime, timedelta
+from typing import List, Dict, Tuple, Optional
 from enum import Enum
-import math
 
 
-class ValuationStatus(Enum):
-    HEALTHY = "healthy"
-    WARNING = "warning"
-    CRITICAL = "critical"
-    COLLAPSED = "collapsed"
+class MarketPhase(Enum):
+    IPO = "ipo"
+    GROWTH = "growth"
+    DECLINE = "decline"
+    ACQUISITION = "acquisition"
 
 
 @dataclass
 class CompanyMetrics:
-    name: str
-    ipo_date: str
-    ipo_valuation_millions: float
-    current_valuation_millions: float
-    raised_amount_millions: float
-    revenue_millions: float
-    burn_rate_millions_monthly: float
+    phase: MarketPhase
+    valuation: float
+    revenue: float
+    burn_rate: float
     runway_months: float
-    employee_count: int
-    market_sentiment: float
+    investor_sentiment: float
+    market_share: float
+    timestamp: str
 
 
 @dataclass
-class ValuationAnalysis:
-    company_name: str
-    timestamp: str
-    ipo_valuation: float
-    current_valuation: float
-    decline_percentage: float
-    raised_vs_current_ratio: float
-    status: str
-    critical_alerts: List[str]
-    warnings: List[str]
-    financial_health_score: float
+class TestResult:
+    test_name: str
+    passed: bool
+    error_message: str
+    metrics_at_failure: Optional[Dict]
+    duration_ms: float
 
 
-class ValuationCollapsedAnalyzer:
-    """Analyze company valuation collapse patterns with comprehensive test coverage."""
+class AllbirdsValuationAnalyzer:
+    def __init__(self, ipo_valuation: float, acquisition_price: float):
+        self.ipo_valuation = ipo_valuation
+        self.acquisition_price = acquisition_price
+        self.test_results: List[TestResult] = []
+        
+    def calculate_valuation_decline_ratio(self) -> float:
+        if self.ipo_valuation <= 0:
+            raise ValueError("IPO valuation must be positive")
+        return self.acquisition_price / self.ipo_valuation
     
-    MIN_VALUATION = 0.1
-    MAX_VALUATION = 100000
-    MIN_RUNWAY = 0
-    MAX_RUNWAY = 240
-    CRITICAL_BURN_THRESHOLD = 10.0
-    WARNING_DECLINE_THRESHOLD = 50.0
-    CRITICAL_DECLINE_THRESHOLD = 80.0
-    MINIMUM_RUNWAY_CRITICAL = 3
-    MINIMUM_RUNWAY_WARNING = 12
-    
-    def __init__(self, verbose: bool = False):
-        self.verbose = verbose
-        self.test_results = []
-    
-    def validate_metrics(self, metrics: CompanyMetrics) -> Tuple[bool, List[str]]:
-        """Validate input metrics for boundary conditions and edge cases."""
-        errors = []
-        
-        if metrics.ipo_valuation_millions <= self.MIN_VALUATION:
-            errors.append(f"IPO valuation must be > {self.MIN_VALUATION}M, got {metrics.ipo_valuation_millions}")
-        
-        if metrics.ipo_valuation_millions > self.MAX_VALUATION:
-            errors.append(f"IPO valuation must be <= {self.MAX_VALUATION}M, got {metrics.ipo_valuation_millions}")
-        
-        if metrics.current_valuation_millions < 0:
-            errors.append(f"Current valuation cannot be negative: {metrics.current_valuation_millions}")
-        
-        if metrics.current_valuation_millions > metrics.ipo_valuation_millions * 2:
-            errors.append(f"Current valuation suspiciously high relative to IPO: {metrics.current_valuation_millions}M vs {metrics.ipo_valuation_millions}M")
-        
-        if metrics.raised_amount_millions <= 0:
-            errors.append(f"Raised amount must be positive, got {metrics.raised_amount_millions}")
-        
-        if metrics.raised_amount_millions > metrics.ipo_valuation_millions * 5:
-            errors.append(f"Raised amount ({metrics.raised_amount_millions}M) suspiciously high vs IPO valuation ({metrics.ipo_valuation_millions}M)")
-        
-        if metrics.revenue_millions < 0:
-            errors.append(f"Revenue cannot be negative: {metrics.revenue_millions}")
-        
-        if metrics.burn_rate_millions_monthly < 0:
-            errors.append(f"Burn rate cannot be negative: {metrics.burn_rate_millions_monthly}")
-        
-        if metrics.burn_rate_millions_monthly > self.CRITICAL_BURN_THRESHOLD and metrics.runway_months < 6:
-            errors.append(f"Unsustainable burn rate {metrics.burn_rate_millions_monthly}M/mo with only {metrics.runway_months} months runway")
-        
-        if metrics.runway_months < self.MIN_RUNWAY or metrics.runway_months > self.MAX_RUNWAY:
-            errors.append(f"Runway {metrics.runway_months} months outside valid range [{self.MIN_RUNWAY}, {self.MAX_RUNWAY}]")
-        
-        if metrics.employee_count < 0:
-            errors.append(f"Employee count cannot be negative: {metrics.employee_count}")
-        
-        if not -1.0 <= metrics.market_sentiment <= 1.0:
-            errors.append(f"Market sentiment must be in [-1.0, 1.0], got {metrics.market_sentiment}")
+    def test_boundary_zero_valuation(self) -> TestResult:
+        start_time = datetime.now()
+        test_name = "test_boundary_zero_valuation"
+        passed = False
+        error_msg = ""
         
         try:
-            datetime.fromisoformat(metrics.ipo_date)
-        except ValueError:
-            errors.append(f"Invalid IPO date format: {metrics.ipo_date}")
-        
-        return len(errors) == 0, errors
-    
-    def calculate_decline_percentage(self, ipo_val: float, current_val: float) -> float:
-        """Calculate percentage decline with edge case handling."""
-        if ipo_val <= 0:
-            return 0.0
-        if current_val < 0:
-            return -100.0
-        decline = ((ipo_val - current_val) / ipo_val) * 100
-        return max(-100.0, min(100.0, decline))
-    
-    def calculate_financial_health_score(self, metrics: CompanyMetrics, decline_pct: float) -> float:
-        """Calculate composite financial health score (0-100)."""
-        score = 100.0
-        
-        if decline_pct > self.CRITICAL_DECLINE_THRESHOLD:
-            score -= 40
-        elif decline_pct > self.WARNING_DECLINE_THRESHOLD:
-            score -= 25
-        else:
-            score -= (decline_pct / self.WARNING_DECLINE_THRESHOLD) * 15
-        
-        if metrics.runway_months < self.MINIMUM_RUNWAY_CRITICAL:
-            score -= 30
-        elif metrics.runway_months < self.MINIMUM_RUNWAY_WARNING:
-            score -= 15
-        else:
-            runway_factor = min(1.0, metrics.runway_months / 24)
-            score -= (1 - runway_factor) * 10
-        
-        if metrics.revenue_millions > 0:
-            burn_to_revenue_ratio = metrics.burn_rate_millions_monthly * 12 / metrics.revenue_millions
-            if burn_to_revenue_ratio > 0.5:
-                score -= 15
+            analyzer = AllbirdsValuationAnalyzer(0, 39_000_000)
+            analyzer.calculate_valuation_decline_ratio()
+            error_msg = "Should have raised ValueError for zero IPO valuation"
+        except ValueError as e:
+            if "IPO valuation must be positive" in str(e):
+                passed = True
             else:
-                score -= burn_to_revenue_ratio * 10
+                error_msg = f"Wrong error message: {e}"
+        except Exception as e:
+            error_msg = f"Unexpected exception: {type(e).__name__}: {e}"
         
-        if metrics.market_sentiment < -0.5:
-            score -= 10
-        elif metrics.market_sentiment < 0:
-            score -= 5
-        
-        return max(0.0, min(100.0, score))
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        return TestResult(test_name, passed, error_msg, None, duration)
     
-    def analyze(self, metrics: CompanyMetrics) -> ValuationAnalysis:
-        """Perform comprehensive valuation analysis with error handling."""
-        critical_alerts = []
-        warnings = []
+    def test_boundary_negative_valuation(self) -> TestResult:
+        start_time = datetime.now()
+        test_name = "test_boundary_negative_valuation"
+        passed = False
+        error_msg = ""
         
-        is_valid, validation_errors = self.validate_metrics(metrics)
-        if not is_valid:
-            critical_alerts.extend(validation_errors)
+        try:
+            analyzer = AllbirdsValuationAnalyzer(-100_000_000, 39_000_000)
+            analyzer.calculate_valuation_decline_ratio()
+            error_msg = "Should have raised ValueError for negative IPO valuation"
+        except ValueError as e:
+            if "IPO valuation must be positive" in str(e):
+                passed = True
+            else:
+                error_msg = f"Wrong error message: {e}"
+        except Exception as e:
+            error_msg = f"Unexpected exception: {type(e).__name__}: {e}"
         
-        decline_pct = self.calculate_decline_percentage(metrics.ipo_valuation_millions, metrics.current_valuation_millions)
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        return TestResult(test_name, passed, error_msg, None, duration)
+    
+    def test_boundary_negative_acquisition_price(self) -> TestResult:
+        start_time = datetime.now()
+        test_name = "test_boundary_negative_acquisition_price"
+        passed = False
+        error_msg = ""
+        metrics = None
         
-        if metrics.current_valuation_millions == 0:
-            critical_alerts.append("Company valuation reached zero")
+        try:
+            analyzer = AllbirdsValuationAnalyzer(390_000_000, -39_000_000)
+            result = analyzer.calculate_valuation_decline_ratio()
+            
+            if result < 0:
+                passed = True
+            else:
+                error_msg = f"Expected negative ratio, got {result}"
+            
+            metrics = {
+                "ipo_valuation": 390_000_000,
+                "acquisition_price": -39_000_000,
+                "ratio": result
+            }
+        except Exception as e:
+            error_msg = f"Unexpected exception: {type(e).__name__}: {e}"
         
-        raised_vs_current = metrics.raised_amount_millions / max(0.01, metrics.current_valuation_millions)
-        if raised_vs_current > 100:
-            critical_alerts.append(f"Raised capital ({metrics.raised_amount_millions}M) is 100x+ current valuation")
-        elif raised_vs_current > 10:
-            critical_alerts.append(f"Raised capital ({metrics.raised_amount_millions}M) is 10x+ current valuation (Allbirds case)")
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        return TestResult(test_name, passed, error_msg, metrics, duration)
+    
+    def test_extreme_valuation_decline(self) -> TestResult:
+        start_time = datetime.now()
+        test_name = "test_extreme_valuation_decline"
+        passed = False
+        error_msg = ""
+        metrics = None
         
-        if decline_pct > self.CRITICAL_DECLINE_THRESHOLD:
-            critical_alerts.append(f"Valuation declined {decline_pct:.1f}% - critical collapse")
-        elif decline_pct > self.WARNING_DECLINE_THRESHOLD:
-            warnings.append(f"Valuation declined {decline_pct:.1f}% - significant loss")
+        try:
+            ipo_val = 390_000_000
+            acq_price = 39_000_000
+            analyzer = AllbirdsValuationAnalyzer(ipo_val, acq_price)
+            ratio = analyzer.calculate_valuation_decline_ratio()
+            
+            expected_ratio = 0.1
+            if abs(ratio - expected_ratio) < 0.001:
+                passed = True
+            else:
+                error_msg = f"Expected ratio ~{expected_ratio}, got {ratio}"
+            
+            metrics = {
+                "ipo_valuation": ipo_val,
+                "acquisition_price": acq_price,
+                "decline_ratio": ratio,
+                "decline_percent": (1 - ratio) * 100
+            }
+        except Exception as e:
+            error_msg = f"Exception: {type(e).__name__}: {e}"
         
-        if metrics.runway_months < self.MINIMUM_RUNWAY_CRITICAL:
-            critical_alerts.append(f"Runway critical: {metrics.runway_months:.1f} months")
-        elif metrics.runway_months < self.MINIMUM_RUNWAY_WARNING:
-            warnings.append(f"Runway warning: {metrics.runway_months:.1f} months")
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        return TestResult(test_name, passed, error_msg, metrics, duration)
+    
+    def test_minimal_decline(self) -> TestResult:
+        start_time = datetime.now()
+        test_name = "test_minimal_decline"
+        passed = False
+        error_msg = ""
+        metrics = None
         
-        if metrics.burn_rate_millions_monthly > self.CRITICAL_BURN_THRESHOLD:
-            critical_alerts.append(f"Burn rate critical: ${metrics.burn_rate_millions_monthly:.2f}M/month")
+        try:
+            ipo_val = 100_000_000
+            acq_price = 99_999_999
+            analyzer = AllbirdsValuationAnalyzer(ipo_val, acq_price)
+            ratio = analyzer.calculate_valuation_decline_ratio()
+            
+            if 0.99 < ratio < 1.0:
+                passed = True
+            else:
+                error_msg = f"Expected ratio ~0.9999, got {ratio}"
+            
+            metrics = {
+                "ipo_valuation": ipo_val,
+                "acquisition_price": acq_price,
+                "decline_ratio": ratio,
+                "decline_percent": (1 - ratio) * 100
+            }
+        except Exception as e:
+            error_msg = f"Exception: {type(e).__name__}: {e}"
         
-        if metrics.revenue_millions > 0:
-            profit_margin = (metrics.revenue_millions - metrics.burn_rate_millions_monthly * 12) / metrics.revenue_millions * 100
-            if profit_margin < -50:
-                critical_alerts.append(f"Negative margin {profit_margin:.1f}% - spending >1.5x revenue")
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        return TestResult(test_name, passed, error_msg, metrics, duration)
+    
+    def test_valuation_exceeds_ipo(self) -> TestResult:
+        start_time = datetime.now()
+        test_name = "test_valuation_exceeds_ipo"
+        passed = False
+        error_msg = ""
+        metrics = None
         
-        if metrics.market_sentiment < -0.7:
-            critical_alerts.append("Market sentiment severely negative")
-        elif metrics.market_sentiment < -0.3:
-            warnings.append("Market sentiment negative")
+        try:
+            ipo_val = 100_000_000
+            acq_price = 150_000_000
+            analyzer = AllbirdsValuationAnalyzer(ipo_val, acq_price)
+            ratio = analyzer.calculate_valuation_decline_ratio()
+            
+            if ratio > 1.0:
+                passed = True
+            else:
+                error_msg = f"Expected ratio > 1.0, got {ratio}"
+            
+            metrics = {
+                "ipo_valuation": ipo_val,
+                "acquisition_price": acq_price,
+                "decline_ratio": ratio,
+                "gain_percent": (ratio - 1) * 100
+            }
+        except Exception as e:
+            error_msg = f"Exception: {type(e).__name__}: {e}"
         
-        health_score = self.calculate_financial_health_score(metrics, decline_pct)
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        return TestResult(test_name, passed, error_msg, metrics, duration)
+    
+    def test_very_large_numbers(self) -> TestResult:
+        start_time = datetime.now()
+        test_name = "test_very_large_numbers"
+        passed = False
+        error_msg = ""
+        metrics = None
         
-        if critical_alerts:
-            status = ValuationStatus.COLLAPSED.value
-        elif health_score < 30:
-            status = ValuationStatus.CRITICAL.value
-        elif health_score < 60:
-            status = ValuationStatus.WARNING.value
-        else:
-            status = ValuationStatus.HEALTHY.value
+        try:
+            ipo_val = 1e15
+            acq_price = 1e14
+            analyzer = AllbirdsValuationAnalyzer(ipo_val, acq_price)
+            ratio = analyzer.calculate_valuation_decline_ratio()
+            
+            expected_ratio = 0.1
+            if abs(ratio - expected_ratio) < 0.001:
+                passed = True
+            else:
+                error_msg = f"Expected ratio ~{expected_ratio}, got {ratio}"
+            
+            metrics = {
+                "ipo_valuation": ipo_val,
+                "acquisition_price": acq_price,
+                "decline_ratio": ratio
+            }
+        except Exception as e:
+            error_msg = f"Exception: {type(e).__name__}: {e}"
         
-        return ValuationAnalysis(
-            company_name=metrics.name,
-            timestamp=datetime.utcnow().isoformat(),
-            ipo_valuation=metrics.ipo_valuation_millions,
-            current_valuation=metrics.current_valuation_millions,
-            decline_percentage=decline_pct,
-            raised_vs_current_ratio=raised_vs_current,
-            status=status,
-            critical_alerts=critical_alerts,
-            warnings=warnings,
-            financial_health_score=health_score
-        )
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        return TestResult(test_name, passed, error_msg, metrics, duration)
+    
+    def test_floating_point_precision(self) -> TestResult:
+        start_time = datetime.now()
+        test_name = "test_floating_point_precision"
+        passed = False
+        error_msg = ""
+        metrics = None
+        
+        try:
+            ipo_val = 390_000_000 + 0.1
+            acq_price = 39_000_000 + 0.01
+            analyzer = AllbirdsValuationAnalyzer(ipo_val, acq_price)
+            ratio = analyzer.calculate_valuation_decline_ratio()
+            
+            expected_ratio = acq_price / ipo_val
+            if abs(ratio - expected_ratio) < 1e-9:
+                passed = True
+            else:
+                error_msg = f"Precision loss: expected {expected_ratio}, got {ratio}"
+            
+            metrics = {
+                "ipo_valuation": ipo_val,
+                "acquisition_price": acq_price,
+                "decline_ratio": ratio,
+                "precision_error": abs(ratio - expected_ratio)
+            }
+        except Exception as e:
+            error_msg = f"Exception: {type(e).__name__}: {e}"
+        
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        return TestResult(test_name, passed, error_msg, metrics, duration)
 
 
-class IntegrationTestSuite:
-    """Comprehensive test suite for valuation analysis."""
-    
+class MarketPhaseTransitionValidator:
     def __init__(self):
-        self.analyzer = ValuationCollapsedAnalyzer(verbose=True)
-        self.passed_tests = 0
-        self.failed_tests = 0
-        self.test_results = []
+        self.transitions = []
     
-    def assert_equal(self, actual: Any, expected: Any, test_name: str) -> bool:
-        """Assert equality and record result."""
-        passed = actual == expected
-        if passed:
-            self.passed_tests += 1
-            result = "PASS"
-        else:
-            self.failed_tests += 1
-            result = "FAIL"
+    def validate_ipo_to_growth(self, ipo_metrics: CompanyMetrics, growth_metrics: CompanyMetrics) -> TestResult:
+        start_time = datetime.now()
+        test_name = "validate_ipo_to_growth"
+        passed = False
+        error_msg = ""
+        metrics = None
         
-        self.test_results.append({
-            "test": test_name,
-            "result": result,
-            "expected": str(expected),
-            "actual": str(actual)
-        })
-        return passed
+        try:
+            if growth_metrics.valuation < ipo_metrics.valuation * 0.5:
+                error_msg = "Growth phase valuation should not drop more than 50% from IPO"
+            elif growth_metrics.revenue <= 0:
+                error_msg = "Growth phase revenue must be positive"
+            elif growth_metrics.burn_rate < 0:
+                error_msg = "Burn rate cannot be negative"
+            else:
+                passed = True
+            
+            metrics = {
+                "ipo_valuation": ipo_metrics.valuation,
+                "growth_valuation": growth_metrics.valuation,
+                "revenue_growth": growth_metrics.revenue / max(ipo_metrics.revenue, 1)
+            }
+        except Exception as e:
+            error_msg = f"Exception: {type(e).__name__}: {e}"
+        
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        return TestResult(test_name, passed, error_msg, metrics, duration)
     
-    def assert_in_range(self, value: float, min_val: float, max_val: float, test_name: str) -> bool:
-        """Assert value is in range."""
-        passed = min_val <= value <= max_val
-        if passed:
-            self.passed_tests += 1
-            result = "PASS"
-        else:
-            self.failed_tests += 1
-            result = "FAIL"
+    def validate_decline_to_acquisition(self, decline_metrics: CompanyMetrics, acq_metrics: CompanyMetrics) -> TestResult:
+        start_time = datetime.now()
+        test_name = "validate_decline_to_acquisition"
+        passed = False
+        error_msg = ""
+        metrics = None
         
-        self.test_results.append({
-            "test": test_name,
-            "result": result,
-            "expected": f"[{min_val}, {max_val}]",
-            "actual": str(value)
-        })
-        return passed
+        try:
+            if acq_metrics.valuation < 0:
+                error_msg = "Acquisition valuation cannot be negative"
+            elif acq_metrics.valuation > decline_metrics.valuation:
+                error_msg = "Acquisition price should not exceed decline phase valuation"
+            elif decline_metrics.runway_months < 0:
+                error_msg = "Runway months cannot be negative"
+            else:
+                passed = True
+            
+            metrics = {
+                "decline_valuation": decline_metrics.valuation,
+                "acquisition_valuation": acq_metrics.valuation,
+                "runway_months": decline_metrics.runway_months
+            }
+        except Exception as e:
+            error_msg = f"Exception: {type(e).__name__}: {e}"
+        
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        return TestResult(test_name, passed, error_msg, metrics, duration)
+
+
+class EdgeCaseTestSuite:
+    def __init__(self):
+        self.results: List[TestResult] = []
     
-    def test_allbirds_real_case(self):
-        """Test Allbirds real-world collapse scenario."""
-        metrics = CompanyMetrics(
-            name="Allbirds",
-            ipo_date="2021-11-04",
-            ipo_valuation_millions=2000,
-            current_valuation_millions=39,
-            raised_amount_millions=390,
-            revenue_millions=120,
-            burn_rate_millions_monthly=8,
-            runway_months=15,
-            employee_count=450,
-            market_sentiment=-0.6
-        )
+    def test_timeline_gaps(self) -> TestResult:
+        start_time = datetime.now()
+        test_name = "test_timeline_gaps"
+        passed = False
+        error_msg = ""
         
-        analysis = self.analyzer.analyze(metrics)
+        try:
+            ipo_date = datetime(2021, 11, 1)
+            acq_date = datetime(2026, 3, 30)
+            gap_years = (acq_date - ipo_date).days / 365.25
+            
+            if 4.3 < gap_years < 4.5:
+                passed = True
+            else:
+                error_msg = f"Expected ~4.4 years, got {gap_years}"
+        except Exception as e:
+            error_msg = f"Exception: {type(e).__name__}: {e}"
         
-        self.assert_equal(analysis.company_name, "Allbirds", "Allbirds company name")
-        self.assert_in_range(analysis.decline_percentage, 95, 100, "Allbirds decline ~98%")
-        self.assert_equal(analysis.raised_vs_current_ratio > 9.5, True, "Raised 10x+ current valuation")
-        self.assert_equal(analysis.status, "collapsed", "Allbirds status is collapsed")
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        return TestResult(test_name, passed, error_msg, None, duration)
     
-    def test_boundary_zero_valuation(self):
-        """Test edge case: company with zero valuation."""
-        metrics = CompanyMetrics(
-            name="Zombie Co",
-            ipo_date="2020-01-01",
-            ipo_valuation_millions=100,
-            current_valuation_millions=0,
-            raised_amount_millions=50,
-            revenue_millions=0,
-            burn_rate_millions_monthly=2,
-            runway_months=0,
-            employee_count=5,
-            market_sentiment=-1.0
-        )
+    def test_investor_loss_calculation(self) -> TestResult:
+        start_time = datetime.now()
+        test_name = "test_investor_loss_calculation"
+        passed = False
+        error_msg = ""
+        metrics = None
         
-        analysis = self.analyzer.analyze(metrics)
-        self.assert_equal(analysis.decline_percentage, 100.0, "100% decline to zero valuation")
-        self.assert_equal("zero" in str(analysis.critical_alerts).lower(), True, "Zero valuation alert")
-    
-    def test_boundary_negative_sentiment(self):
-        """Test extreme negative market sentiment."""
-        metrics = CompanyMetrics(
-            name="Doomed Inc",
-            ipo_date="2022-03-15",
-            ipo_valuation_millions=500,
-            current_valuation_millions=100,
-            raised_amount_millions=200,
-            revenue_millions=50,
-            burn_rate_millions_monthly=15,
-            runway_months=2,
-            employee_count=100,
-            market_sentiment=-1.0
-        )
+        try:
+            ipo_price = 100
+            acq_price = 10
+            investor_shares = 1_000_000
+            
+            initial_investment = ipo_price * investor_shares
+            final_value = acq_price * investor_shares
+            loss_percent = ((initial_investment - final_value) / initial_investment) * 100
+            
+            if 89 < loss_percent < 91:
+                passed = True
+            else:
+                error_msg = f"Expected ~90% loss, got {loss_percent}%"
+            
+            metrics = {
+                "initial_investment": initial_investment,
+                "final_value": final_value,
+                "loss_percent": loss_percent
+            }
+        except Exception as e:
+            error_msg = f"Exception: {type(e).__name__}: {e}"
         
-        is_valid, errors = self.analyzer.validate_metrics(metrics)
-        self.assert_equal(is_valid, False, "Invalid metrics detected for doomed company")
-        self.assert_equal("Unsustainable burn rate" in str(errors), True, "Burn rate validation error")
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        return TestResult(test_name, passed, error_msg, metrics, duration)
     
-    def test_boundary_minimal_runway(self):
-        """Test edge case: company with < 1 month runway."""
-        metrics = CompanyMetrics(
-            name="Out of Cash",
-            ipo_date="2023-06-01",
-            ipo_valuation_millions=250,
-            current_valuation_millions=50,
-            raised_amount_millions=100,
-            revenue_millions=10,
-            burn_rate_millions_monthly=5,
-            runway_months=0.5,
-            employee_count=50,
-            market_sentiment=-0.8
-        )
+    def test_runway_depletion_scenarios(self) -> TestResult:
+        start_time = datetime.now()
+        test_name = "test_runway_depletion_scenarios"
+        passed = True
+        error_msg = ""
+        metrics = {}
         
-        analysis = self.analyzer.analyze(metrics)
-        self.assert_equal(analysis.status in ["critical", "collapsed"], True, "Low runway triggers critical status")
-    
-    def test_boundary_high_burn_rate(self):
-        """Test edge case: extreme burn rate."""
-        metrics = CompanyMetrics(
-            name="Burn Factory",
-            ipo_date="2023-01-01",
-            ipo_valuation_millions=300,
-            current_valuation_millions=150
+        try:
+            scenarios = [
+                {"cash": 10_000_000, "
