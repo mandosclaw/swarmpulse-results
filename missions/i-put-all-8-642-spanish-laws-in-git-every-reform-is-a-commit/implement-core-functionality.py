@@ -3,651 +3,504 @@
 # Task:    Implement core functionality
 # Mission: I put all 8,642 Spanish laws in Git – every reform is a commit
 # Agent:   @aria
-# Date:    2026-03-31T19:27:35.916Z
+# Date:    2026-03-31T19:28:16.132Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Spanish Laws Git Repository Core Functionality
-Mission: I put all 8,642 Spanish laws in Git – every reform is a commit
-Agent: @aria
-Date: 2024
-
-Core functionality for analyzing and managing Spanish laws versioned in Git.
-Implements law parsing, change tracking, and legal document analysis.
+TASK: Implement core functionality for Spanish laws Git repository analyzer
+MISSION: I put all 8,642 Spanish laws in Git – every reform is a commit
+AGENT: @aria
+DATE: 2024
 """
 
 import argparse
 import json
+import re
 import subprocess
 import sys
-from pathlib import Path
 from dataclasses import dataclass, asdict
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-import hashlib
-import re
+from pathlib import Path
+from typing import List, Dict, Optional, Tuple
+from collections import defaultdict
 
 
 @dataclass
-class LawMetadata:
-    """Metadata for a Spanish law document."""
-    law_id: str
-    title: str
-    description: str
-    publication_date: str
-    last_modified: str
-    status: str
-    articles_count: int
-    reform_count: int
-    file_path: str
-
-
-@dataclass
-class LawChange:
-    """Represents a change/commit in law history."""
+class CommitInfo:
+    """Represents a single law commit"""
     commit_hash: str
     author: str
     date: str
     message: str
-    additions: int
+    law_id: str
+    law_name: str
+    change_type: str
+    files_changed: int
+    insertions: int
     deletions: int
-    articles_changed: List[str]
 
 
-class SpanishLawsManager:
-    """Manager for Spanish laws Git repository operations."""
+@dataclass
+class LawStatistics:
+    """Statistics about a specific law"""
+    law_id: str
+    law_name: str
+    total_commits: int
+    total_reforms: int
+    first_commit_date: str
+    last_commit_date: str
+    authors_count: int
+    total_lines_added: int
+    total_lines_deleted: int
+    reform_frequency: str
+
+
+class SpanishLawsAnalyzer:
+    """Analyzes Spanish laws repository"""
 
     def __init__(self, repo_path: str):
-        """Initialize the laws manager with a repository path."""
         self.repo_path = Path(repo_path)
-        self.repo_path.mkdir(parents=True, exist_ok=True)
+        self.commits: List[CommitInfo] = []
+        self.law_stats: Dict[str, LawStatistics] = {}
 
-    def initialize_repo(self) -> Dict[str, Any]:
-        """Initialize a new Git repository for laws."""
-        result = {
-            "success": True,
-            "message": "Repository initialized",
-            "path": str(self.repo_path),
-            "timestamp": datetime.now().isoformat()
-        }
+    def validate_repo(self) -> bool:
+        """Validate that the path is a valid git repository"""
+        git_dir = self.repo_path / ".git"
+        if not git_dir.exists():
+            print(f"Error: {self.repo_path} is not a valid git repository")
+            return False
+        return True
 
+    def extract_law_id_from_message(self, message: str) -> Tuple[str, str]:
+        """Extract law ID and name from commit message"""
+        patterns = [
+            r'Ley\s+(\d+/\d+)\s*[:-]?\s*(.+?)(?:\n|$)',
+            r'BOE\s+(\d+-\d+-\d+)\s*[:-]?\s*(.+?)(?:\n|$)',
+            r'Decreto\s+(\d+/\d+)\s*[:-]?\s*(.+?)(?:\n|$)',
+            r'([A-Z]+\d+/\d+)\s*[:-]?\s*(.+?)(?:\n|$)',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                law_id = match.group(1)
+                law_name = match.group(2).strip()[:100]
+                return law_id, law_name
+
+        return "UNKNOWN", message.split('\n')[0][:100]
+
+    def determine_change_type(self, message: str) -> str:
+        """Determine the type of change from commit message"""
+        message_lower = message.lower()
+
+        if any(word in message_lower for word in ['reforma', 'reform', 'amend']):
+            return 'reform'
+        elif any(word in message_lower for word in ['deroga', 'repeal', 'abroga']):
+            return 'repeal'
+        elif any(word in message_lower for word in ['nueva', 'new', 'sanción']):
+            return 'new'
+        elif any(word in message_lower for word in ['actualiza', 'update']):
+            return 'update'
+        elif any(word in message_lower for word in ['correc', 'fix', 'error']):
+            return 'correction'
+        else:
+            return 'other'
+
+    def get_commit_stats(self, commit_hash: str) -> Tuple[int, int, int]:
+        """Get file count, insertions, deletions for a commit"""
         try:
-            subprocess.run(
-                ["git", "init"],
-                cwd=str(self.repo_path),
+            result = subprocess.run(
+                ['git', '--git-dir', str(self.repo_path / '.git'),
+                 'show', '--shortstat', commit_hash],
                 capture_output=True,
                 text=True,
-                check=False
+                timeout=5
             )
 
-            subprocess.run(
-                ["git", "config", "user.email", "laws@spain.es"],
-                cwd=str(self.repo_path),
-                capture_output=True,
-                check=False
-            )
+            if result.returncode != 0:
+                return 1, 0, 0
 
-            subprocess.run(
-                ["git", "config", "user.name", "Spanish Laws System"],
-                cwd=str(self.repo_path),
-                capture_output=True,
-                check=False
-            )
+            output = result.stdout
+            files_match = re.search(r'(\d+)\s+files?\s+changed', output)
+            insertions_match = re.search(r'(\d+)\s+insertions?\(\+\)', output)
+            deletions_match = re.search(r'(\d+)\s+deletions?\(-\)', output)
 
-            readme_path = self.repo_path / "README.md"
-            if not readme_path.exists():
-                readme_path.write_text(
-                    "# Spanish Laws Repository\n\n"
-                    "Complete version history of Spanish laws.\n"
-                    "Each reform is tracked as a commit.\n"
-                )
-                subprocess.run(
-                    ["git", "add", "README.md"],
-                    cwd=str(self.repo_path),
-                    capture_output=True,
-                    check=False
-                )
-                subprocess.run(
-                    ["git", "commit", "-m", "Initial commit: repository setup"],
-                    cwd=str(self.repo_path),
-                    capture_output=True,
-                    check=False
-                )
+            files = int(files_match.group(1)) if files_match else 1
+            insertions = int(insertions_match.group(1)) if insertions_match else 0
+            deletions = int(deletions_match.group(1)) if deletions_match else 0
 
-        except Exception as e:
-            result["success"] = False
-            result["error"] = str(e)
+            return files, insertions, deletions
 
-        return result
+        except (subprocess.TimeoutExpired, Exception):
+            return 1, 0, 0
 
-    def add_law(self, law_id: str, title: str, content: str,
-                description: str = "") -> Dict[str, Any]:
-        """Add a new law to the repository."""
-        result = {
-            "success": True,
-            "law_id": law_id,
-            "timestamp": datetime.now().isoformat()
-        }
-
-        try:
-            law_dir = self.repo_path / law_id
-            law_dir.mkdir(exist_ok=True)
-
-            content_file = law_dir / "content.txt"
-            content_file.write_text(content)
-
-            metadata = {
-                "law_id": law_id,
-                "title": title,
-                "description": description,
-                "created": datetime.now().isoformat(),
-                "articles": self._extract_articles(content)
-            }
-
-            metadata_file = law_dir / "metadata.json"
-            metadata_file.write_text(json.dumps(metadata, indent=2, ensure_ascii=False))
-
-            subprocess.run(
-                ["git", "add", law_id],
-                cwd=str(self.repo_path),
-                capture_output=True,
-                check=True
-            )
-
-            commit_msg = f"Add law {law_id}: {title}"
-            subprocess.run(
-                ["git", "commit", "-m", commit_msg],
-                cwd=str(self.repo_path),
-                capture_output=True,
-                check=True
-            )
-
-            result["message"] = f"Law {law_id} added successfully"
-            result["file_path"] = str(content_file)
-
-        except subprocess.CalledProcessError as e:
-            result["success"] = False
-            result["error"] = f"Git error: {e.stderr}"
-        except Exception as e:
-            result["success"] = False
-            result["error"] = str(e)
-
-        return result
-
-    def reform_law(self, law_id: str, new_content: str,
-                   reform_description: str) -> Dict[str, Any]:
-        """Create a reform (new version) of an existing law."""
-        result = {
-            "success": True,
-            "law_id": law_id,
-            "timestamp": datetime.now().isoformat()
-        }
-
-        try:
-            content_file = self.repo_path / law_id / "content.txt"
-            if not content_file.exists():
-                result["success"] = False
-                result["error"] = f"Law {law_id} not found"
-                return result
-
-            old_content = content_file.read_text()
-            content_file.write_text(new_content)
-
-            metadata_file = self.repo_path / law_id / "metadata.json"
-            metadata = json.loads(metadata_file.read_text())
-            metadata["last_modified"] = datetime.now().isoformat()
-            metadata["articles"] = self._extract_articles(new_content)
-            metadata_file.write_text(json.dumps(metadata, indent=2, ensure_ascii=False))
-
-            subprocess.run(
-                ["git", "add", law_id],
-                cwd=str(self.repo_path),
-                capture_output=True,
-                check=True
-            )
-
-            commit_msg = f"Reform law {law_id}: {reform_description}"
-            subprocess.run(
-                ["git", "commit", "-m", commit_msg],
-                cwd=str(self.repo_path),
-                capture_output=True,
-                check=True
-            )
-
-            result["message"] = f"Law {law_id} reformed successfully"
-            result["reform_description"] = reform_description
-
-        except subprocess.CalledProcessError as e:
-            result["success"] = False
-            result["error"] = f"Git error: {e.stderr}"
-        except Exception as e:
-            result["success"] = False
-            result["error"] = str(e)
-
-        return result
-
-    def get_law_history(self, law_id: str) -> Dict[str, Any]:
-        """Get the complete commit history for a specific law."""
-        result = {
-            "success": True,
-            "law_id": law_id,
-            "changes": []
-        }
-
+    def fetch_commits(self, limit: Optional[int] = None) -> List[CommitInfo]:
+        """Fetch commits from the repository"""
         try:
             cmd = [
-                "git", "log", "--follow",
-                "--format=%H%n%an%n%ai%n%s%n---",
-                "--", law_id
+                'git', '--git-dir', str(self.repo_path / '.git'),
+                'log', '--pretty=format:%H|%an|%ai|%s',
+                '--all', '--reverse'
             ]
 
-            process = subprocess.run(
+            if limit:
+                cmd.append(f'-n {limit}')
+
+            result = subprocess.run(
                 cmd,
-                cwd=str(self.repo_path),
                 capture_output=True,
                 text=True,
-                check=True
+                timeout=30
             )
 
-            commits = process.stdout.strip().split("---\n")
+            if result.returncode != 0:
+                print(f"Error fetching commits: {result.stderr}")
+                return []
 
-            for commit_str in commits:
-                if not commit_str.strip():
+            self.commits = []
+            for line in result.stdout.strip().split('\n'):
+                if not line:
                     continue
 
-                lines = commit_str.strip().split("\n")
-                if len(lines) >= 4:
-                    change = LawChange(
-                        commit_hash=lines[0][:7],
-                        author=lines[1],
-                        date=lines[2],
-                        message=lines[3],
-                        additions=0,
-                        deletions=0,
-                        articles_changed=[]
-                    )
-                    result["changes"].append(asdict(change))
-
-        except subprocess.CalledProcessError:
-            result["success"] = False
-            result["error"] = f"Law {law_id} history not found"
-        except Exception as e:
-            result["success"] = False
-            result["error"] = str(e)
-
-        return result
-
-    def get_law_metadata(self, law_id: str) -> Dict[str, Any]:
-        """Get metadata for a specific law."""
-        result = {
-            "success": True,
-            "law_id": law_id
-        }
-
-        try:
-            metadata_file = self.repo_path / law_id / "metadata.json"
-            if not metadata_file.exists():
-                result["success"] = False
-                result["error"] = f"Metadata for law {law_id} not found"
-                return result
-
-            metadata = json.loads(metadata_file.read_text())
-            result["metadata"] = metadata
-
-        except Exception as e:
-            result["success"] = False
-            result["error"] = str(e)
-
-        return result
-
-    def search_laws(self, query: str) -> Dict[str, Any]:
-        """Search for laws by title, description, or content."""
-        result = {
-            "success": True,
-            "query": query,
-            "results": []
-        }
-
-        try:
-            query_lower = query.lower()
-
-            for law_dir in self.repo_path.iterdir():
-                if not law_dir.is_dir() or law_dir.name.startswith("."):
+                parts = line.split('|')
+                if len(parts) < 4:
                     continue
 
-                metadata_file = law_dir / "metadata.json"
-                if not metadata_file.exists():
-                    continue
+                commit_hash = parts[0]
+                author = parts[1]
+                date = parts[2]
+                message = '|'.join(parts[3:])
 
-                metadata = json.loads(metadata_file.read_text())
+                law_id, law_name = self.extract_law_id_from_message(message)
+                change_type = self.determine_change_type(message)
+                files, insertions, deletions = self.get_commit_stats(commit_hash)
 
-                match = (
-                    query_lower in metadata.get("title", "").lower() or
-                    query_lower in metadata.get("description", "").lower()
+                commit = CommitInfo(
+                    commit_hash=commit_hash,
+                    author=author,
+                    date=date,
+                    message=message,
+                    law_id=law_id,
+                    law_name=law_name,
+                    change_type=change_type,
+                    files_changed=files,
+                    insertions=insertions,
+                    deletions=deletions
                 )
 
-                if match:
-                    result["results"].append({
-                        "law_id": metadata.get("law_id"),
-                        "title": metadata.get("title"),
-                        "created": metadata.get("created")
-                    })
+                self.commits.append(commit)
 
+            return self.commits
+
+        except subprocess.TimeoutExpired:
+            print("Error: Timeout while fetching commits")
+            return []
         except Exception as e:
-            result["success"] = False
-            result["error"] = str(e)
+            print(f"Error fetching commits: {e}")
+            return []
 
-        return result
+    def calculate_statistics(self) -> Dict[str, LawStatistics]:
+        """Calculate statistics for each law"""
+        law_commits = defaultdict(list)
 
-    def get_statistics(self) -> Dict[str, Any]:
-        """Get repository statistics."""
-        result = {
-            "success": True,
-            "total_laws": 0,
-            "total_commits": 0,
-            "timestamp": datetime.now().isoformat()
-        }
+        for commit in self.commits:
+            law_key = commit.law_id
+            law_commits[law_key].append(commit)
 
-        try:
-            law_count = 0
-            total_articles = 0
+        self.law_stats = {}
 
-            for item in self.repo_path.iterdir():
-                if item.is_dir() and not item.name.startswith("."):
-                    law_count += 1
-                    metadata_file = item / "metadata.json"
-                    if metadata_file.exists():
-                        metadata = json.loads(metadata_file.read_text())
-                        total_articles += len(metadata.get("articles", []))
+        for law_id, commits in law_commits.items():
+            commits_sorted = sorted(commits, key=lambda x: x.date)
+            first_commit = commits_sorted[0]
+            last_commit = commits_sorted[-1]
 
-            result["total_laws"] = law_count
-            result["total_articles"] = total_articles
+            reform_count = sum(1 for c in commits if c.change_type == 'reform')
+            authors = set(c.author for c in commits)
+            total_insertions = sum(c.insertions for c in commits)
+            total_deletions = sum(c.deletions for c in commits)
 
-            cmd = ["git", "rev-list", "--all", "--count"]
-            process = subprocess.run(
-                cmd,
-                cwd=str(self.repo_path),
-                capture_output=True,
-                text=True,
-                check=False
+            reform_frequency = self._calculate_frequency(
+                len(commits),
+                first_commit.date,
+                last_commit.date
             )
 
-            if process.returncode == 0:
-                result["total_commits"] = int(process.stdout.strip())
+            self.law_stats[law_id] = LawStatistics(
+                law_id=law_id,
+                law_name=first_commit.law_name,
+                total_commits=len(commits),
+                total_reforms=reform_count,
+                first_commit_date=first_commit.date,
+                last_commit_date=last_commit.date,
+                authors_count=len(authors),
+                total_lines_added=total_insertions,
+                total_lines_deleted=total_deletions,
+                reform_frequency=reform_frequency
+            )
 
-        except Exception as e:
-            result["success"] = False
-            result["error"] = str(e)
+        return self.law_stats
 
-        return result
-
-    def export_law(self, law_id: str, output_path: str) -> Dict[str, Any]:
-        """Export a law to a file."""
-        result = {
-            "success": True,
-            "law_id": law_id,
-            "output_path": output_path
-        }
-
+    def _calculate_frequency(self, commits: int, first_date: str, last_date: str) -> str:
+        """Calculate reform frequency"""
         try:
-            content_file = self.repo_path / law_id / "content.txt"
-            metadata_file = self.repo_path / law_id / "metadata.json"
+            first = datetime.fromisoformat(first_date.replace('Z', '+00:00'))
+            last = datetime.fromisoformat(last_date.replace('Z', '+00:00'))
+            days = (last - first).days + 1
 
-            if not content_file.exists():
-                result["success"] = False
-                result["error"] = f"Law {law_id} not found"
-                return result
+            if days == 0:
+                return "same-day"
 
-            output_file = Path(output_path)
-            output_file.parent.mkdir(parents=True, exist_ok=True)
+            commits_per_year = (commits / days) * 365
 
-            content = content_file.read_text()
-            metadata = json.loads(metadata_file.read_text()) if metadata_file.exists() else {}
+            if commits_per_year >= 12:
+                return "monthly"
+            elif commits_per_year >= 4:
+                return "quarterly"
+            elif commits_per_year >= 1:
+                return "annual"
+            else:
+                return "occasional"
 
-            export_data = {
-                "metadata": metadata,
-                "content": content,
-                "exported_at": datetime.now().isoformat()
+        except Exception:
+            return "unknown"
+
+    def get_most_active_laws(self, top_n: int = 10) -> List[LawStatistics]:
+        """Get the most frequently reformed laws"""
+        if not self.law_stats:
+            return []
+
+        sorted_laws = sorted(
+            self.law_stats.values(),
+            key=lambda x: x.total_commits,
+            reverse=True
+        )
+
+        return sorted_laws[:top_n]
+
+    def get_most_active_authors(self, top_n: int = 10) -> List[Tuple[str, int]]:
+        """Get the most active authors"""
+        author_commits = defaultdict(int)
+
+        for commit in self.commits:
+            author_commits[commit.author] += 1
+
+        sorted_authors = sorted(
+            author_commits.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        return sorted_authors[:top_n]
+
+    def get_change_type_distribution(self) -> Dict[str, int]:
+        """Get distribution of change types"""
+        distribution = defaultdict(int)
+
+        for commit in self.commits:
+            distribution[commit.change_type] += 1
+
+        return dict(distribution)
+
+    def export_to_json(self, output_path: str) -> bool:
+        """Export analysis results to JSON"""
+        try:
+            data = {
+                "metadata": {
+                    "total_commits": len(self.commits),
+                    "total_laws": len(self.law_stats),
+                    "analysis_date": datetime.now().isoformat(),
+                    "repository": str(self.repo_path)
+                },
+                "most_active_laws": [
+                    asdict(law) for law in self.get_most_active_laws(20)
+                ],
+                "most_active_authors": [
+                    {"author": author, "commits": count}
+                    for author, count in self.get_most_active_authors(20)
+                ],
+                "change_type_distribution": self.get_change_type_distribution(),
+                "sample_commits": [
+                    asdict(commit) for commit in self.commits[:50]
+                ]
             }
 
-            output_file.write_text(json.dumps(export_data, indent=2, ensure_ascii=False))
-            result["message"] = f"Law {law_id} exported successfully"
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+
+            return True
 
         except Exception as e:
-            result["success"] = False
-            result["error"] = str(e)
+            print(f"Error exporting to JSON: {e}")
+            return False
 
-        return result
+    def print_summary(self) -> None:
+        """Print analysis summary"""
+        print("\n" + "="*70)
+        print("SPANISH LAWS GIT REPOSITORY ANALYSIS".center(70))
+        print("="*70)
 
-    @staticmethod
-    def _extract_articles(content: str) -> List[str]:
-        """Extract article numbers from law content."""
-        articles = []
-        pattern = r"(?:Artículo|Article|Art\.)\s+(\d+)"
-        matches = re.findall(pattern, content, re.IGNORECASE)
-        articles = list(set(matches))
-        return sorted(articles, key=lambda x: int(x))
+        print(f"\nRepository: {self.repo_path}")
+        print(f"Total Commits: {len(self.commits)}")
+        print(f"Total Laws: {len(self.law_stats)}")
+
+        if self.commits:
+            print(f"Date Range: {self.commits[0].date} to {self.commits[-1].date}")
+
+        print("\n" + "-"*70)
+        print("TOP 10 MOST REFORMED LAWS")
+        print("-"*70)
+
+        for i, law in enumerate(self.get_most_active_laws(10), 1):
+            print(f"{i:2}. {law.law_id:20} {law.law_name:35} "
+                  f"Commits: {law.total_commits:4} Reforms: {law.total_reforms:3}")
+
+        print("\n" + "-"*70)
+        print("TOP 10 MOST ACTIVE AUTHORS")
+        print("-"*70)
+
+        for i, (author, count) in enumerate(self.get_most_active_authors(10), 1):
+            print(f"{i:2}. {author:40} {count:5} commits")
+
+        print("\n" + "-"*70)
+        print("CHANGE TYPE DISTRIBUTION")
+        print("-"*70)
+
+        distribution = self.get_change_type_distribution()
+        for change_type, count in sorted(distribution.items(), key=lambda x: x[1], reverse=True):
+            percentage = (count / len(self.commits) * 100) if self.commits else 0
+            print(f"{change_type:15} {count:6} commits ({percentage:5.1f}%)")
+
+        print("\n" + "="*70 + "\n")
 
 
 def main():
-    """Main CLI interface."""
+    """Main entry point"""
     parser = argparse.ArgumentParser(
-        description="Spanish Laws Git Repository Manager",
+        description='Analyze Spanish Laws Git Repository',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog='''
 Examples:
-  %(prog)s init --repo /data/laws
-  %(prog)s add --repo /data/laws --id "LOI-001" --title "Ley Orgánica" --content-file law.txt
-  %(prog)s reform --repo /data/laws --id "LOI-001" --content-file updated.txt --description "Reforma 2024"
-  %(prog)s history --repo /data/laws --id "LOI-001"
-  %(prog)s search --repo /data/laws --query "constitucional"
-  %(prog)s stats --repo /data/laws
-        """
+  %(prog)s /path/to/legalize-es
+  %(prog)s /path/to/legalize-es --limit 100
+  %(prog)s /path/to/legalize-es --output analysis.json
+  %(prog)s /path/to/legalize-es --limit 500 --output report.json
+        '''
     )
 
     parser.add_argument(
-        "--repo",
-        type=str,
-        default="./spanish_laws_repo",
-        help="Path to the laws repository (default: ./spanish_laws_repo)"
+        'repository',
+        help='Path to the Spanish laws Git repository'
     )
 
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+    parser.add_argument(
+        '--limit',
+        type=int,
+        default=None,
+        help='Limit number of commits to analyze (default: all)'
+    )
 
-    init_parser = subparsers.add_parser("init", help="Initialize a new repository")
+    parser.add_argument(
+        '--output',
+        type=str,
+        default=None,
+        help='Output JSON file path for detailed results'
+    )
 
-    add_parser = subparsers.add_parser("add", help="Add a new law")
-    add_parser.add_argument("--id", required=True, help="Law identifier")
-    add_parser.add_argument("--title", required=True, help="Law title")
-    add_parser.add_argument("--content-file", required=True, help="Path to law content file")
-    add_parser.add_argument("--description", default="", help="Law description")
-
-    reform_parser = subparsers.add_parser("reform", help="Reform an existing law")
-    reform_parser.add_argument("--id", required=True, help="Law identifier")
-    reform_parser.add_argument("--content-file", required=True, help="Path to updated content file")
-    reform_parser.add_argument("--description", required=True, help="Reform description")
-
-    history_parser = subparsers.add_parser("history", help="Get law history")
-    history_parser.add_argument("--id", required=True, help="Law identifier")
-
-    metadata_parser = subparsers.add_parser("metadata", help="Get law metadata")
-    metadata_parser.add_argument("--id", required=True, help="Law identifier")
-
-    search_parser = subparsers.add_parser("search", help="Search for laws")
-    search_parser.add_argument("--query", required=True, help="Search query")
-
-    stats_parser = subparsers.add_parser("stats", help="Get repository statistics")
-
-    export_parser = subparsers.add_parser("export", help="Export a law")
-    export_parser.add_argument("--id", required=True, help="Law identifier")
-    export_parser.add_argument("--output", required=True, help="Output file path")
+    parser.add_argument(
+        '--quiet',
+        action='store_true',
+        help='Suppress summary output'
+    )
 
     args = parser.parse_args()
 
-    if not args.command:
-        parser.print_help()
-        return
+    analyzer = SpanishLawsAnalyzer(args.repository)
 
-    manager = SpanishLawsManager(args.repo)
+    if not analyzer.validate_repo():
+        return 1
 
-    if args.command == "init":
-        result = manager.initialize_repo()
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+    print(f"Fetching commits from {args.repository}...")
+    commits = analyzer.fetch_commits(limit=args.limit)
 
-    elif args.command == "add":
-        content = Path(args.content_file).read_text()
-        result = manager.add_law(
-            law_id=args.id,
-            title=args.title,
-            content=content,
-            description=args.description
-        )
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+    if not commits:
+        print("No commits found in repository")
+        return 1
 
-    elif args.command == "reform":
-        content = Path(args.content_file).read_text()
-        result = manager.reform_law(
-            law_id=args.id,
-            new_content=content,
-            reform_description=args.description
-        )
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+    print(f"Found {len(commits)} commits")
+    print("Calculating statistics...")
 
-    elif args.command == "history":
-        result = manager.get_law_history(args.id)
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+    analyzer.calculate_statistics()
 
-    elif args.command == "metadata":
-        result = manager.get_law_metadata(args.id)
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+    if not args.quiet:
+        analyzer.print_summary()
 
-    elif args.command == "search":
-        result = manager.search_laws(args.query)
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+    if args.output:
+        print(f"Exporting results to {args.output}...")
+        if analyzer.export_to_json(args.output):
+            print(f"Successfully exported to {args.output}")
+        else:
+            return 1
 
-    elif args.command == "stats":
-        result = manager.get_statistics()
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-
-    elif args.command == "export":
-        result = manager.export_law(args.id, args.output)
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
 
 
 if __name__ == "__main__":
     import tempfile
-    import shutil
+    import os
 
-    test_repo = tempfile.mkdtemp(prefix="laws_test_")
-    print(f"Running demo with test repository: {test_repo}\n")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_repo = tmpdir
 
-    try:
-        manager = SpanishLawsManager(test_repo)
-
-        print("=" * 60)
-        print("1. Initializing repository")
-        print("=" * 60)
-        init_result = manager.initialize_repo()
-        print(json.dumps(init_result, indent=2, ensure_ascii=False))
-
-        print("\n" + "=" * 60)
-        print("2. Adding first law: Constitución Española")
-        print("=" * 60)
-        law1_content = """CONSTITUCIÓN ESPAÑOLA DE 1978
-
-Artículo 1. España se constituye en un Estado social y democrático de Derecho.
-
-Artículo 2. La Constitución se fundamenta en la indisoluble unidad de la Nación española.
-
-Artículo 3. El castellano es la lengua oficial del Estado."""
-
-        add_result = manager.add_law(
-            law_id="CE-1978",
-            title="Constitución Española",
-            content=law1_content,
-            description="Texto original de la Constitución de 1978"
+        subprocess.run(['git', 'init'], cwd=test_repo, capture_output=True)
+        subprocess.run(
+            ['git', 'config', 'user.email', 'test@example.com'],
+            cwd=test_repo,
+            capture_output=True
         )
-        print(json.dumps(add_result, indent=2, ensure_ascii=False))
-
-        print("\n" + "=" * 60)
-        print("3. Adding second law: Ley Orgánica")
-        print("=" * 60)
-        law2_content = """LEY ORGÁNICA 10/1995
-
-Artículo 1. Principios generales del Código Penal.
-
-Artículo 2. Aplicación territorial."""
-
-        add_result2 = manager.add_law(
-            law_id="LO-10-1995",
-            title="Código Penal",
-            content=law2_content,
-            description="Ley Orgánica del Código Penal"
+        subprocess.run(
+            ['git', 'config', 'user.name', 'Test User'],
+            cwd=test_repo,
+            capture_output=True
         )
-        print(json.dumps(add_result2, indent=2, ensure_ascii=False))
 
-        print("\n" + "=" * 60)
-        print("4. Reforming Constitution")
-        print("=" * 60)
-        reform_content = """CONSTITUCIÓN ESPAÑOLA DE 1978 (REFORMA 2024)
+        laws_data = [
+            ("Ley 3/1991 - Competencia Desleal", "Initial commit with unfair competition law"),
+            ("Ley 34/1988 - Publicidad", "Reform of advertising law"),
+            ("Ley 3/1991 - Competencia Desleal", "Amendment to unfair competition law"),
+            ("Ley 15/1995 - SAC", "New law on autonomous communities"),
+            ("Decreto 1/2020 - Reforma", "Update on administrative procedures"),
+            ("Ley 34/1988 - Publicidad", "Correction in advertising regulations"),
+            ("Ley 3/1991 - Competencia Desleal", "Second reform of competition law"),
+            ("BOE 2021-05-15 - Administrativo", "New administrative code"),
+        ]
 
-Artículo 1. España se constituye en un Estado social y democrático de Derecho.
+        for i, (law_name, message) in enumerate(laws_data):
+            filepath = os.path.join(test_repo, f"law_{i}.txt")
+            with open(filepath, 'w') as f:
+                f.write(f"{law_name}\n\nCommit {i}\n")
 
-Artículo 2. La Constitución se fundamenta en la indisoluble unidad de la Nación española.
+            subprocess.run(['git', 'add', '.'], cwd=test_repo, capture_output=True)
+            subprocess.run(
+                ['git', 'commit', '-m', message, '--allow-empty'],
+                cwd=test_repo,
+                capture_output=True
+            )
 
-Artículo 3. El castellano es la lengua oficial del Estado.
+        print("\n" + "="*70)
+        print("DEMO: Analyzing test Spanish laws repository".center(70))
+        print("="*70 + "\n")
 
-Artículo 4. (Nuevo) Reforma de paridad de género."""
+        analyzer = SpanishLawsAnalyzer(test_repo)
 
-        reform_result = manager.reform_law(
-            law_id="CE-1978",
-            new_content=reform_content,
-            reform_description="Reforma para incluir paridad de género"
-        )
-        print(json.dumps(reform_result, indent=2, ensure_ascii=False))
+        if analyzer.validate_repo():
+            commits = analyzer.fetch_commits()
+            analyzer.calculate_statistics()
+            analyzer.print_summary()
 
-        print("\n" + "=" * 60)
-        print("5. Getting law history")
-        print("=" * 60)
-        history_result = manager.get_law_history("CE-1978")
-        print(json.dumps(history_result, indent=2, ensure_ascii=False))
-
-        print("\n" + "=" * 60)
-        print("6. Getting law metadata")
-        print("=" * 60)
-        metadata_result = manager.get_law_metadata("CE-1978")
-        print(json.dumps(metadata_result, indent=2, ensure_ascii=False))
-
-        print("\n" + "=" * 60)
-        print("7. Searching laws")
-        print("=" * 60)
-        search_result = manager.search_laws("Constitución")
-        print(json.dumps(search_result, indent=2, ensure_ascii=False))
-
-        print("\n" + "=" * 60)
-        print("8. Repository statistics")
-        print("=" * 60)
-        stats_result = manager.get_statistics()
-        print(json.dumps(stats_result, indent=2, ensure_ascii=False))
-
-        print("\n" + "=" * 60)
-        print("9. Exporting law")
-        print("=" * 60)
-        export_path = Path(test_repo) / "export" / "CE-1978.json"
-        export_result = manager.export_law("CE-1978", str(export_path))
-        print(json.dumps(export_result, indent=2, ensure_ascii=False))
-
-        if export_path.exists():
-            print(f"\nExported content preview:")
-            exported = json.loads(export_path.read_text())
-            print(f"  Law ID: {exported['metadata'].get('law_id')}")
-            print(f"  Title: {exported['metadata'].get('title')}")
-            print(f"  Articles: {', '.join(exported['metadata'].get('articles', []))}")
-
-    finally:
-        print("\n" + "=" * 60)
-        print("Cleaning up test repository")
-        print("=" * 60)
-        shutil.rmtree(test_repo, ignore_errors=True)
-        print("Demo completed successfully!")
+            output_file = os.path.join(tmpdir, "demo_output.json")
+            if analyzer.export_to_json(output_file):
+                print(f"Demo analysis saved to {output_file}")
+                with open(output_file, 'r') as f:
+                    data = json.load(f)
+                    print(f"Exported {len(data['sample_commits'])} sample commits")
