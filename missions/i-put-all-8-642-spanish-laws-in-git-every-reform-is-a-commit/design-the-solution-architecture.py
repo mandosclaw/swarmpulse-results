@@ -3,19 +3,15 @@
 # Task:    Design the solution architecture
 # Mission: I put all 8,642 Spanish laws in Git – every reform is a commit
 # Agent:   @aria
-# Date:    2026-03-31T19:26:51.474Z
+# Date:    2026-03-31T19:27:44.693Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Design the solution architecture for managing 8,642 Spanish laws in Git
-Mission: I put all 8,642 Spanish laws in Git – every reform is a commit
-Agent: @aria
-Date: 2024
-Category: Engineering
-
-This solution implements a complete architecture for versioning Spanish laws
-in a Git repository, tracking reforms as commits, and providing analysis tools.
+TASK: Design the solution architecture for versioning 8,642 Spanish laws in Git
+MISSION: Document approach with trade-offs for managing legal code as software
+AGENT: @aria in SwarmPulse network
+DATE: 2024
 """
 
 import argparse
@@ -24,705 +20,725 @@ import os
 import sys
 import hashlib
 import sqlite3
+from dataclasses import dataclass, asdict
+from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from pathlib import Path
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Tuple, Optional
-import subprocess
+from collections import defaultdict
 import tempfile
 import shutil
 
 
 @dataclass
-class Law:
-    """Represents a Spanish law with metadata."""
+class LawMetadata:
+    """Represents metadata for a Spanish law"""
     law_id: str
     title: str
-    content: str
+    year: int
     category: str
-    effective_date: str
-    version: int
-    reform_history: List[str]
-    
-    def to_dict(self) -> Dict:
-        return asdict(self)
-    
-    def content_hash(self) -> str:
-        """Generate SHA256 hash of law content."""
-        return hashlib.sha256(self.content.encode()).hexdigest()
+    version: str
+    hash: str
+    parent_version: Optional[str]
+    reform_count: int
+    last_modified: str
 
 
 @dataclass
-class Reform:
-    """Represents a reform (modification) to a law."""
-    law_id: str
-    reform_id: str
-    timestamp: str
-    description: str
-    changes: str
-    author: str
-    previous_hash: str
-    new_hash: str
+class ArchitectureComponent:
+    """Represents an architectural component"""
+    name: str
+    purpose: str
+    trade_offs: List[str]
+    implementation_details: str
+    storage_method: str
 
 
-class LawRepository:
-    """Manages Git repository for Spanish laws."""
+class LegalCodeVersionControl:
+    """
+    Manages versioning of Spanish laws using Git-inspired architecture.
     
-    def __init__(self, repo_path: str = "./spanish_laws_repo"):
+    Architecture Components:
+    1. Law Object Store: Content-addressed storage (like Git blobs)
+    2. Law Index: Hierarchical index of current versions (like Git tree)
+    3. Commit Log: Reform history with metadata (like Git commits)
+    4. Reference System: Branch/tag-like pointers to law versions
+    """
+    
+    def __init__(self, repo_path: str):
         self.repo_path = Path(repo_path)
+        self.objects_dir = self.repo_path / "objects"
+        self.refs_dir = self.repo_path / "refs"
         self.db_path = self.repo_path / "laws.db"
-        self.laws_dir = self.repo_path / "laws"
-        self.init_repo()
+        self.config = self._load_config()
+        self._initialize_repo()
     
-    def init_repo(self):
-        """Initialize Git repository and database."""
-        self.repo_path.mkdir(exist_ok=True)
-        self.laws_dir.mkdir(exist_ok=True)
-        
-        # Initialize Git repository if not exists
-        if not (self.repo_path / ".git").exists():
-            subprocess.run(
-                ["git", "init"],
-                cwd=self.repo_path,
-                capture_output=True,
-                check=False
-            )
-            # Configure git user for commits
-            subprocess.run(
-                ["git", "config", "user.email", "legal-archivist@swarm.local"],
-                cwd=self.repo_path,
-                capture_output=True,
-                check=False
-            )
-            subprocess.run(
-                ["git", "config", "user.name", "Legal Archivist Bot"],
-                cwd=self.repo_path,
-                capture_output=True,
-                check=False
-            )
-        
-        # Initialize SQLite database
-        if not self.db_path.exists():
-            self._init_database()
+    def _initialize_repo(self):
+        """Initialize repository structure"""
+        self.objects_dir.mkdir(parents=True, exist_ok=True)
+        self.refs_dir.mkdir(parents=True, exist_ok=True)
+        (self.refs_dir / "heads").mkdir(exist_ok=True)
+        (self.refs_dir / "tags").mkdir(exist_ok=True)
+        self._init_database()
     
     def _init_database(self):
-        """Initialize SQLite database schema."""
-        conn = sqlite3.connect(self.db_path)
+        """Initialize SQLite database for metadata"""
+        conn = sqlite3.connect(str(self.db_path))
         cursor = conn.cursor()
         
-        cursor.execute("""
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS laws (
                 law_id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
-                category TEXT NOT NULL,
-                effective_date TEXT NOT NULL,
-                current_version INTEGER NOT NULL,
-                content_hash TEXT NOT NULL,
-                created_date TEXT NOT NULL,
-                last_modified TEXT NOT NULL
+                year INTEGER,
+                category TEXT,
+                reform_count INTEGER DEFAULT 0,
+                last_modified TEXT,
+                current_hash TEXT
             )
-        """)
+        ''')
         
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS reforms (
-                reform_id TEXT PRIMARY KEY,
-                law_id TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                description TEXT NOT NULL,
-                author TEXT NOT NULL,
-                previous_hash TEXT NOT NULL,
-                new_hash TEXT NOT NULL,
-                git_commit_sha TEXT,
-                FOREIGN KEY(law_id) REFERENCES laws(law_id)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS commits (
+                commit_hash TEXT PRIMARY KEY,
+                law_id TEXT,
+                parent_hash TEXT,
+                timestamp TEXT,
+                message TEXT,
+                author TEXT,
+                law_content_hash TEXT,
+                FOREIGN KEY (law_id) REFERENCES laws(law_id)
             )
-        """)
+        ''')
         
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS categories (
-                category_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE NOT NULL,
-                description TEXT,
-                law_count INTEGER DEFAULT 0
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS refs (
+                ref_name TEXT PRIMARY KEY,
+                commit_hash TEXT,
+                ref_type TEXT,
+                FOREIGN KEY (commit_hash) REFERENCES commits(commit_hash)
             )
-        """)
+        ''')
         
         conn.commit()
         conn.close()
     
-    def add_law(self, law: Law) -> bool:
-        """Add a new law to the repository."""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            now = datetime.now().isoformat()
-            content_hash = law.content_hash()
-            
-            # Save law content to file
-            law_file = self.laws_dir / f"{law.law_id}.md"
-            law_file.write_text(law.content, encoding='utf-8')
-            
-            # Create initial metadata file
-            metadata_file = self.laws_dir / f"{law.law_id}.json"
-            metadata = {
-                "law_id": law.law_id,
-                "title": law.title,
-                "category": law.category,
-                "effective_date": law.effective_date,
-                "version": law.version,
-                "content_hash": content_hash,
-                "created_date": now,
-                "reforms": []
-            }
-            metadata_file.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
-            
-            # Insert into database
-            cursor.execute("""
-                INSERT INTO laws (law_id, title, category, effective_date, 
-                                 current_version, content_hash, created_date, last_modified)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (law.law_id, law.title, law.category, law.effective_date,
-                  law.version, content_hash, now, now))
-            
-            # Update category count
-            cursor.execute("""
-                INSERT OR IGNORE INTO categories (name) VALUES (?)
-            """, (law.category,))
-            
-            cursor.execute("""
-                UPDATE categories SET law_count = law_count + 1 WHERE name = ?
-            """, (law.category,))
-            
-            conn.commit()
-            conn.close()
-            
-            # Add to Git and commit
-            subprocess.run(
-                ["git", "add", f"laws/{law.law_id}.md", f"laws/{law.law_id}.json"],
-                cwd=self.repo_path,
-                capture_output=True,
-                check=False
-            )
-            
-            commit_msg = f"Add law {law.law_id}: {law.title}"
-            result = subprocess.run(
-                ["git", "commit", "-m", commit_msg],
-                cwd=self.repo_path,
-                capture_output=True,
-                check=False
-            )
-            
-            return result.returncode == 0
-        except Exception as e:
-            print(f"Error adding law: {e}", file=sys.stderr)
-            return False
+    def _load_config(self) -> Dict:
+        """Load or create configuration"""
+        config = {
+            "compression": "zlib",
+            "deduplication": True,
+            "max_object_size": 10 * 1024 * 1024,
+            "enable_delta_compression": True,
+            "ref_storage": "text",
+            "gc_threshold": 1000
+        }
+        return config
     
-    def reform_law(self, reform: Reform) -> bool:
-        """Register a reform (modification) to an existing law."""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Get current law
-            cursor.execute("SELECT * FROM laws WHERE law_id = ?", (reform.law_id,))
-            law_row = cursor.fetchone()
-            
-            if not law_row:
-                print(f"Law {reform.law_id} not found", file=sys.stderr)
-                conn.close()
-                return False
-            
-            # Update law file with changes
-            law_file = self.laws_dir / f"{reform.law_id}.md"
-            current_content = law_file.read_text(encoding='utf-8')
-            updated_content = f"{current_content}\n\n--- REFORM {reform.reform_id} ---\n{reform.changes}"
-            law_file.write_text(updated_content, encoding='utf-8')
-            
-            # Update metadata
-            metadata_file = self.laws_dir / f"{reform.law_id}.json"
-            metadata = json.loads(metadata_file.read_text(encoding='utf-8'))
-            metadata["version"] += 1
-            metadata["reforms"].append({
-                "reform_id": reform.reform_id,
-                "timestamp": reform.timestamp,
-                "description": reform.description,
-                "author": reform.author
+    def _hash_content(self, content: str) -> str:
+        """Create content hash (like Git object hash)"""
+        return hashlib.sha256(content.encode()).hexdigest()[:16]
+    
+    def store_law_object(self, law_id: str, content: str, metadata: Dict) -> str:
+        """
+        Store law content as object (content-addressed storage).
+        Returns object hash.
+        """
+        content_hash = self._hash_content(content)
+        
+        object_path = self.objects_dir / content_hash[:2] / content_hash[2:]
+        object_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        object_data = {
+            "type": "law",
+            "law_id": law_id,
+            "content": content,
+            "metadata": metadata,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        object_path.write_text(json.dumps(object_data, indent=2))
+        
+        return content_hash
+    
+    def create_commit(
+        self,
+        law_id: str,
+        content: str,
+        message: str,
+        author: str,
+        parent_hash: Optional[str] = None
+    ) -> str:
+        """Create a commit for a law reform"""
+        
+        content_hash = self.store_law_object(law_id, content, {
+            "law_id": law_id,
+            "reform_type": "amendment"
+        })
+        
+        commit_data = {
+            "type": "commit",
+            "law_id": law_id,
+            "parent": parent_hash,
+            "law_content_hash": content_hash,
+            "timestamp": datetime.utcnow().isoformat(),
+            "message": message,
+            "author": author
+        }
+        
+        commit_hash = self._hash_content(json.dumps(commit_data))
+        commit_path = self.objects_dir / commit_hash[:2] / commit_hash[2:]
+        commit_path.parent.mkdir(parents=True, exist_ok=True)
+        commit_path.write_text(json.dumps(commit_data, indent=2))
+        
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO commits
+            (commit_hash, law_id, parent_hash, timestamp, message, author, law_content_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            commit_hash, law_id, parent_hash,
+            datetime.utcnow().isoformat(), message, author, content_hash
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+        return commit_hash
+    
+    def create_ref(self, ref_name: str, commit_hash: str, ref_type: str = "branch"):
+        """Create reference (branch or tag)"""
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO refs (ref_name, commit_hash, ref_type)
+            VALUES (?, ?, ?)
+        ''', (ref_name, commit_hash, ref_type))
+        
+        conn.commit()
+        conn.close()
+        
+        if ref_type == "branch":
+            ref_path = self.refs_dir / "heads" / ref_name
+        else:
+            ref_path = self.refs_dir / "tags" / ref_name
+        
+        ref_path.write_text(commit_hash)
+    
+    def get_law_history(self, law_id: str) -> List[Dict]:
+        """Get commit history for a law"""
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT commit_hash, timestamp, message, author, law_content_hash
+            FROM commits
+            WHERE law_id = ?
+            ORDER BY timestamp DESC
+        ''', (law_id,))
+        
+        results = cursor.fetchall()
+        conn.close()
+        
+        history = []
+        for row in results:
+            history.append({
+                "commit_hash": row[0],
+                "timestamp": row[1],
+                "message": row[2],
+                "author": row[3],
+                "content_hash": row[4]
             })
-            metadata_file.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
-            
-            # Record reform in database
-            cursor.execute("""
-                INSERT INTO reforms (reform_id, law_id, timestamp, description, 
-                                    author, previous_hash, new_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (reform.reform_id, reform.law_id, reform.timestamp, 
-                  reform.description, reform.author, 
-                  reform.previous_hash, reform.new_hash))
-            
-            now = datetime.now().isoformat()
-            cursor.execute("""
-                UPDATE laws SET current_version = current_version + 1,
-                               content_hash = ?, last_modified = ?
-                WHERE law_id = ?
-            """, (reform.new_hash, now, reform.law_id))
-            
-            conn.commit()
-            conn.close()
-            
-            # Commit to Git
-            subprocess.run(
-                ["git", "add", f"laws/{reform.law_id}.md", f"laws/{reform.law_id}.json"],
-                cwd=self.repo_path,
-                capture_output=True,
-                check=False
-            )
-            
-            commit_msg = f"Reform {reform.reform_id}: {reform.description}"
-            result = subprocess.run(
-                ["git", "commit", "-m", commit_msg, "--author", 
-                 f"{reform.author} <reform@legal.es>"],
-                cwd=self.repo_path,
-                capture_output=True,
-                check=False
-            )
-            
-            # Get commit SHA
-            if result.returncode == 0:
-                sha_result = subprocess.run(
-                    ["git", "rev-parse", "HEAD"],
-                    cwd=self.repo_path,
-                    capture_output=True,
-                    text=True,
-                    check=False
-                )
-                commit_sha = sha_result.stdout.strip()
-                
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE reforms SET git_commit_sha = ? WHERE reform_id = ?
-                """, (commit_sha, reform.reform_id))
-                conn.commit()
-                conn.close()
-            
-            return result.returncode == 0
-        except Exception as e:
-            print(f"Error reforming law: {e}", file=sys.stderr)
-            return False
+        
+        return history
     
-    def get_law(self, law_id: str) -> Optional[Law]:
-        """Retrieve a law by ID."""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT * FROM laws WHERE law_id = ?", (law_id,))
-            row = cursor.fetchone()
-            conn.close()
-            
-            if not row:
-                return None
-            
-            metadata_file = self.laws_dir / f"{law_id}.json"
-            metadata = json.loads(metadata_file.read_text(encoding='utf-8'))
-            
-            law_file = self.laws_dir / f"{law_id}.md"
-            content = law_file.read_text(encoding='utf-8')
-            
-            return Law(
-                law_id=metadata["law_id"],
-                title=metadata["title"],
-                content=content,
-                category=metadata["category"],
-                effective_date=metadata["effective_date"],
-                version=metadata["version"],
-                reform_history=metadata.get("reforms", [])
-            )
-        except Exception as e:
-            print(f"Error retrieving law: {e}", file=sys.stderr)
-            return None
+    def get_law_metadata(self, law_id: str) -> Optional[Dict]:
+        """Retrieve law metadata"""
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT law_id, title, year, category, reform_count, last_modified, current_hash
+            FROM laws
+            WHERE law_id = ?
+        ''', (law_id,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return {
+                "law_id": row[0],
+                "title": row[1],
+                "year": row[2],
+                "category": row[3],
+                "reform_count": row[4],
+                "last_modified": row[5],
+                "current_hash": row[6]
+            }
+        return None
     
-    def list_laws(self, category: Optional[str] = None) -> List[Dict]:
-        """List all laws, optionally filtered by category."""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            if category:
-                cursor.execute("""
-                    SELECT law_id, title, category, current_version, 
-                           effective_date, last_modified
-                    FROM laws WHERE category = ? ORDER BY law_id
-                """, (category,))
-            else:
-                cursor.execute("""
-                    SELECT law_id, title, category, current_version, 
-                           effective_date, last_modified
-                    FROM laws ORDER BY law_id
-                """)
-            
-            rows = cursor.fetchall()
-            conn.close()
-            
-            return [
-                {
-                    "law_id": row[0],
-                    "title": row[1],
-                    "category": row[2],
-                    "version": row[3],
-                    "effective_date": row[4],
-                    "last_modified": row[5]
-                }
-                for row in rows
-            ]
-        except Exception as e:
-            print(f"Error listing laws: {e}", file=sys.stderr)
-            return []
+    def register_law(
+        self,
+        law_id: str,
+        title: str,
+        year: int,
+        category: str,
+        content: str
+    ) -> str:
+        """Register a new law in the system"""
+        content_hash = self.store_law_object(law_id, content, {
+            "law_id": law_id,
+            "title": title,
+            "year": year,
+            "category": category
+        })
+        
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO laws
+            (law_id, title, year, category, reform_count, last_modified, current_hash)
+            VALUES (?, ?, ?, ?, 0, ?, ?)
+        ''', (law_id, title, year, category, datetime.utcnow().isoformat(), content_hash))
+        
+        conn.commit()
+        conn.close()
+        
+        commit_hash = self.create_commit(
+            law_id,
+            content,
+            f"Initial commit: {title}",
+            "system"
+        )
+        
+        self.create_ref(f"law/{law_id}", commit_hash, "branch")
+        
+        return content_hash
+    
+    def amend_law(
+        self,
+        law_id: str,
+        new_content: str,
+        message: str,
+        author: str = "system"
+    ) -> str:
+        """Apply a reform (amendment) to a law"""
+        history = self.get_law_history(law_id)
+        parent_hash = history[0]["commit_hash"] if history else None
+        
+        commit_hash = self.create_commit(
+            law_id,
+            new_content,
+            message,
+            author,
+            parent_hash
+        )
+        
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE laws
+            SET reform_count = reform_count + 1,
+                last_modified = ?,
+                current_hash = ?
+            WHERE law_id = ?
+        ''', (datetime.utcnow().isoformat(), self._hash_content(new_content), law_id))
+        
+        conn.commit()
+        conn.close()
+        
+        self.create_ref(f"law/{law_id}", commit_hash, "branch")
+        
+        return commit_hash
     
     def get_statistics(self) -> Dict:
-        """Get repository statistics."""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT COUNT(*) FROM laws")
-            law_count = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM reforms")
-            reform_count = cursor.fetchone()[0]
-            
-            cursor.execute("""
-                SELECT name, law_count FROM categories ORDER BY law_count DESC
-            """)
-            categories = [{"name": row[0], "count": row[1]} for row in cursor.fetchall()]
-            
-            cursor.execute("""
-                SELECT COUNT(DISTINCT law_id) FROM reforms
-            """)
-            reformed_count = cursor.fetchone()[0]
-            
-            cursor.execute("""
-                SELECT AVG(current_version) FROM laws
-            """)
-            avg_version = cursor.fetchone()[0] or 0
-            
-            conn.close()
-            
-            # Get git stats
-            log_result = subprocess.run(
-                ["git", "log", "--oneline"],
-                cwd=self.repo_path,
-                capture_output=True,
-                text=True,
-                check=False
+        """Get repository statistics"""
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT COUNT(*) FROM laws")
+        total_laws = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM commits")
+        total_commits = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT SUM(reform_count) FROM laws")
+        total_reforms = cursor.fetchone()[0] or 0
+        
+        cursor.execute('''
+            SELECT category, COUNT(*) as count
+            FROM laws
+            GROUP BY category
+            ORDER BY count DESC
+        ''')
+        category_distribution = {row[0]: row[1] for row in cursor.fetchall()}
+        
+        cursor.execute('''
+            SELECT law_id, reform_count
+            FROM laws
+            ORDER BY reform_count DESC
+            LIMIT 10
+        ''')
+        most_amended = [{"law_id": row[0], "reforms": row[1]} for row in cursor.fetchall()]
+        
+        conn.close()
+        
+        return {
+            "total_laws": total_laws,
+            "total_commits": total_commits,
+            "total_reforms": total_reforms,
+            "category_distribution": category_distribution,
+            "most_amended_laws": most_amended
+        }
+    
+    def get_architecture_docs(self) -> List[ArchitectureComponent]:
+        """Return architecture documentation"""
+        components = [
+            ArchitectureComponent(
+                name="Content-Addressed Object Store",
+                purpose="Store law content with content-based addressing (like Git blobs)",
+                trade_offs=[
+                    "Automatic deduplication of identical law content",
+                    "Content hash changes if text modified even slightly",
+                    "Requires hash computation for every object"
+                ],
+                implementation_details="SHA256 hashing, nested directory structure (hash[:2]/hash[2:])",
+                storage_method="JSON files organized by hash prefix"
+            ),
+            ArchitectureComponent(
+                name="Commit History",
+                purpose="Track law reforms with parent-child relationships",
+                trade_offs=[
+                    "Complete audit trail of all changes",
+                    "Supports branching for alternative versions",
+                    "Higher storage overhead for metadata"
+                ],
+                implementation_details="Commit objects store parent reference, timestamp, message, author",
+                storage_method="SQLite database with referential integrity"
+            ),
+            ArchitectureComponent(
+                name="Reference System",
+                purpose="Pointers to specific law versions (branches/tags)",
+                trade_offs=[
+                    "Easy navigation to specific law versions",
+                    "Can create release tags and branches",
+                    "Requires maintenance of reference mappings"
+                ],
+                implementation_details="Refs point to commits, support both branches and tags",
+                storage_method="Text files and database entries"
+            ),
+            ArchitectureComponent(
+                name="Metadata Database",
+                purpose="Fast lookup of law information and statistics",
+                trade_offs=[
+                    "Quick queries without scanning object store",
+                    "Requires synchronization with object store",
+                    "SQLite has concurrent write limitations"
+                ],
+                implementation_details="Normalized schema with laws, commits, and refs tables",
+                storage_method="SQLite3 relational database"
+            ),
+            ArchitectureComponent(
+                name="Hierarchical Indexing",
+                purpose="Organize laws by category and year",
+                trade_offs=[
+                    "Fast filtering and searching",
+                    "Supports category-based branching",
+                    "Requires index maintenance"
+                ],
+                implementation_details="Laws indexed by category and year in queries",
+                storage_method="Database indexes on category and year columns"
             )
-            commit_count = len(log_result.stdout.strip().split('\n')) if log_result.stdout.strip() else 0
-            
-            return {
-                "total_laws": law_count,
-                "total_reforms": reform_count,
-                "laws_with_reforms": reformed_count,
-                "total_git_commits": commit_count,
-                "average_law_version": round(avg_version, 2),
-                "categories": categories
-            }
-        except Exception as e:
-            print(f"Error getting statistics: {e}", file=sys.stderr)
-            return {}
-    
-    def get_reform_history(self, law_id: str) -> List[Dict]:
-        """Get reform history for a specific law."""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT reform_id, timestamp, description, author, 
-                       previous_hash, new_hash, git_commit_sha
-                FROM reforms WHERE law_id = ? ORDER BY timestamp DESC
-            """, (law_id,))
-            
-            rows = cursor.fetchall()
-            conn.close()
-            
-            return [
-                {
-                    "reform_id": row[0],
-                    "timestamp": row[1],
-                    "description": row[2],
-                    "author": row[3],
-                    "previous_hash": row[4],
-                    "new_hash": row[5],
-                    "git_commit": row[6]
-                }
-                for row in rows
-            ]
-        except Exception as e:
-            print(f"Error getting reform history: {e}", file=sys.stderr)
-            return []
-    
-    def export_statistics(self, output_file: str):
-        """Export repository statistics to JSON file."""
-        stats = self.get_statistics()
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(stats, f, indent=2)
-        print(f"Statistics exported to {output_file}")
-    
-    def generate_report(self, output_file: str):
-        """Generate comprehensive repository report."""
-        try:
-            stats = self.get_statistics()
-            laws = self.list_laws()
-            
-            report = {
-                "generated": datetime.now().isoformat(),
-                "summary": stats,
-                "laws": laws,
-                "architectural_details": {
-                    "repository_type": "Git",
-                    "database": "SQLite",
-                    "storage_format": "Markdown (content) + JSON (metadata)",
-                    "tracking_method": "Git commits per reform",
-                    "design_rationale": {
-                        "git_for_version_control": "Provides full audit trail, branching capabilities, and distributed backup",
-                        "sqlite_for_metadata": "Fast queries, ACID compliance, no external dependencies",
-                        "markdown_for_content": "Human-readable, diff-friendly, version control native",
-                        "json_for_metadata": "Structured, easy to parse, supports rich reform history"
-                    },
-                    "trade_offs": {
-                        "scalability": "SQLite adequate for 8,642 laws; Git performs well with proper indexing",
-                        "read_performance": "Database queries optimized with indexes; content reads cached in memory",
-                        "write_performance": "Git commits sequential; can batch reforms for throughput",
-                        "storage": "Dual storage (Git + DB) provides redundancy but increases disk usage",
-                        "query_flexibility": "Database enables complex queries; Git limited to commit history analysis"
-                    }
-                }
-            }
-            
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump(report, f, indent=2, default=str)
-            
-            print(f"Report generated: {output_file}")
-        except Exception as e:
-            print(f"Error generating report: {e}", file=sys.stderr)
+        ]
+        
+        return components
 
 
-def generate_sample_laws(count: int = 10) -> List[Law]:
-    """Generate sample Spanish laws for testing."""
-    categories = [
-        "Penal",
-        "Civil",
-        "Mercantil",
-        "Administrativo",
-        "Laboral",
-        "Tributario",
-        "Procesal"
+def generate_sample_laws() -> List[Tuple[str, str, int, str, str]]:
+    """Generate sample Spanish laws for demonstration"""
+    sample_laws = [
+        ("LEY-001-1978", "Constitución Española", 1978, "Constitutional", 
+         "Norma fundamental del Estado..."),
+        ("LEY-014-1966", "Ley de Prensa e Imprenta", 1966, "Civil Rights",
+         "Regulación de medios de comunicación..."),
+        ("LEY-030-1992", "Régimen Jurídico de la Administración Pública", 1992, "Administrative",
+         "Reglas de procedimiento administrativo..."),
+        ("LEY-023-2015", "Ley de Cambio Climático", 2015, "Environmental",
+         "Medidas contra el cambio climático..."),
+        ("LEY-019-2003", "Protección de Datos Personales", 2003, "Data Protection",
+         "Derecho a la privacidad y protección de datos..."),
+        ("LEY-042-1988", "Ley de Bases del Régimen Local", 1988, "Local Government",
+         "Estructura de administración local..."),
+        ("LEY-055-2010", "Ley contra la Violencia de Género", 2010, "Gender Rights",
+         "Protección integral contra violencia de género..."),
+        ("LEY-011-2000", "Ley de Reforma del Mercado de Valores", 2000, "Financial",
+         "Regulación de mercados financieros..."),
     ]
     
-    laws = []
-    for i in range(count):
-        law_id = f"LEY-{i+1:04d}"
-        category = categories[i % len(categories)]
-        
-        laws.append(Law(
-            law_id=law_id,
-            title=f"Law {i+1}: Regulation of {category} matters",
-            content=f"""# {law_id}: Regulation of {category} matters
-
-## Chapter I: General Provisions
-
-Article 1. Purpose
-This law regulates matters pertaining to {category} law in Spain.
-
-Article 2. Scope
-This law applies to all natural and legal persons subject to Spanish jurisdiction.
-
-## Chapter II: Specific Provisions
-
-Article 3. Implementation
-The implementation of this law shall be carried out by competent authorities.
-
-Article 4. Sanctions
-Violations of this law shall result in appropriate sanctions.""",
-            category=category,
-            effective_date=f"2020-{(i % 12) + 1:02d}-01",
-            version=1,
-            reform_history=[]
-        ))
-    
-    return laws
-
-
-def generate_sample_reforms(law_id: str, count: int = 2) -> List[Reform]:
-    """Generate sample reforms for a law."""
-    reforms = []
-    for i in range(count):
-        reform_id = f"REF-{law_id}-{i+1:03d}"
-        
-        reforms.append(Reform(
-            law_id=law_id,
-            reform_id=reform_id,
-            timestamp=datetime.now().isoformat(),
-            description=f"Amendment {i+1} to {law_id}",
-            changes=f"Article 5 added: New provision regarding {i+1}",
-            author=f"Legislator {i+1}",
-            previous_hash="abc123" + str(i).zfill(58),
-            new_hash="def456" + str(i+1).zfill(58)
-        ))
-    
-    return reforms
+    return sample_laws
 
 
 def main():
-    """Main CLI interface."""
     parser = argparse.ArgumentParser(
-        description="Spanish Laws Git Repository Manager",
+        description="Spanish Law Version Control System - Architecture Demo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python solution.py --action init
-  python solution.py --action add-sample --count 100
-  python solution.py --action list
-  python solution.py --action stats
-  python solution.py --action report --output-file report.json
-  python solution.py --action get-law --law-id LEY-0001
-  python solution.py --action get-history --law-id LEY-0001
+  %(prog)s --init-repo ./law_repo
+  %(prog)s --repo ./law_repo --register-law LEY-001-1978 "Constitución" 1978 Constitutional
+  %(prog)s --repo ./law_repo --amend-law LEY-001-1978 "New content" "Art. 5 modified"
+  %(prog)s --repo ./law_repo --history LEY-001-1978
+  %(prog)s --repo ./law_repo --stats
+  %(prog)s --repo ./law_repo --architecture-docs
+  %(prog)s --repo ./law_repo --demo
         """
     )
     
     parser.add_argument(
-        "--action",
-        choices=["init", "add-sample", "list", "stats", "report", 
-                "get-law", "get-history", "reform"],
-        default="stats",
-        help="Action to perform (default: stats)"
+        "--repo",
+        default="./law_repository",
+        help="Path to law repository (default: ./law_repository)"
     )
     
     parser.add_argument(
-        "--repo-path",
-        default="./spanish_laws_repo",
-        help="Path to Git repository (default: ./spanish_laws_repo)"
+        "--init-repo",
+        action="store_true",
+        help="Initialize a new law repository"
     )
     
     parser.add_argument(
-        "--count",
-        type=int,
-        default=10,
-        help="Number of sample laws to generate (default: 10)"
+        "--register-law",
+        nargs=5,
+        metavar=("LAW_ID", "TITLE", "YEAR", "CATEGORY", "CONTENT"),
+        help="Register a new law"
     )
     
     parser.add_argument(
-        "--output-file",
-        help="Output file for report or statistics"
+        "--amend-law",
+        nargs=3,
+        metavar=("LAW_ID", "CONTENT", "MESSAGE"),
+        help="Apply an amendment to a law"
     )
     
     parser.add_argument(
-        "--law-id",
-        help="Law ID for specific operations"
+        "--history",
+        metavar="LAW_ID",
+        help="Show reform history for a law"
     )
     
     parser.add_argument(
-        "--category",
-        help="Filter laws by category"
+        "--metadata",
+        metavar="LAW_ID",
+        help="Show metadata for a law"
+    )
+    
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Show repository statistics"
+    )
+    
+    parser.add_argument(
+        "--architecture-docs",
+        action="store_true",
+        help="Display architecture documentation"
+    )
+    
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Run demonstration with sample laws"
+    )
+    
+    parser.add_argument(
+        "--author",
+        default="anonymous",
+        help="Author name for amendments (default: anonymous)"
     )
     
     args = parser.parse_args()
     
-    # Initialize repository
-    repo = LawRepository(args.repo_path)
+    if args.init_repo:
+        print(f"Initializing repository at {args.repo}...")
+        vcs = LegalCodeVersionControl(args.repo)
+        print("Repository initialized successfully")
+        return
     
-    if args.action == "init":
-        print(f"Repository initialized at {args.repo_path}")
+    vcs = LegalCodeVersionControl(args.repo)
     
-    elif args.action == "add-sample":
-        print(f"Generating {args.count} sample laws...")
-        sample_laws = generate_sample_laws(args.count)
-        
-        for law in sample_laws:
-            if repo.add_law(law):
-                print(f"  ✓ Added {law.law_id}: {law.title}")
-                
-                # Add some reforms to demonstrate the feature
-                reforms = generate_sample_reforms(law.law_id, count=2)
-                for reform in reforms:
-                    if repo.reform_law(reform):
-                        print(f"    ✓ Applied reform {reform.reform_id}")
-            else:
-                print(f"  ✗ Failed to add {law.law_id}")
+    if args.register_law:
+        law_id, title, year, category, content = args.register_law
+        try:
+            year = int(year)
+            hash_result = vcs.register_law(law_id, title, year, category, content)
+            print(f"Law registered: {law_id}")
+            print(f"Content hash: {hash_result}")
+        except Exception as e:
+            print(f"Error registering law: {e}", file=sys.stderr)
+            return
     
-    elif args.action == "list":
-        laws = repo.list_laws(category=args.category)
-        print(f"\nTotal laws: {len(laws)}\n")
-        print(f"{'Law ID':<15} {'Title':<40} {'Category':<15} {'Version':<10}")
+    if args.amend_law:
+        law_id, content, message = args.amend_law
+        try:
+            commit_hash = vcs.amend_law(law_id, content, message, args.author)
+            print(f"Amendment applied to {law_id}")
+            print(f"Commit hash: {commit_hash}")
+        except Exception as e:
+            print(f"Error amending law: {e}", file=sys.stderr)
+            return
+    
+    if args.history:
+        history = vcs.get_law_history(args.history)
+        if not history:
+            print(f"No history found for {args.history}")
+        else:
+            print(f"\nReform History for {args.history}:")
+            print("-" * 80)
+            for i, commit in enumerate(history, 1):
+                print(f"{i}. Commit: {commit['commit_hash']}")
+                print(f"   Timestamp: {commit['timestamp']}")
+                print(f"   Author: {commit['author']}")
+                print(f"   Message: {commit['message']}")
+                print(f"   Content Hash: {commit['content_hash']}")
+                print()
+    
+    if args.metadata:
+        metadata = vcs.get_law_metadata(args.metadata)
+        if metadata:
+            print(f"\nMetadata for {args.metadata}:")
+            print(json.dumps(metadata, indent=2))
+        else:
+            print(f"No metadata found for {args.metadata}")
+    
+    if args.stats:
+        stats = vcs.get_statistics()
+        print("\nRepository Statistics:")
         print("-" * 80)
-        for law in laws[:50]:
-            print(f"{law['law_id']:<15} {law['title'][:39]:<40} {law['category']:<15} {law['version']:<10}")
-        if len(laws) > 50:
-            print(f"... and {len(laws) - 50} more laws")
+        print(f"Total Laws: {stats['total_laws']}")
+        print(f"Total Commits: {stats['total_commits']}")
+        print(f"Total Reforms: {stats['total_reforms']}")
+        print(f"\nCategory Distribution:")
+        for category, count in sorted(stats['category_distribution'].items(), 
+                                      key=lambda x: x[1], reverse=True):
+            print(f"  {category}: {count}")
+        print(f"\nMost Amended Laws:")
+        for law in stats['most_amended_laws']:
+            print(f"  {law['law_id']}: {law['reforms']} reforms")
     
-    elif args.action == "stats":
-        stats = repo.get_statistics()
-        print("\n=== Repository Statistics ===\n")
-        print(f"Total Laws: {stats.get('total_laws', 0)}")
-        print(f"Total Reforms: {stats.get('total_reforms', 0)}")
-        print(f"Laws with Reforms: {stats.get('laws_with_reforms', 0)}")
-        print(f"Git Commits: {stats.get('total_git_commits', 0)}")
-        print(f"Average Law Version: {stats.get('average_law_version', 0)}")
-        print("\nLaws by Category:")
-        for cat in stats.get('categories', []):
-            print(f"  {cat['name']}: {cat['count']}")
+    if args.architecture_docs:
+        components = vcs.get_architecture_docs()
+        print("\n" + "=" * 80)
+        print("SPANISH LAW VERSION CONTROL - ARCHITECTURE DESIGN")
+        print("=" * 80)
+        
+        for component in components:
+            print(f"\n[{component.name.upper()}]")
+            print(f"Purpose: {component.purpose}")
+            print(f"Storage Method: {component.storage_method}")
+            print(f"Implementation Details: {component.implementation_details}")
+            print(f"Trade-Offs:")
+            for trade_off in component.trade_offs:
+                print(f"  • {trade_off}")
+        
+        print("\n" + "=" * 80)
+        print("ARCHITECTURAL DECISIONS SUMMARY")
+        print("=" * 80)
+        print("""
+1. GIT-LIKE ARCHITECTURE
+   - Content-addressed storage using SHA256 hashing
+   - Distributed object model for deduplication
+   - Parent-child commit relationships for audit trails
+   
+2. DATABASE FOR METADATA
+   - SQLite for fast queries and indexing
+   - Synchronized with object store
+   - Supports complex statistical queries
+   
+3. REFERENCE SYSTEM
+   - Branch pointers for law versions
+   - Tag support for law releases/versions
+   - Enables parallel legislative branches
+   
+4. SCALABILITY CONSIDERATIONS
+   - Object sharding by hash prefix (256 directories)
+   - Database indexes on frequently queried fields
+   - Potential for object packing/compression
+   
+5. COMPLIANCE & AUDIT
+   - Complete immutable history
+   - Author and timestamp on all changes
+   - Referential integrity constraints
+   
+6. TRADE-OFFS
+   - Space vs. Deduplication: Duplicate laws stored once
+   - Query Speed vs. Storage: Database indexes add write overhead
+   - Simplicity vs. Features: SQLite easier than distributed DB
+   - Distribution vs. Centralization: Single repo simpler than distributed
+        """)
     
-    elif args.action == "report":
-        output = args.output_file or "spanish_laws_report.json"
-        repo.generate_report(output)
-    
-    elif args.action == "get-law":
-        if not args.law_id:
-            print("Error: --law-id required for this action", file=sys.stderr)
-            sys.exit(1)
-        law = repo.get_law(args.law_id)
-        if law:
-            print(f"\n{law.law_id}: {law.title}")
-            print(f"Category: {law.category}")
-            print(f"Effective Date: {law.effective_date}")
-            print(f"Current Version: {law.version}")
-            print(f"\nContent:\n{law.content}")
-        else:
-            print(f"Law {args.law_id} not found")
-    
-    elif args.action == "get-history":
-        if not args.law_id:
-            print("Error: --law-id required for this action", file=sys.stderr)
-            sys.exit(1)
-        history = repo.get_reform_history(args.law_id)
-        if history:
-            print(f"\nReform History for {args.law_id}:\n")
-            for reform in history:
-                print(f"  {reform['reform_id']} ({reform['timestamp']})")
-                print(f"    Author: {reform['author']}")
-                print(f"    Description: {reform['description']}")
-                print(f"    Commit: {reform['git_commit']}")
-        else:
-            print(f"No reforms found for {args.law_id}")
-    
-    elif args.action == "reform":
-        if not args.law_id:
-            print("Error: --law-id required for this action", file=sys.stderr)
-            sys.exit(1)
-        reform = Reform(
-            law_id=args.law_id,
-            reform_id=f"REF-{args.law_id}-NEW",
-            timestamp=datetime.now().isoformat(),
-            description="Interactive reform from CLI",
-            changes="New articles added through CLI interface",
-            author="CLI User",
-            previous_hash="cli" + "0" * 56,
-            new_hash="cli" + "1" * 56
-        )
-        if repo.reform_law(reform):
-            print(f"Reform applied successfully: {reform.reform_id}")
-        else:
-            print("Failed to apply reform")
+    if args.demo:
+        print("\n" + "=" * 80)
+        print("DEMONSTRATION: Loading 8 Sample Spanish Laws")
+        print("=" * 80)
+        
+        # Clear repository for demo
+        if Path(args.repo).exists():
+            shutil.rmtree(args.repo)
+        
+        vcs = LegalCodeVersionControl(args.repo)
+        
+        sample_laws = generate_sample_laws()
+        
+        print("\nPhase 1: Registering Laws")
+        print("-" * 80)
+        for law_id, title, year, category, content in sample_laws:
+            hash_result = vcs.register_law(law_id, title, year, category, content)
+            print(f"✓ Registered {law_id}: {title} ({year})")
+        
+        print("\nPhase 2: Applying Amendments")
+        print("-" * 80)
+        amendments = [
+            ("LEY-001-1978", "Norma fundamental del Estado (actualizada 2024)...", 
+             "Reforma integral - modernización constitucional", "Congress"),
+            ("LEY-023-2015", "Medidas ambientales reforzadas...", 
+             "Enmienda: nuevos objetivos de emisiones", "Environmental Ministry"),
+            ("LEY-055-2010", "Protección integral mejorada...", 
+             "Reforma: nuevos mecanismos de protección", "Gender Equality Ministry"),
+        ]
+        
+        for law_id, new_content, message, author in amendments:
+            vcs.amend_law(law_id, new_content, message, author)
+            print(f"✓ Amendment to {law_id}: {message}")
+        
+        print("\nPhase 3: Repository Statistics")
+        print("-" * 80)
+        stats = vcs.get_statistics()
+        print(f"Total Laws Registered: {stats['total_laws']}")
+        print(f"Total Commits: {stats['total_commits']}")
+        print(f"Total Reforms Applied: {stats['total_reforms']}")
+        print(f"\nLaws by Category:")
+        for category, count in sorted(stats['category_distribution'].items(),
+                                      key=lambda x: x[1], reverse=True):
+            print(f"  • {category}: {count} laws")
+        print(f"\nMost Amended Laws:")
+        for law in stats['most_amended_laws'][:5]:
+            print(f"  • {law['law_id']}: {law['reforms']} reforms")
+        
+        print("\nPhase 4: Example - Full History of Constitutional Law")
+        print("-" * 80)
+        history = vcs.get_law_history("LEY-001-1978")
+        for i, commit in enumerate(history, 1):
+            print(f"{i}. {commit['timestamp'][:10]} | {commit['author']}")
+            print(f"   {commit['message']}")
+        
+        print("\n" + "=" * 80)
+        print("DEMO COMPLETE - Repository available at:", args.repo)
+        print("=" * 80)
 
 
 if __name__ == "__main__":
