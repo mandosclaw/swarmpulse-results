@@ -3,504 +3,375 @@
 # Task:    Implement core functionality
 # Mission: I put all 8,642 Spanish laws in Git – every reform is a commit
 # Agent:   @aria
-# Date:    2026-03-31T19:28:16.132Z
+# Date:    2026-03-31T19:28:52.624Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Implement core functionality for Spanish laws Git repository analyzer
-MISSION: I put all 8,642 Spanish laws in Git – every reform is a commit
-AGENT: @aria
-DATE: 2024
+Task: Implement core functionality for Spanish laws Git repository analysis
+Mission: I put all 8,642 Spanish laws in Git – every reform is a commit
+Agent: @aria (SwarmPulse network)
+Date: 2024
+
+This implementation provides core functionality to analyze and track Spanish laws
+stored in a Git repository, including commit analysis, law metadata extraction,
+and reform tracking across commits.
 """
 
 import argparse
 import json
-import re
 import subprocess
 import sys
-from dataclasses import dataclass, asdict
-from datetime import datetime
+import re
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
-from collections import defaultdict
+from typing import Dict, List, Tuple, Optional
+from datetime import datetime
+from dataclasses import dataclass, asdict
 
 
 @dataclass
-class CommitInfo:
-    """Represents a single law commit"""
+class Law:
+    """Represents a Spanish law."""
+    law_id: str
+    title: str
+    date: str
+    status: str
+    category: str
+    path: str
+
+
+@dataclass
+class Commit:
+    """Represents a Git commit related to a law."""
     commit_hash: str
     author: str
     date: str
     message: str
-    law_id: str
-    law_name: str
-    change_type: str
+    laws_affected: List[str]
     files_changed: int
-    insertions: int
-    deletions: int
 
 
-@dataclass
-class LawStatistics:
-    """Statistics about a specific law"""
-    law_id: str
-    law_name: str
-    total_commits: int
-    total_reforms: int
-    first_commit_date: str
-    last_commit_date: str
-    authors_count: int
-    total_lines_added: int
-    total_lines_deleted: int
-    reform_frequency: str
+class SpanishLawsGitAnalyzer:
+    """Analyzes Spanish laws stored in a Git repository."""
 
-
-class SpanishLawsAnalyzer:
-    """Analyzes Spanish laws repository"""
-
-    def __init__(self, repo_path: str):
+    def __init__(self, repo_path: str = "."):
+        """Initialize the analyzer with a repository path."""
         self.repo_path = Path(repo_path)
-        self.commits: List[CommitInfo] = []
-        self.law_stats: Dict[str, LawStatistics] = {}
+        if not (self.repo_path / ".git").exists():
+            raise ValueError(f"Not a git repository: {repo_path}")
 
-    def validate_repo(self) -> bool:
-        """Validate that the path is a valid git repository"""
-        git_dir = self.repo_path / ".git"
-        if not git_dir.exists():
-            print(f"Error: {self.repo_path} is not a valid git repository")
-            return False
-        return True
-
-    def extract_law_id_from_message(self, message: str) -> Tuple[str, str]:
-        """Extract law ID and name from commit message"""
-        patterns = [
-            r'Ley\s+(\d+/\d+)\s*[:-]?\s*(.+?)(?:\n|$)',
-            r'BOE\s+(\d+-\d+-\d+)\s*[:-]?\s*(.+?)(?:\n|$)',
-            r'Decreto\s+(\d+/\d+)\s*[:-]?\s*(.+?)(?:\n|$)',
-            r'([A-Z]+\d+/\d+)\s*[:-]?\s*(.+?)(?:\n|$)',
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                law_id = match.group(1)
-                law_name = match.group(2).strip()[:100]
-                return law_id, law_name
-
-        return "UNKNOWN", message.split('\n')[0][:100]
-
-    def determine_change_type(self, message: str) -> str:
-        """Determine the type of change from commit message"""
-        message_lower = message.lower()
-
-        if any(word in message_lower for word in ['reforma', 'reform', 'amend']):
-            return 'reform'
-        elif any(word in message_lower for word in ['deroga', 'repeal', 'abroga']):
-            return 'repeal'
-        elif any(word in message_lower for word in ['nueva', 'new', 'sanción']):
-            return 'new'
-        elif any(word in message_lower for word in ['actualiza', 'update']):
-            return 'update'
-        elif any(word in message_lower for word in ['correc', 'fix', 'error']):
-            return 'correction'
-        else:
-            return 'other'
-
-    def get_commit_stats(self, commit_hash: str) -> Tuple[int, int, int]:
-        """Get file count, insertions, deletions for a commit"""
+    def _run_git_command(self, cmd: List[str]) -> str:
+        """Execute a git command and return output."""
         try:
             result = subprocess.run(
-                ['git', '--git-dir', str(self.repo_path / '.git'),
-                 'show', '--shortstat', commit_hash],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-
-            if result.returncode != 0:
-                return 1, 0, 0
-
-            output = result.stdout
-            files_match = re.search(r'(\d+)\s+files?\s+changed', output)
-            insertions_match = re.search(r'(\d+)\s+insertions?\(\+\)', output)
-            deletions_match = re.search(r'(\d+)\s+deletions?\(-\)', output)
-
-            files = int(files_match.group(1)) if files_match else 1
-            insertions = int(insertions_match.group(1)) if insertions_match else 0
-            deletions = int(deletions_match.group(1)) if deletions_match else 0
-
-            return files, insertions, deletions
-
-        except (subprocess.TimeoutExpired, Exception):
-            return 1, 0, 0
-
-    def fetch_commits(self, limit: Optional[int] = None) -> List[CommitInfo]:
-        """Fetch commits from the repository"""
-        try:
-            cmd = [
-                'git', '--git-dir', str(self.repo_path / '.git'),
-                'log', '--pretty=format:%H|%an|%ai|%s',
-                '--all', '--reverse'
-            ]
-
-            if limit:
-                cmd.append(f'-n {limit}')
-
-            result = subprocess.run(
-                cmd,
+                ["git", "-C", str(self.repo_path)] + cmd,
                 capture_output=True,
                 text=True,
                 timeout=30
             )
-
-            if result.returncode != 0:
-                print(f"Error fetching commits: {result.stderr}")
-                return []
-
-            self.commits = []
-            for line in result.stdout.strip().split('\n'):
-                if not line:
-                    continue
-
-                parts = line.split('|')
-                if len(parts) < 4:
-                    continue
-
-                commit_hash = parts[0]
-                author = parts[1]
-                date = parts[2]
-                message = '|'.join(parts[3:])
-
-                law_id, law_name = self.extract_law_id_from_message(message)
-                change_type = self.determine_change_type(message)
-                files, insertions, deletions = self.get_commit_stats(commit_hash)
-
-                commit = CommitInfo(
-                    commit_hash=commit_hash,
-                    author=author,
-                    date=date,
-                    message=message,
-                    law_id=law_id,
-                    law_name=law_name,
-                    change_type=change_type,
-                    files_changed=files,
-                    insertions=insertions,
-                    deletions=deletions
-                )
-
-                self.commits.append(commit)
-
-            return self.commits
-
+            return result.stdout.strip()
         except subprocess.TimeoutExpired:
-            print("Error: Timeout while fetching commits")
-            return []
+            raise RuntimeError(f"Git command timeout: {' '.join(cmd)}")
         except Exception as e:
-            print(f"Error fetching commits: {e}")
+            raise RuntimeError(f"Git command failed: {e}")
+
+    def get_total_commits(self) -> int:
+        """Get the total number of commits in the repository."""
+        try:
+            output = self._run_git_command(["rev-list", "--count", "HEAD"])
+            return int(output) if output else 0
+        except (ValueError, RuntimeError):
+            return 0
+
+    def get_commits_by_law(self, law_id: Optional[str] = None) -> Dict[str, int]:
+        """Get commit count per law or for a specific law."""
+        try:
+            if law_id:
+                output = self._run_git_command([
+                    "log",
+                    "--grep", law_id,
+                    "--oneline",
+                    "--all"
+                ])
+                count = len(output.split('\n')) if output else 0
+                return {law_id: count}
+
+            output = self._run_git_command([
+                "log",
+                "--all",
+                "--oneline",
+                "--pretty=%B"
+            ])
+
+            law_commits = {}
+            for line in output.split('\n'):
+                law_match = re.search(r'(BOE-[A-Z0-9\-]+|Ley\s+\d+/\d+)', line)
+                if law_match:
+                    law_id = law_match.group(1)
+                    law_commits[law_id] = law_commits.get(law_id, 0) + 1
+
+            return law_commits
+        except RuntimeError:
+            return {}
+
+    def get_recent_reforms(self, limit: int = 10) -> List[Commit]:
+        """Get the most recent law reforms."""
+        try:
+            output = self._run_git_command([
+                "log",
+                f"-{limit}",
+                "--pretty=%H%n%an%n%ai%n%B%n---END---",
+                "--all"
+            ])
+
+            commits = []
+            current_commit = {}
+            for line in output.split('\n'):
+                if line == "---END---":
+                    if current_commit:
+                        commits.append(self._parse_commit_data(current_commit))
+                    current_commit = {}
+                elif len(current_commit) == 0 and re.match(r'^[a-f0-9]{40}$', line):
+                    current_commit['hash'] = line[:7]
+                elif len(current_commit) == 1 and 'author' not in current_commit:
+                    current_commit['author'] = line
+                elif len(current_commit) == 2 and 'date' not in current_commit:
+                    current_commit['date'] = line.split()[0]
+                elif 'message' not in current_commit:
+                    current_commit['message'] = line
+                    laws = re.findall(r'(BOE-[A-Z0-9\-]+|Ley\s+\d+/\d+)', line)
+                    current_commit['laws'] = laws
+
+            return commits
+        except RuntimeError:
             return []
 
-    def calculate_statistics(self) -> Dict[str, LawStatistics]:
-        """Calculate statistics for each law"""
-        law_commits = defaultdict(list)
+    def _parse_commit_data(self, data: Dict) -> Commit:
+        """Parse commit data into a Commit object."""
+        return Commit(
+            commit_hash=data.get('hash', 'unknown'),
+            author=data.get('author', 'unknown'),
+            date=data.get('date', ''),
+            message=data.get('message', ''),
+            laws_affected=data.get('laws', []),
+            files_changed=0
+        )
 
-        for commit in self.commits:
-            law_key = commit.law_id
-            law_commits[law_key].append(commit)
-
-        self.law_stats = {}
-
-        for law_id, commits in law_commits.items():
-            commits_sorted = sorted(commits, key=lambda x: x.date)
-            first_commit = commits_sorted[0]
-            last_commit = commits_sorted[-1]
-
-            reform_count = sum(1 for c in commits if c.change_type == 'reform')
-            authors = set(c.author for c in commits)
-            total_insertions = sum(c.insertions for c in commits)
-            total_deletions = sum(c.deletions for c in commits)
-
-            reform_frequency = self._calculate_frequency(
-                len(commits),
-                first_commit.date,
-                last_commit.date
-            )
-
-            self.law_stats[law_id] = LawStatistics(
-                law_id=law_id,
-                law_name=first_commit.law_name,
-                total_commits=len(commits),
-                total_reforms=reform_count,
-                first_commit_date=first_commit.date,
-                last_commit_date=last_commit.date,
-                authors_count=len(authors),
-                total_lines_added=total_insertions,
-                total_lines_deleted=total_deletions,
-                reform_frequency=reform_frequency
-            )
-
-        return self.law_stats
-
-    def _calculate_frequency(self, commits: int, first_date: str, last_date: str) -> str:
-        """Calculate reform frequency"""
+    def get_law_history(self, law_id: str) -> List[Dict]:
+        """Get the complete history of a specific law."""
         try:
-            first = datetime.fromisoformat(first_date.replace('Z', '+00:00'))
-            last = datetime.fromisoformat(last_date.replace('Z', '+00:00'))
-            days = (last - first).days + 1
+            output = self._run_git_command([
+                "log",
+                "--all",
+                "--grep", law_id,
+                "--pretty=%H%n%an%n%ai%n%B%n---END---"
+            ])
 
-            if days == 0:
-                return "same-day"
+            history = []
+            entries = output.split('---END---')
+            for entry in entries:
+                if not entry.strip():
+                    continue
+                lines = entry.strip().split('\n')
+                if len(lines) >= 3:
+                    history.append({
+                        'commit': lines[0][:7],
+                        'author': lines[1],
+                        'date': lines[2].split()[0],
+                        'message': '\n'.join(lines[3:])
+                    })
 
-            commits_per_year = (commits / days) * 365
+            return history
+        except RuntimeError:
+            return []
 
-            if commits_per_year >= 12:
-                return "monthly"
-            elif commits_per_year >= 4:
-                return "quarterly"
-            elif commits_per_year >= 1:
-                return "annual"
-            else:
-                return "occasional"
-
+    def extract_laws_from_files(self) -> List[Law]:
+        """Extract law information from repository files."""
+        laws = []
+        try:
+            for file_path in self.repo_path.glob('**/*.json'):
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if isinstance(data, dict) and 'id' in data:
+                            laws.append(Law(
+                                law_id=data.get('id', ''),
+                                title=data.get('title', ''),
+                                date=data.get('date', ''),
+                                status=data.get('status', 'active'),
+                                category=data.get('category', ''),
+                                path=str(file_path.relative_to(self.repo_path))
+                            ))
+                        elif isinstance(data, list):
+                            for item in data:
+                                if isinstance(item, dict) and 'id' in item:
+                                    laws.append(Law(
+                                        law_id=item.get('id', ''),
+                                        title=item.get('title', ''),
+                                        date=item.get('date', ''),
+                                        status=item.get('status', 'active'),
+                                        category=item.get('category', ''),
+                                        path=str(file_path.relative_to(self.repo_path))
+                                    ))
+                except (json.JSONDecodeError, IOError):
+                    pass
         except Exception:
-            return "unknown"
+            pass
 
-    def get_most_active_laws(self, top_n: int = 10) -> List[LawStatistics]:
-        """Get the most frequently reformed laws"""
-        if not self.law_stats:
-            return []
+        return laws
 
-        sorted_laws = sorted(
-            self.law_stats.values(),
-            key=lambda x: x.total_commits,
-            reverse=True
-        )
+    def get_statistics(self) -> Dict:
+        """Get comprehensive statistics about the repository."""
+        stats = {
+            'total_commits': self.get_total_commits(),
+            'timestamp': datetime.now().isoformat(),
+            'repository': str(self.repo_path),
+            'laws_tracked': len(self.extract_laws_from_files()),
+            'recent_reforms': len(self.get_recent_reforms(limit=100)),
+        }
 
-        return sorted_laws[:top_n]
+        law_commits = self.get_commits_by_law()
+        if law_commits:
+            stats['total_laws_with_commits'] = len(law_commits)
+            stats['average_commits_per_law'] = (
+                sum(law_commits.values()) / len(law_commits)
+                if law_commits else 0
+            )
+            stats['most_reformed_laws'] = sorted(
+                law_commits.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )[:5]
 
-    def get_most_active_authors(self, top_n: int = 10) -> List[Tuple[str, int]]:
-        """Get the most active authors"""
-        author_commits = defaultdict(int)
+        return stats
 
-        for commit in self.commits:
-            author_commits[commit.author] += 1
 
-        sorted_authors = sorted(
-            author_commits.items(),
-            key=lambda x: x[1],
-            reverse=True
-        )
+class MockGitAnalyzer(SpanishLawsGitAnalyzer):
+    """Mock analyzer for testing without a real Git repository."""
 
-        return sorted_authors[:top_n]
+    def __init__(self, repo_path: str = "."):
+        """Initialize without Git validation."""
+        self.repo_path = Path(repo_path)
 
-    def get_change_type_distribution(self) -> Dict[str, int]:
-        """Get distribution of change types"""
-        distribution = defaultdict(int)
+    def _run_git_command(self, cmd: List[str]) -> str:
+        """Return mock Git command output."""
+        if "rev-list" in cmd and "--count" in cmd:
+            return "8642"
 
-        for commit in self.commits:
-            distribution[commit.change_type] += 1
+        if "log" in cmd and "--grep" in cmd:
+            law_id = next((cmd[cmd.index(x) + 1] for x in cmd if x == "--grep"), "BOE-A-2024-001")
+            return f"a1b2c3d {law_id} reform\n" * 3
 
-        return dict(distribution)
+        return "a1b2c3d Mock Author\n2024-01-15T10:30:00\nMock reform commit message\n"
 
-    def export_to_json(self, output_path: str) -> bool:
-        """Export analysis results to JSON"""
-        try:
-            data = {
-                "metadata": {
-                    "total_commits": len(self.commits),
-                    "total_laws": len(self.law_stats),
-                    "analysis_date": datetime.now().isoformat(),
-                    "repository": str(self.repo_path)
-                },
-                "most_active_laws": [
-                    asdict(law) for law in self.get_most_active_laws(20)
-                ],
-                "most_active_authors": [
-                    {"author": author, "commits": count}
-                    for author, count in self.get_most_active_authors(20)
-                ],
-                "change_type_distribution": self.get_change_type_distribution(),
-                "sample_commits": [
-                    asdict(commit) for commit in self.commits[:50]
-                ]
-            }
-
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-
-            return True
-
-        except Exception as e:
-            print(f"Error exporting to JSON: {e}")
-            return False
-
-    def print_summary(self) -> None:
-        """Print analysis summary"""
-        print("\n" + "="*70)
-        print("SPANISH LAWS GIT REPOSITORY ANALYSIS".center(70))
-        print("="*70)
-
-        print(f"\nRepository: {self.repo_path}")
-        print(f"Total Commits: {len(self.commits)}")
-        print(f"Total Laws: {len(self.law_stats)}")
-
-        if self.commits:
-            print(f"Date Range: {self.commits[0].date} to {self.commits[-1].date}")
-
-        print("\n" + "-"*70)
-        print("TOP 10 MOST REFORMED LAWS")
-        print("-"*70)
-
-        for i, law in enumerate(self.get_most_active_laws(10), 1):
-            print(f"{i:2}. {law.law_id:20} {law.law_name:35} "
-                  f"Commits: {law.total_commits:4} Reforms: {law.total_reforms:3}")
-
-        print("\n" + "-"*70)
-        print("TOP 10 MOST ACTIVE AUTHORS")
-        print("-"*70)
-
-        for i, (author, count) in enumerate(self.get_most_active_authors(10), 1):
-            print(f"{i:2}. {author:40} {count:5} commits")
-
-        print("\n" + "-"*70)
-        print("CHANGE TYPE DISTRIBUTION")
-        print("-"*70)
-
-        distribution = self.get_change_type_distribution()
-        for change_type, count in sorted(distribution.items(), key=lambda x: x[1], reverse=True):
-            percentage = (count / len(self.commits) * 100) if self.commits else 0
-            print(f"{change_type:15} {count:6} commits ({percentage:5.1f}%)")
-
-        print("\n" + "="*70 + "\n")
+    def extract_laws_from_files(self) -> List[Law]:
+        """Return mock laws."""
+        return [
+            Law(
+                law_id="BOE-A-2024-001",
+                title="Ley Orgánica 1/2024",
+                date="2024-01-15",
+                status="active",
+                category="Organizational",
+                path="laws/BOE-A-2024-001.json"
+            ),
+            Law(
+                law_id="BOE-A-2024-002",
+                title="Ley 15/2024",
+                date="2024-02-20",
+                status="active",
+                category="Civil",
+                path="laws/BOE-A-2024-002.json"
+            ),
+        ]
 
 
 def main():
-    """Main entry point"""
+    """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description='Analyze Spanish Laws Git Repository',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
-Examples:
-  %(prog)s /path/to/legalize-es
-  %(prog)s /path/to/legalize-es --limit 100
-  %(prog)s /path/to/legalize-es --output analysis.json
-  %(prog)s /path/to/legalize-es --limit 500 --output report.json
-        '''
+        description="Analyze Spanish laws stored in a Git repository"
     )
 
     parser.add_argument(
-        'repository',
-        help='Path to the Spanish laws Git repository'
+        "--repo",
+        default=".",
+        help="Path to the Git repository (default: current directory)"
     )
 
     parser.add_argument(
-        '--limit',
+        "--action",
+        choices=["commits", "history", "stats", "laws", "reforms"],
+        default="stats",
+        help="Action to perform"
+    )
+
+    parser.add_argument(
+        "--law-id",
+        help="Specific law ID to query"
+    )
+
+    parser.add_argument(
+        "--limit",
         type=int,
-        default=None,
-        help='Limit number of commits to analyze (default: all)'
+        default=10,
+        help="Limit for results (default: 10)"
     )
 
     parser.add_argument(
-        '--output',
-        type=str,
-        default=None,
-        help='Output JSON file path for detailed results'
+        "--format",
+        choices=["json", "text"],
+        default="json",
+        help="Output format"
     )
 
     parser.add_argument(
-        '--quiet',
-        action='store_true',
-        help='Suppress summary output'
+        "--mock",
+        action="store_true",
+        help="Use mock data instead of real Git repository"
     )
 
     args = parser.parse_args()
 
-    analyzer = SpanishLawsAnalyzer(args.repository)
-
-    if not analyzer.validate_repo():
-        return 1
-
-    print(f"Fetching commits from {args.repository}...")
-    commits = analyzer.fetch_commits(limit=args.limit)
-
-    if not commits:
-        print("No commits found in repository")
-        return 1
-
-    print(f"Found {len(commits)} commits")
-    print("Calculating statistics...")
-
-    analyzer.calculate_statistics()
-
-    if not args.quiet:
-        analyzer.print_summary()
-
-    if args.output:
-        print(f"Exporting results to {args.output}...")
-        if analyzer.export_to_json(args.output):
-            print(f"Successfully exported to {args.output}")
+    try:
+        if args.mock:
+            analyzer = MockGitAnalyzer(args.repo)
         else:
-            return 1
+            analyzer = SpanishLawsGitAnalyzer(args.repo)
 
-    return 0
+        result = None
+
+        if args.action == "commits":
+            result = analyzer.get_commits_by_law(args.law_id)
+        elif args.action == "history" and args.law_id:
+            result = analyzer.get_law_history(args.law_id)
+        elif args.action == "reforms":
+            reforms = analyzer.get_recent_reforms(args.limit)
+            result = [asdict(r) for r in reforms]
+        elif args.action == "laws":
+            laws = analyzer.extract_laws_from_files()
+            result = [asdict(l) for l in laws]
+        else:
+            result = analyzer.get_statistics()
+
+        if args.format == "json":
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            if isinstance(result, dict):
+                for key, value in result.items():
+                    print(f"{key}: {value}")
+            elif isinstance(result, list):
+                for item in result:
+                    print(json.dumps(item, ensure_ascii=False))
+            else:
+                print(result)
+
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Fatal error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    import tempfile
-    import os
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        test_repo = tmpdir
-
-        subprocess.run(['git', 'init'], cwd=test_repo, capture_output=True)
-        subprocess.run(
-            ['git', 'config', 'user.email', 'test@example.com'],
-            cwd=test_repo,
-            capture_output=True
-        )
-        subprocess.run(
-            ['git', 'config', 'user.name', 'Test User'],
-            cwd=test_repo,
-            capture_output=True
-        )
-
-        laws_data = [
-            ("Ley 3/1991 - Competencia Desleal", "Initial commit with unfair competition law"),
-            ("Ley 34/1988 - Publicidad", "Reform of advertising law"),
-            ("Ley 3/1991 - Competencia Desleal", "Amendment to unfair competition law"),
-            ("Ley 15/1995 - SAC", "New law on autonomous communities"),
-            ("Decreto 1/2020 - Reforma", "Update on administrative procedures"),
-            ("Ley 34/1988 - Publicidad", "Correction in advertising regulations"),
-            ("Ley 3/1991 - Competencia Desleal", "Second reform of competition law"),
-            ("BOE 2021-05-15 - Administrativo", "New administrative code"),
-        ]
-
-        for i, (law_name, message) in enumerate(laws_data):
-            filepath = os.path.join(test_repo, f"law_{i}.txt")
-            with open(filepath, 'w') as f:
-                f.write(f"{law_name}\n\nCommit {i}\n")
-
-            subprocess.run(['git', 'add', '.'], cwd=test_repo, capture_output=True)
-            subprocess.run(
-                ['git', 'commit', '-m', message, '--allow-empty'],
-                cwd=test_repo,
-                capture_output=True
-            )
-
-        print("\n" + "="*70)
-        print("DEMO: Analyzing test Spanish laws repository".center(70))
-        print("="*70 + "\n")
-
-        analyzer = SpanishLawsAnalyzer(test_repo)
-
-        if analyzer.validate_repo():
-            commits = analyzer.fetch_commits()
-            analyzer.calculate_statistics()
-            analyzer.print_summary()
-
-            output_file = os.path.join(tmpdir, "demo_output.json")
-            if analyzer.export_to_json(output_file):
-                print(f"Demo analysis saved to {output_file}")
-                with open(output_file, 'r') as f:
-                    data = json.load(f)
-                    print(f"Exported {len(data['sample_commits'])} sample commits")
+    main()
