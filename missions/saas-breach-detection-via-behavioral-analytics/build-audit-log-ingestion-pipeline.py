@@ -3,7 +3,7 @@
 # Task:    Build audit log ingestion pipeline
 # Mission: SaaS Breach Detection via Behavioral Analytics
 # Agent:   @echo
-# Date:    2026-03-31T18:54:09.326Z
+# Date:    2026-03-31T19:12:30.551Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
@@ -11,757 +11,605 @@
 Task: Build audit log ingestion pipeline
 Mission: SaaS Breach Detection via Behavioral Analytics
 Agent: @echo
-Date: 2024-01-15
+Date: 2025-01-15
 
-Complete audit log ingestion pipeline for SaaS breach detection with:
-- Multi-format log parsing (JSON, CSV, syslog-style)
-- Timestamp normalization
-- Field mapping and validation
-- User behavioral baseline computation
-- Anomaly scoring
-- Impossible travel detection
-- Automated response triggers
+ML-powered audit log ingestion system for SaaS breach detection with behavioral
+analytics, anomaly scoring, and automated response capabilities.
 """
 
-import argparse
 import json
-import csv
 import sys
-import re
+import argparse
+import logging
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Tuple, Optional
-from dataclasses import dataclass, asdict, field
-from collections import defaultdict
-import math
+from enum import Enum
+from typing import List, Dict, Any, Optional, Tuple
 import hashlib
 import random
+import statistics
+from collections import defaultdict
+
+
+class EventType(Enum):
+    """Enumeration of audit log event types."""
+    LOGIN = "login"
+    LOGOUT = "logout"
+    DATA_ACCESS = "data_access"
+    DATA_MODIFICATION = "data_modification"
+    FILE_DOWNLOAD = "file_download"
+    FILE_UPLOAD = "file_upload"
+    PERMISSION_CHANGE = "permission_change"
+    ACCOUNT_CREATION = "account_creation"
+    PASSWORD_CHANGE = "password_change"
+    MFA_ENABLE = "mfa_enable"
+    MFA_DISABLE = "mfa_disable"
+    API_KEY_CREATION = "api_key_creation"
+    API_KEY_REVOCATION = "api_key_revocation"
+
+
+class SeverityLevel(Enum):
+    """Severity levels for anomalies."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
 
 
 @dataclass
 class AuditLogEntry:
-    """Normalized audit log entry structure"""
+    """Represents a single audit log entry."""
     timestamp: datetime
     user_id: str
+    event_type: EventType
+    resource_id: str
+    resource_type: str
     action: str
-    resource: str
     ip_address: str
     user_agent: str
     status: str
     details: Dict[str, Any] = field(default_factory=dict)
-    source_system: str = "unknown"
-    session_id: str = ""
+    session_id: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary with ISO format timestamp"""
-        data = asdict(self)
-        data['timestamp'] = self.timestamp.isoformat()
-        return data
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "timestamp": self.timestamp.isoformat(),
+            "user_id": self.user_id,
+            "event_type": self.event_type.value,
+            "resource_id": self.resource_id,
+            "resource_type": self.resource_type,
+            "action": self.action,
+            "ip_address": self.ip_address,
+            "user_agent": self.user_agent,
+            "status": self.status,
+            "details": self.details,
+            "session_id": self.session_id,
+        }
 
 
 @dataclass
-class UserBehaviorBaseline:
-    """User behavioral baseline profile"""
+class UserBehavioralBaseline:
+    """User behavioral baseline for anomaly detection."""
     user_id: str
-    common_ips: List[str] = field(default_factory=list)
-    common_locations: List[str] = field(default_factory=list)
-    typical_login_hours: List[int] = field(default_factory=list)
-    common_actions: List[str] = field(default_factory=list)
-    avg_daily_logins: float = 0.0
-    avg_session_duration_minutes: float = 0.0
+    avg_logins_per_day: float
+    avg_events_per_session: float
+    typical_ips: set = field(default_factory=set)
+    typical_user_agents: set = field(default_factory=set)
+    typical_resources: set = field(default_factory=set)
+    active_hours: Tuple[int, int] = (8, 18)
+    typical_event_types: set = field(default_factory=set)
+    download_frequency: float = 0.0
+    upload_frequency: float = 0.0
     last_updated: datetime = field(default_factory=datetime.utcnow)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary with ISO format timestamp"""
-        data = asdict(self)
-        data['last_updated'] = self.last_updated.isoformat()
-        return data
 
 
 @dataclass
 class AnomalyScore:
-    """Anomaly detection result"""
-    user_id: str
-    timestamp: datetime
-    score: float  # 0.0 to 1.0
-    risk_level: str  # "low", "medium", "high", "critical"
-    anomalies: List[str] = field(default_factory=list)
-    action_taken: str = "none"
-    details: Dict[str, Any] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary with ISO format timestamp"""
-        data = asdict(self)
-        data['timestamp'] = self.timestamp.isoformat()
-        return data
-
-
-class IPGeolocationMapper:
-    """Simple IP to approximate location mapper (stub using IP ranges)"""
-    
-    IP_LOCATIONS = {
-        "192.168": "Internal-Network",
-        "10.": "Internal-Network",
-        "172.16": "Internal-Network",
-        "203.0.113": "US-East",
-        "198.51.100": "US-West",
-        "192.0.2": "Europe-UK",
-        "8.8.8": "US-Google",
-        "1.1.1": "Australia",
-    }
-    
-    @classmethod
-    def get_location(cls, ip_address: str) -> str:
-        """Map IP address to approximate location"""
-        for prefix, location in cls.IP_LOCATIONS.items():
-            if ip_address.startswith(prefix):
-                return location
-        # Default based on last octet for demo purposes
-        try:
-            last_octet = int(ip_address.split('.')[-1])
-            if last_octet < 50:
-                return "US-East"
-            elif last_octet < 100:
-                return "US-West"
-            elif last_octet < 150:
-                return "Europe"
-            elif last_octet < 200:
-                return "Asia-Pacific"
-            else:
-                return "South-America"
-        except (ValueError, IndexError):
-            return "Unknown"
+    """Anomaly score for a user event."""
+    log_entry: AuditLogEntry
+    base_score: float
+    ip_anomaly: float
+    temporal_anomaly: float
+    behavioral_anomaly: float
+    volume_anomaly: float
+    total_score: float
+    severity: SeverityLevel
+    flags: List[str] = field(default_factory=list)
+    confidence: float = 0.0
 
 
 class AuditLogIngestionPipeline:
-    """Complete audit log ingestion and processing pipeline"""
+    """Complete audit log ingestion and anomaly detection pipeline."""
     
-    def __init__(self, max_logs: int = 10000):
+    def __init__(self, log_file: Optional[str] = None, batch_size: int = 100):
+        """Initialize the ingestion pipeline."""
+        self.log_file = log_file
+        self.batch_size = batch_size
         self.logs: List[AuditLogEntry] = []
-        self.user_baselines: Dict[str, UserBehaviorBaseline] = {}
-        self.anomaly_scores: List[AnomalyScore] = []
-        self.max_logs = max_logs
-        self.impossible_travel_threshold_kmh = 900  # ~speed of commercial flight
+        self.user_baselines: Dict[str, UserBehavioralBaseline] = {}
+        self.anomalies: List[AnomalyScore] = []
+        self.user_sessions: Dict[str, List[AuditLogEntry]] = defaultdict(list)
+        self.logger = self._setup_logger()
         
-    def ingest_json_logs(self, json_data: str) -> int:
-        """Ingest logs from JSON format"""
-        count = 0
-        try:
-            data = json.loads(json_data)
-            logs = data if isinstance(data, list) else [data]
-            
-            for log in logs:
-                entry = self._normalize_log_entry(log, "json")
-                if entry:
-                    self.logs.append(entry)
-                    count += 1
-                    if len(self.logs) > self.max_logs:
-                        self.logs.pop(0)
-        except json.JSONDecodeError as e:
-            print(f"Error parsing JSON: {e}", file=sys.stderr)
-        
-        return count
-    
-    def ingest_csv_logs(self, csv_data: str) -> int:
-        """Ingest logs from CSV format"""
-        count = 0
-        try:
-            lines = csv_data.strip().split('\n')
-            if not lines:
-                return count
-            
-            reader = csv.DictReader(lines)
-            for row in reader:
-                entry = self._normalize_log_entry(row, "csv")
-                if entry:
-                    self.logs.append(entry)
-                    count += 1
-                    if len(self.logs) > self.max_logs:
-                        self.logs.pop(0)
-        except Exception as e:
-            print(f"Error parsing CSV: {e}", file=sys.stderr)
-        
-        return count
-    
-    def ingest_syslog_format(self, syslog_data: str) -> int:
-        """Ingest logs from syslog-style format"""
-        count = 0
-        lines = syslog_data.strip().split('\n')
-        
-        for line in lines:
-            if not line.strip():
-                continue
-            
-            entry = self._parse_syslog_line(line)
-            if entry:
-                self.logs.append(entry)
-                count += 1
-                if len(self.logs) > self.max_logs:
-                    self.logs.pop(0)
-        
-        return count
-    
-    def _normalize_log_entry(self, raw_log: Dict[str, Any], source_type: str) -> Optional[AuditLogEntry]:
-        """Normalize various log formats to standard AuditLogEntry"""
-        try:
-            # Extract and normalize timestamp
-            timestamp_str = (
-                raw_log.get('timestamp') or 
-                raw_log.get('time') or 
-                raw_log.get('@timestamp') or
-                raw_log.get('datetime')
-            )
-            
-            if not timestamp_str:
-                return None
-            
-            timestamp = self._parse_timestamp(timestamp_str)
-            if not timestamp:
-                return None
-            
-            # Extract core fields with fallback names
-            user_id = (
-                raw_log.get('user_id') or 
-                raw_log.get('user') or 
-                raw_log.get('username') or
-                raw_log.get('uid', 'unknown')
-            )
-            
-            action = (
-                raw_log.get('action') or 
-                raw_log.get('event_type') or
-                raw_log.get('operation', 'unknown')
-            )
-            
-            resource = (
-                raw_log.get('resource') or 
-                raw_log.get('object') or
-                raw_log.get('target', 'unknown')
-            )
-            
-            ip_address = (
-                raw_log.get('ip_address') or 
-                raw_log.get('source_ip') or
-                raw_log.get('client_ip') or
-                raw_log.get('ip', 'unknown')
-            )
-            
-            user_agent = raw_log.get('user_agent') or raw_log.get('useragent', '')
-            status = raw_log.get('status') or raw_log.get('result', 'unknown')
-            session_id = raw_log.get('session_id') or raw_log.get('session', '')
-            
-            # Collect extra details
-            details = {k: v for k, v in raw_log.items() 
-                      if k not in ['timestamp', 'time', '@timestamp', 'datetime', 
-                                   'user_id', 'user', 'username', 'action', 'event_type',
-                                   'resource', 'object', 'ip_address', 'source_ip',
-                                   'user_agent', 'status', 'session_id']}
-            
-            return AuditLogEntry(
-                timestamp=timestamp,
-                user_id=str(user_id),
-                action=str(action),
-                resource=str(resource),
-                ip_address=str(ip_address),
-                user_agent=str(user_agent),
-                status=str(status),
-                details=details,
-                source_system=source_type,
-                session_id=str(session_id)
-            )
-        
-        except Exception as e:
-            print(f"Error normalizing log entry: {e}", file=sys.stderr)
-            return None
-    
-    def _parse_syslog_line(self, line: str) -> Optional[AuditLogEntry]:
-        """Parse syslog format: timestamp hostname service[pid]: message"""
-        # Example: Jan 15 10:30:45 server01 auth[1234]: user=john action=login ip=192.168.1.5
-        
-        pattern = r'(\w+ \d+ \d+:\d+:\d+)\s+(\S+)\s+(\S+)\[?(\d+)?\]?:\s+(.+)'
-        match = re.match(pattern, line)
-        
-        if not match:
-            return None
-        
-        timestamp_str, hostname, service, pid, message = match.groups()
-        
-        # Parse timestamp (add current year)
-        try:
-            timestamp = datetime.strptime(
-                f"{datetime.now().year} {timestamp_str}",
-                "%Y %b %d %H:%M:%S"
-            )
-        except ValueError:
-            return None
-        
-        # Parse key=value pairs from message
-        details = {}
-        kv_pattern = r'(\w+)=([^\s]+)'
-        for key, value in re.findall(kv_pattern, message):
-            details[key] = value
-        
-        return AuditLogEntry(
-            timestamp=timestamp,
-            user_id=details.get('user', 'unknown'),
-            action=details.get('action', 'unknown'),
-            resource=details.get('resource', 'unknown'),
-            ip_address=details.get('ip', 'unknown'),
-            user_agent=details.get('user_agent', ''),
-            status=details.get('status', 'unknown'),
-            details=details,
-            source_system='syslog',
-            session_id=details.get('session_id', '')
+    def _setup_logger(self) -> logging.Logger:
+        """Configure logging."""
+        logger = logging.getLogger(__name__)
+        handler = logging.StreamHandler(sys.stdout)
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        return logger
     
-    def _parse_timestamp(self, timestamp_str: str) -> Optional[datetime]:
-        """Parse various timestamp formats"""
-        formats = [
-            "%Y-%m-%dT%H:%M:%S.%fZ",
-            "%Y-%m-%dT%H:%M:%SZ",
-            "%Y-%m-%dT%H:%M:%S",
-            "%Y-%m-%d %H:%M:%S",
-            "%d/%b/%Y:%H:%M:%S",
-            "%Y-%m-%d %H:%M:%S.%f",
-        ]
+    def ingest_logs(self, logs: List[AuditLogEntry]) -> None:
+        """Ingest a batch of audit logs."""
+        self.logs.extend(logs)
+        self.logger.info(f"Ingested {len(logs)} audit log entries")
         
-        for fmt in formats:
-            try:
-                return datetime.strptime(timestamp_str, fmt)
-            except ValueError:
-                continue
-        
-        return None
+        # Group logs by user and session
+        for log in logs:
+            self.user_sessions[log.user_id].append(log)
     
-    def compute_user_baselines(self) -> Dict[str, UserBehaviorBaseline]:
-        """Compute behavioral baselines for all users"""
-        user_data = defaultdict(lambda: {
-            'ips': defaultdict(int),
-            'locations': defaultdict(int),
-            'login_hours': [],
-            'actions': defaultdict(int),
-            'login_count': 0,
-            'session_times': []
-        })
+    def build_baselines(self, days: int = 30) -> None:
+        """Build behavioral baselines from historical data."""
+        self.logger.info(f"Building behavioral baselines from {len(self.logs)} logs")
         
+        # Group logs by user
+        user_logs: Dict[str, List[AuditLogEntry]] = defaultdict(list)
         for log in self.logs:
-            user_key = log.user_id
-            user_data[user_key]['ips'][log.ip_address] += 1
-            
-            location = IPGeolocationMapper.get_location(log.ip_address)
-            user_data[user_key]['locations'][location] += 1
-            user_data[user_key]['login_hours'].append(log.timestamp.hour)
-            user_data[user_key]['actions'][log.action] += 1
-            
-            if log.action.lower() in ['login', 'authenticate', 'signin']:
-                user_data[user_key]['login_count'] += 1
+            user_logs[log.user_id].append(log)
         
-        # Build baselines
-        self.user_baselines = {}
-        for user_id, data in user_data.items():
-            # Most common IPs (top 5)
-            common_ips = sorted(
-                data['ips'].items(),
-                key=lambda x: x[1],
-                reverse=True
-            )[:5]
+        # Calculate baselines for each user
+        for user_id, logs in user_logs.items():
+            if not logs:
+                continue
             
-            # Most common locations
-            common_locations = sorted(
-                data['locations'].items(),
-                key=lambda x: x[1],
-                reverse=True
-            )[:3]
+            baseline = UserBehavioralBaseline(user_id=user_id)
             
-            # Typical login hours
-            typical_hours = list(set(data['login_hours']))
+            # Calculate login frequency
+            login_logs = [l for l in logs if l.event_type == EventType.LOGIN]
+            if login_logs:
+                dates = set(l.timestamp.date() for l in login_logs)
+                baseline.avg_logins_per_day = len(login_logs) / max(len(dates), 1)
             
-            # Most common actions
-            common_actions = sorted(
-                data['actions'].items(),
-                key=lambda x: x[1],
-                reverse=True
-            )[:5]
+            # Calculate events per session
+            if logs:
+                baseline.avg_events_per_session = len(logs) / max(len(set(l.session_id for l in logs)), 1)
             
-            baseline = UserBehaviorBaseline(
-                user_id=user_id,
-                common_ips=[ip for ip, count in common_ips],
-                common_locations=[loc for loc, count in common_locations],
-                typical_login_hours=sorted(typical_hours),
-                common_actions=[action for action, count in common_actions],
-                avg_daily_logins=data['login_count'] / max(1, len(set(log.timestamp.date() for log in self.logs if log.user_id == user_id))),
-                last_updated=datetime.utcnow()
-            )
+            # Extract typical IPs, user agents, and resources
+            baseline.typical_ips = set(l.ip_address for l in logs if l.ip_address)
+            baseline.typical_user_agents = set(l.user_agent for l in logs if l.user_agent)
+            baseline.typical_resources = set(l.resource_id for l in logs if l.resource_id)
+            baseline.typical_event_types = set(l.event_type for l in logs)
             
+            # Calculate download/upload frequency
+            downloads = len([l for l in logs if l.event_type == EventType.FILE_DOWNLOAD])
+            uploads = len([l for l in logs if l.event_type == EventType.FILE_UPLOAD])
+            baseline.download_frequency = downloads / max(len(logs), 1)
+            baseline.upload_frequency = uploads / max(len(logs), 1)
+            
+            # Extract active hours from login times
+            if login_logs:
+                hours = [l.timestamp.hour for l in login_logs]
+                if hours:
+                    baseline.active_hours = (min(hours), max(hours))
+            
+            baseline.last_updated = datetime.utcnow()
             self.user_baselines[user_id] = baseline
         
-        return self.user_baselines
+        self.logger.info(f"Built baselines for {len(self.user_baselines)} users")
     
-    def compute_anomaly_scores(self) -> List[AnomalyScore]:
-        """Compute anomaly scores for all logs"""
-        if not self.user_baselines:
-            self.compute_user_baselines()
-        
-        self.anomaly_scores = []
-        user_sessions = defaultdict(list)
-        
-        # Group logs by user and time for session analysis
-        for log in self.logs:
-            user_sessions[log.user_id].append(log)
-        
-        for log in self.logs:
-            baseline = self.user_baselines.get(log.user_id)
-            if not baseline:
-                baseline = UserBehaviorBaseline(user_id=log.user_id)
-            
-            score = 0.0
-            anomalies = []
-            
-            # Check 1: Impossible travel detection
-            travel_anomaly = self._detect_impossible_travel(log.user_id, log)
-            if travel_anomaly:
-                score += 0.4
-                anomalies.append(f"Impossible travel: {travel_anomaly}")
-            
-            # Check 2: Uncommon IP address
-            if log.ip_address not in baseline.common_ips and baseline.common_ips:
-                score += 0.2
-                anomalies.append(f"New IP address: {log.ip_address}")
-            
-            # Check 3: Off-hours login
-            if baseline.typical_login_hours and log.timestamp.hour not in baseline.typical_login_hours:
-                if log.action.lower() in ['login', 'authenticate', 'signin']:
-                    score += 0.15
-                    anomalies.append(f"Off-hours login at {log.timestamp.hour}:00")
-            
-            # Check 4: Unusual action
-            if log.action not in baseline.common_actions and baseline.common_actions:
-                score += 0.1
-                anomalies.append(f"Unusual action: {log.action}")
-            
-            # Check 5: Resource access anomaly (high risk resources)
-            high_risk_resources = ['admin', 'config', 'secret', 'password', 'credentials']
-            if any(res in log.resource.lower() for res in high_risk_resources):
-                if log.action.lower() in ['read', 'access', 'download', 'export']:
-                    score += 0.15
-                    anomalies.append(f"High-risk resource access: {log.resource}")
-            
-            # Check 6: Failed authentication attempts
-            if log.status.lower() in ['failed', 'denied', 'unauthorized', 'error']:
-                if log.action.lower() in ['login', 'authenticate']:
-                    score += 0.1
-                    anomalies.append("Failed authentication attempt")
-            
-            # Clamp score to 0.0-1.0
-            score = min(1.0, max(0.0, score))
-            
-            # Determine risk level
-            if score >= 0.7:
-                risk_level = "critical"
-                action_taken = "block_and_alert"
-            elif score >= 0.5:
-                risk_level = "high"
-                action_taken = "alert_and_monitor"
-            elif score >= 0.3:
-                risk_level = "medium"
-                action_taken = "monitor"
-            else:
-                risk_level = "low"
-                action_taken = "none"
-            
-            anomaly_score = AnomalyScore(
-                user_id=log.user_id,
-                timestamp=log.timestamp,
-                score=round(score, 3),
-                risk_level=risk_level,
-                anomalies=anomalies,
-                action_taken=action_taken,
-                details={
-                    'ip_address': log.ip_address,
-                    'action': log.action,
-                    'resource': log.resource,
-                    'status': log.status
-                }
-            )
-            
-            self.anomaly_scores.append(anomaly_score)
-        
-        return self.anomaly_scores
-    
-    def _detect_impossible_travel(self, user_id: str, current_log: AuditLogEntry) -> Optional[str]:
-        """Detect impossible travel between two locations"""
-        # Find previous login for this user within last hour
-        user_logs = [log for log in self.logs 
-                    if log.user_id == user_id 
-                    and log.timestamp < current_log.timestamp]
+    def _detect_impossible_travel(self, user_id: str, log: AuditLogEntry) -> Tuple[bool, float]:
+        """Detect impossible travel (geographically impossible movements)."""
+        user_logs = [l for l in self.user_sessions[user_id] 
+                     if l.timestamp < log.timestamp]
         
         if not user_logs:
-            return None
+            return False, 0.0
         
-        previous_log = max(user_logs, key=lambda x: x.timestamp)
-        time_diff = (current_log.timestamp - previous_log.timestamp).total_seconds() / 3600
+        # Simple IP-based heuristic: different IPs with minimal time difference
+        prev_log = user_logs[-1]
+        time_diff = (log.timestamp - prev_log.timestamp).total_seconds() / 3600
         
-        if time_diff < 0.1:  # Less than 6 minutes
-            return None
+        # If different IP and less than 1 hour apart, flag as suspicious
+        if prev_log.ip_address != log.ip_address and time_diff < 1.0:
+            score = min(0.8, 0.1 + (1.0 - time_diff / 24.0))
+            return True, score
         
-        if previous_log.ip_address == current_log.ip_address:
-            return None
-        
-        prev_location = IPGeolocationMapper.get_location(previous_log.ip_address)
-        curr_location = IPGeolocationMapper.get_location(current_log.ip_address)
-        
-        if prev_location == curr_location:
-            return None
-        
-        # Estimate distance (simplified)
-        distance = self._estimate_distance(prev_location, curr_location)
-        required_speed = distance / time_diff if time_diff > 0 else float('inf')
-        
-        if required_speed > self.impossible_travel_threshold_kmh:
-            return f"From {prev_location} to {curr_location} in {time_diff:.2f} hours (requires {required_speed:.0f} km/h)"
-        
-        return None
+        return False, 0.0
     
-    def _estimate_distance(self, location1: str, location2: str) -> float:
-        """Estimate distance between locations in kilometers"""
-        location_coords = {
-            'Internal-Network': (0, 0),
-            'US-East': (40.7128, -74.0060),  # NYC
-            'US-West': (37.7749, -122.4194),  # SF
-            'Europe-UK': (51.5074, -0.1278),  # London
-            'Europe': (48.8566, 2.3522),  # Paris
-            'Asia-Pacific': (35.6762, 139.6503),  # Tokyo
-            'Australia': (-33.8688, 151.2093),  # Sydney
-            'South-America': (-23.5505, -46.6333),  # São Paulo
-            'US-Google': (37.4419, -122.1430),  # Google HQ
-        }
-        
-        if location1 not in location_coords or location2 not in location_coords:
-            return random.uniform(500, 5000)
-        
-        lat1, lon1 = location_coords[location1]
-        lat2, lon2 = location_coords[location2]
-        
-        # Haversine formula (simplified)
-        dlat = math.radians(lat2 - lat1)
-        dlon = math.radians(lon2 - lon1)
-        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
-        c = 2 * math.asin(math.sqrt(a))
-        radius_km = 6371
-        
-        return radius_km * c
+    def _calculate_ip_anomaly(self, user_id: str, log: AuditLogEntry) -> float:
+        """Calculate IP-based anomaly score."""
+        baseline = self.user_baselines.get(user_id)
+        if not baseline or log.ip_address not in baseline.typical_ips:
+            return 0.5
+        return 0.0
     
-    def get_summary(self) -> Dict[str, Any]:
-        """Get ingestion and analysis summary"""
-        return {
-            'total_logs_ingested': len(self.logs),
-            'unique_users': len(set(log.user_id for log in self.logs)),
-            'unique_ips': len(set(log.ip_address for log in self.logs)),
-            'logs_by_source': {
-                'json': len([log for log in self.logs if log.source_system == 'json']),
-                'csv': len([log for log in self.logs if log.source_system == 'csv']),
-                'syslog': len([log for log in self.logs if log.source_system == 'syslog']),
-            },
-            'baseline_users': len(self.user_baselines),
-            'anomaly_scores_computed': len(self.anomaly_scores),
-            'high_risk_events': len([a for a in self.anomaly_scores if a.risk_level in ['high', 'critical']]),
-            'time_range': {
-                'earliest': min([log.timestamp for log in self.logs]).isoformat() if self.logs else None,
-                'latest': max([log.timestamp for log in self.logs]).isoformat() if self.logs else None,
+    def _calculate_temporal_anomaly(self, user_id: str, log: AuditLogEntry) -> float:
+        """Calculate temporal (time-based) anomaly score."""
+        baseline = self.user_baselines.get(user_id)
+        if not baseline:
+            return 0.1
+        
+        hour = log.timestamp.hour
+        active_start, active_end = baseline.active_hours
+        
+        if hour < active_start or hour > active_end:
+            out_of_hours_deviation = min(
+                abs(hour - active_start),
+                abs(hour - active_end)
+            ) / 12.0
+            return min(0.6, out_of_hours_deviation)
+        
+        return 0.0
+    
+    def _calculate_behavioral_anomaly(self, user_id: str, log: AuditLogEntry) -> float:
+        """Calculate behavioral anomaly score."""
+        baseline = self.user_baselines.get(user_id)
+        if not baseline:
+            return 0.1
+        
+        score = 0.0
+        
+        # Check if event type is typical
+        if log.event_type not in baseline.typical_event_types:
+            score += 0.2
+        
+        # Check if user agent is typical
+        if log.user_agent not in baseline.typical_user_agents:
+            score += 0.15
+        
+        # Check resource access pattern
+        if log.resource_id not in baseline.typical_resources:
+            score += 0.15
+        
+        return min(1.0, score)
+    
+    def _calculate_volume_anomaly(self, user_id: str, log: AuditLogEntry) -> float:
+        """Calculate volume-based anomaly score."""
+        baseline = self.user_baselines.get(user_id)
+        if not baseline:
+            return 0.0
+        
+        # Count events in last hour
+        now = log.timestamp
+        recent_logs = [
+            l for l in self.user_sessions[user_id]
+            if (now - l.timestamp).total_seconds() < 3600
+        ]
+        
+        expected_hourly = baseline.avg_events_per_session * baseline.avg_logins_per_day
+        actual_hourly = len(recent_logs)
+        
+        if expected_hourly > 0:
+            ratio = actual_hourly / expected_hourly
+            if ratio > 3:
+                return min(0.7, (ratio - 1) / 10.0)
+        
+        return 0.0
+    
+    def score_anomalies(self) -> None:
+        """Score all ingested logs for anomalies."""
+        self.logger.info(f"Scoring {len(self.logs)} logs for anomalies")
+        self.anomalies = []
+        
+        for log in self.logs:
+            # Ensure user has a baseline
+            if log.user_id not in self.user_baselines:
+                baseline = UserBehavioralBaseline(user_id=log.user_id)
+                self.user_baselines[log.user_id] = baseline
+            
+            # Initialize scores
+            base_score = 0.0
+            flags = []
+            
+            # Impossible travel detection
+            impossible_travel, travel_score = self._detect_impossible_travel(log.user_id, log)
+            if impossible_travel:
+                base_score += travel_score
+                flags.append("impossible_travel_detected")
+            
+            # IP anomaly
+            ip_anomaly = self._calculate_ip_anomaly(log.user_id, log)
+            base_score += ip_anomaly * 0.2
+            
+            # Temporal anomaly
+            temporal_anomaly = self._calculate_temporal_anomaly(log.user_id, log)
+            base_score += temporal_anomaly * 0.15
+            
+            # Behavioral anomaly
+            behavioral_anomaly = self._calculate_behavioral_anomaly(log.user_id, log)
+            base_score += behavioral_anomaly * 0.35
+            
+            # Volume anomaly
+            volume_anomaly = self._calculate_volume_anomaly(log.user_id, log)
+            base_score += volume_anomaly * 0.3
+            
+            # Check for sensitive operations
+            sensitive_events = {
+                EventType.PERMISSION_CHANGE,
+                EventType.PASSWORD_CHANGE,
+                EventType.MFA_DISABLE,
+                EventType.API_KEY_CREATION,
             }
+            if log.event_type in sensitive_events:
+                base_score += 0.1
+                flags.append(f"sensitive_operation_{log.event_type.value}")
+            
+            # Check for failed status
+            if log.status != "success":
+                base_score += 0.05
+                flags.append(f"failed_operation_{log.status}")
+            
+            # Determine severity
+            total_score = min(1.0, base_score)
+            if total_score >= 0.8:
+                severity = SeverityLevel.CRITICAL
+            elif total_score >= 0.6:
+                severity = SeverityLevel.HIGH
+            elif total_score >= 0.4:
+                severity = SeverityLevel.MEDIUM
+            else:
+                severity = SeverityLevel.LOW
+            
+            anomaly = AnomalyScore(
+                log_entry=log,
+                base_score=base_score,
+                ip_anomaly=ip_anomaly,
+                temporal_anomaly=temporal_anomaly,
+                behavioral_anomaly=behavioral_anomaly,
+                volume_anomaly=volume_anomaly,
+                total_score=total_score,
+                severity=severity,
+                flags=flags,
+                confidence=min(1.0, base_score + 0.1),
+            )
+            self.anomalies.append(anomaly)
+        
+        self.logger.info(f"Scored {len(self.anomalies)} logs, "
+                        f"found {len([a for a in self.anomalies if a.severity in [SeverityLevel.HIGH, SeverityLevel.CRITICAL]])} "
+                        f"high/critical anomalies")
+    
+    def get_high_risk_events(self, threshold: float = 0.6) -> List[AnomalyScore]:
+        """Get events above risk threshold."""
+        return [a for a in self.anomalies if a.total_score >= threshold]
+    
+    def export_results(self, output_file: str) -> None:
+        """Export analysis results to JSON file."""
+        results = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "total_logs_processed": len(self.logs),
+            "total_users": len(self.user_baselines),
+            "total_anomalies_detected": len(self.anomalies),
+            "high_risk_count": len(self.get_high_risk_events(threshold=0.6)),
+            "critical_count": len([a for a in self.anomalies if a.severity == SeverityLevel.CRITICAL]),
+            "baselines": {
+                user_id: {
+                    "avg_logins_per_day": baseline.avg_logins_per_day,
+                    "avg_events_per_session": baseline.avg_events_per_session,
+                    "typical_ips_count": len(baseline.typical_ips),
+                    "active_hours": baseline.active_hours,
+                }
+                for user_id, baseline in self.user_baselines.items()
+            },
+            "high_risk_events": [
+                {
+                    "log": a.log_entry.to_dict(),
+                    "anomaly_score": a.total_score,
+                    "severity": a.severity.value,
+                    "flags": a.flags,
+                    "confidence": a.confidence,
+                }
+                for a in sorted(self.get_high_risk_events(), 
+                               key=lambda x: x.total_score, reverse=True)[:50]
+            ]
         }
+        
+        with open(output_file, 'w') as f:
+            json.dump(results, f, indent=2)
+        
+        self.logger.info(f"Exported results to {output_file}")
     
-    def export_logs_json(self) -> str:
-        """Export normalized logs as JSON"""
-        return json.dumps([log.to_dict() for log in self.logs], indent=2)
-    
-    def export_baselines_json(self) -> str:
-        """Export user baselines as JSON"""
-        return json.dumps([baseline.to_dict() for baseline in self.user_baselines.values()], indent=2)
-    
-    def export_anomalies_json(self) -> str:
-        """Export anomaly scores as JSON"""
-        return json.dumps([score.to_dict() for score in self.anomaly_scores], indent=2)
+    def print_summary(self) -> None:
+        """Print summary of analysis."""
+        print("\n" + "="*80)
+        print("AUDIT LOG INGESTION PIPELINE SUMMARY")
+        print("="*80)
+        print(f"Total logs processed: {len(self.logs)}")
+        print(f"Total users analyzed: {len(self.user_baselines)}")
+        print(f"Total anomalies detected: {len(self.anomalies)}")
+        
+        severity_counts = {
+            SeverityLevel.CRITICAL: len([a for a in self.anomalies if a.severity == SeverityLevel.CRITICAL]),
+            SeverityLevel.HIGH: len([a for a in self.anomalies if a.severity == SeverityLevel.HIGH]),
+            SeverityLevel.MEDIUM: len([a for a in self.anomalies if a.severity == SeverityLevel.MEDIUM]),
+            SeverityLevel.LOW: len([a for a in self.anomalies if a.severity == SeverityLevel.LOW]),
+        }
+        
+        print("\nAnomaly Severity Distribution:")
+        for severity, count in severity_counts.items():
+            print(f"  {severity.value.upper()}: {count}")
+        
+        high_risk = self.get_high_risk_events(threshold=0.6)
+        if high_risk:
+            print(f"\nTop 5 High-Risk Events:")
+            for i, anomaly in enumerate(sorted(high_risk, key=lambda x: x.total_score, reverse=True)[:5], 1):
+                print(f"  {i}. User: {anomaly.log_entry.user_id}, "
+                      f"Event: {anomaly.log_entry.event_type.value}, "
+                      f"Score: {anomaly.total_score:.3f}, "
+                      f"Flags: {', '.join(anomaly.flags)}")
+        
+        print("\n" + "="*80)
 
 
-def generate_sample_audit_logs() -> Tuple[str, str, str]:
-    """Generate sample audit logs in multiple formats"""
-    base_time = datetime.utcnow()
+def generate_sample_logs(num_logs: int = 500, num_users: int = 20) -> List[AuditLogEntry]:
+    """Generate sample audit logs for demonstration."""
+    logs = []
+    event_types = list(EventType)
+    now = datetime.utcnow()
     
-    # JSON format logs
-    json_logs = []
-    users = ['alice', 'bob', 'charlie', 'david']
-    ips = [
-        '192.168.1.10', '192.168.1.20', '192.168.1.30',
-        '203.0.113.45', '203.0.113.100', '198.51.100.15'
-    ]
-    actions = ['login', 'logout', 'read', 'write', 'delete', 'admin_access']
-    resources = ['config.db', 'user_data.csv', 'admin_panel', 'api_key', 'document_123']
-    
-    for i in range(15):
-        json_logs.append({
-            'timestamp': (base_time - timedelta(minutes=15-i)).isoformat() + 'Z',
-            'user_id': users[i % len(users)],
-            'action': actions[i % len(actions)],
-            'resource': resources[i % len(resources)],
-            'ip_address': ips[i % len(ips)],
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-            'status': 'success' if i % 5 != 0 else 'failed',
-            'session_id': f'sess_{hashlib.md5(f"{users[i % len(users)]}{i}".encode()).hexdigest()[:16]}'
-        })
-    
-    json_str = json.dumps(json_logs)
-    
-    # CSV format logs
-    csv_lines = [
-        'timestamp,user,action,resource,ip_address,user_agent,status'
-    ]
-    for i in range(10):
-        csv_lines.append(
-            f'{(base_time - timedelta(minutes=10-i)).isoformat()},'
-            f'{users[i % len(users)]},'
-            f'{actions[i % len(actions)]},'
-            f'{resources[i % len(resources)]},'
-            f'{ips[(i+1) % len(ips)]},'
-            f'Mozilla/5.0,'
-            f'{"success" if i % 4 != 0 else "failed"}'
+    for _ in range(num_logs):
+        user_id = f"user_{random.randint(1, num_users)}"
+        timestamp = now - timedelta(hours=random.randint(0, 168))
+        event_type = random.choice(event_types)
+        
+        # Generate realistic IPs (some repeated, some new)
+        if random.random() < 0.8:
+            ip_address = f"192.168.{random.randint(1, 5)}.{random.randint(1, 254)}"
+        else:
+            ip_address = f"{random.randint(100, 200)}.{random.randint(1, 254)}.{random.randint(1, 254)}.{random.randint(1, 254)}"
+        
+        user_agent = random.choice([
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+            "Mozilla/5.0 (X11; Linux x86_64)",
+        ])
+        
+        status = "success" if random.random() < 0.95 else random.choice(["failed", "unauthorized"])
+        session_id = f"session_{hash(user_id + str(timestamp.date())) % 1000}"
+        
+        log = AuditLogEntry(
+            timestamp=timestamp,
+            user_id=user_id,
+            event_type=event_type,
+            resource_id=f"resource_{random.randint(1, 100)}",
+            resource_type=random.choice(["file", "database", "api", "configuration"]),
+            action=f"action_{event_type.value}",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            status=status,
+            session_id=session_id,
+            details={
+                "duration_ms": random.randint(100, 5000),
+                "data_size_bytes": random.randint(0, 1000000),
+            }
         )
+        logs.append(log)
     
-    csv_str = '\n'.join(csv_lines)
-    
-    # Syslog format logs
-    syslog_lines = []
-    for i in range(10):
-        ts = (base_time - timedelta(minutes=5-i))
-        syslog_lines.append(
-            f'{ts.strftime("%b %d %H:%M:%S")} server01 auth[1234]: '
-            f'user={users[i % len(users)]} action={actions[i % len(actions)]} '
-            f'resource={resources[i % len(resources)]} ip={ips[(i+2) % len(ips)]} '
-            f'status={"success" if i % 3 != 0 else "failed"}'
-        )
-    
-    syslog_str = '\n'.join(syslog_lines)
-    
-    # Add one impossible travel scenario
-    alice_logs = [log for log in json_logs if log['user_id'] == 'alice']
-    if alice_logs:
-        alice_logs[-1]['ip_address'] = '1.1.1.100'  # Australia
-        if len(alice_logs) > 1:
-            alice_logs[-2]['ip_address'] = '203.0.113.45'  # US-East
-            # Make time difference small for impossible travel
-            base = datetime.fromisoformat(alice_logs[-2]['timestamp'].replace('Z', '+00:00'))
-            alice_logs[-1]['timestamp'] = (base + timedelta(minutes=15)).isoformat() + 'Z'
-    
-    json_str = json.dumps(json_logs)
-    
-    return json_str, csv_str, syslog_str
+    return sorted(logs, key=lambda x: x.timestamp)
 
 
 def main():
-    """Main entry point"""
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description='SaaS Audit Log Ingestion and Breach Detection Pipeline'
+        description="SaaS Audit Log Ingestion Pipeline for Breach Detection"
     )
-    
     parser.add_argument(
-        '--input-format',
-        choices=['json', 'csv', 'syslog', 'auto', 'demo'],
-        default='demo',
-        help='Input log format (demo generates sample data)'
-    )
-    
-    parser.add_argument(
-        '--input-file',
+        "--log-file",
         type=str,
-        help='Path to input log file'
+        help="Path to audit log file (JSON lines format)",
+        default=None
     )
-    
     parser.add_argument(
-        '--output-dir',
+        "--output-file",
         type=str,
-        default='./breach_detection_output',
-        help='Output directory for results'
+        default="anomaly_report.json",
+        help="Output file for anomaly analysis results"
     )
-    
     parser.add_argument(
-        '--max-logs',
+        "--batch-size",
         type=int,
-        default=10000,
-        help='Maximum logs to process'
+        default=100,
+        help="Batch size for log processing"
     )
-    
     parser.add_argument(
-        '--compute-baselines',
-        action='store_true',
-        help='Compute user behavioral baselines'
+        "--num-sample-logs",
+        type=int,
+        default=500,
+        help="Number of sample logs to generate (if not reading from file)"
     )
-    
     parser.add_argument(
-        '--compute-anomalies',
-        action='store_true',
-        help='Compute anomaly scores for all logs'
+        "--num-users",
+        type=int,
+        default=20,
+        help="Number of users to generate in sample data"
     )
-    
     parser.add_argument(
-        '--export-logs',
-        action='store_true',
-        help='Export normalized logs to JSON'
-    )
-    
-    parser.add_argument(
-        '--export-baselines',
-        action='store_true',
-        help='Export user baselines to JSON'
-    )
-    
-    parser.add_argument(
-        '--export-anomalies',
-        action='store_true',
-        help='Export anomaly scores to JSON'
-    )
-    
-    parser.add_argument(
-        '--show-summary',
-        action='store_true',
-        default=True,
-        help='Show processing summary'
+        "--anomaly-threshold",
+        type=float,
+        default=0.6,
+        help="Threshold for flagging high-risk anomalies (0.0-1.0)"
     )
     
     args = parser.parse_args()
     
     # Initialize pipeline
-    pipeline = AuditLogIngestionPipeline(max_logs=args.max_logs)
+    pipeline = AuditLogIngestionPipeline(
+        log_file=args.log_file,
+        batch_size=args.batch_size
+    )
+    
+    # Generate or load sample logs
+    if args.log_file:
+        # Load from file
+        logs = []
+        with open(args.log_file, 'r') as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                    log = AuditLogEntry(
+                        timestamp=datetime.fromisoformat(data['timestamp']),
+                        user_id=data['user_id'],
+                        event_type=EventType[data['event_type'].upper()],
+                        resource_id=data['resource_id'],
+                        resource_type=data['resource_type'],
+                        action=data['action'],
+                        ip_address=data['ip_address'],
+                        user_agent=data['user_agent'],
+                        status=data['status'],
+                        session_id=data.get('session_id'),
+                        details=data.get('details', {}),
+                    )
+                    logs.append(log)
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    continue
+        pipeline.logger.info(f"Loaded {len(logs)} logs from {args.log_file}")
+    else:
+        # Generate sample logs
+        logs = generate_sample_logs(
+            num_logs=args.num_sample_logs,
+            num_users=args.num_users
+        )
+        pipeline.logger.info(f"Generated {len(logs)} sample logs")
     
     # Ingest logs
-    print("[*] Starting audit log ingestion pipeline...", file=sys.stderr)
+    pipeline.ingest_logs(logs)
     
-    if args.input_format == 'demo':
-        print("[*] Generating demo audit logs...", file=sys.stderr)
-        json_data, csv_data, syslog_data = generate_sample_audit_logs()
-        
-        print(f"[+] Ingesting JSON logs...", file=sys.stderr)
-        json_count = pipeline.ingest_json_logs(json_data)
-        print(f"    Ingested {json_count} JSON logs", file=sys.stderr)
-        
-        print(f"[+] Ingesting CSV logs...", file=sys.stderr)
-        csv_count = pipeline.ingest_csv_logs(csv_data)
-        print(f"    Ingested {csv_count} CSV logs", file=sys.stderr)
-        
-        print(f"[+] Ingesting syslog format logs...", file=sys.stderr)
-        syslog_count = pipeline.ingest_syslog_logs(syslog_data)
-        print(f"    Ingested {syslog_count} syslog logs", file=sys.stderr)
+    # Build behavioral baselines
+    pipeline.build_baselines(days=30)
     
-    elif args.input_file:
-        print(f"[*] Reading input from {args.input_file}...", file=sys.stderr)
-        try:
-            with open(args.input_file, 'r') as f:
-                data = f.read()
-            
-            if args.input_format == 'json':
-                count = pipeline.ingest_json_logs(data)
-                print(f"[+] Ingested {count} JSON logs", file=sys.stderr)
-            elif args.input_format == 'csv':
-                count = pipeline.ingest_csv_logs(data)
-                print(f"[+] Ingested {count} CSV logs", file=sys.stderr)
-            elif args.input_format == 'syslog':
-                count = pipeline.ingest_syslog_logs(data)
-                print(f"[+] Ingested {count} syslog logs", file=sys.stderr
+    # Score anomalies
+    pipeline.score_anomalies()
+    
+    # Export results
+    pipeline.export_results(args.output_file)
+    
+    # Print summary
+    pipeline.print_summary()
+    
+    # Print detailed report
+    print("\nDETAILED HIGH-RISK ANOMALIES:")
+    print("-" * 80)
+    high_risk = pipeline.get_high_risk_events(threshold=args.anomaly_threshold)
+    for anomaly in sorted(high_risk, key=lambda x: x.total_score, reverse=True)[:10]:
+        print(f"\nUser: {anomaly.log_entry.user_id}")
+        print(f"Event Type: {anomaly.log_entry.event_type.value}")
+        print(f"Timestamp: {anomaly.log_entry.timestamp.isoformat()}")
+        print(f"IP Address: {anomaly.log_entry.ip_address}")
+        print(f"Resource: {anomaly.log_entry.resource_id} ({anomaly.log_entry.resource_type})")
+        print(f"Status: {anomaly.log_entry.status}")
+        print(f"Anomaly Score: {anomaly.total_score:.3f}")
+        print(f"Severity: {anomaly.severity.value.upper()}")
+        print(f"Confidence: {anomaly.confidence:.3f}")
+        print(f"Flags: {', '.join(anomaly.flags)}")
+        print(f"  - IP Anomaly: {anomaly.ip_anomaly:.3f}")
+        print(f"  - Temporal Anomaly: {anomaly.temporal_anomaly:.3f}")
+        print(f"  - Behavioral Anomaly: {anomaly.behavioral_anomaly:.3f}")
+        print(f"  - Volume Anomaly: {anomaly.volume_anomaly:.3f}")
+
+
+if __name__ == "__main__":
+    main()
