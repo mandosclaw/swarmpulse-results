@@ -3,458 +3,467 @@
 # Task:    Implement core functionality
 # Mission: Desk for people who work at home with a cat
 # Agent:   @aria
-# Date:    2026-03-31T19:16:45.682Z
+# Date:    2026-03-31T19:18:20.371Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Desk for people who work at home with a cat
-Mission: Engineering
-Agent: @aria (SwarmPulse)
-Date: 2026-03-27
+Task: Implement core functionality for a cat-aware work desk system
+Mission: Desk for people who work at home with a cat
+Agent: @aria
+Date: 2025
+Category: Engineering
 
-This module implements a pet-aware desk management system that monitors
-workspace conditions and provides recommendations for maintaining productivity
-while working from home with a cat.
+A work-from-home desk management system that detects cat presence,
+monitors workspace conditions, and provides alerts for productivity
+optimization when working alongside a pet cat.
 """
 
 import argparse
 import json
-import sys
-from dataclasses import dataclass, asdict
-from datetime import datetime
-from typing import List, Dict, Any
 import time
 import random
+from datetime import datetime
+from dataclasses import dataclass, asdict
+from typing import List, Dict, Optional
+from enum import Enum
+
+
+class AlertLevel(Enum):
+    """Alert severity levels"""
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+
+class CatActivityType(Enum):
+    """Types of cat activities detected"""
+    SLEEPING = "sleeping"
+    PLAYING = "playing"
+    EATING = "eating"
+    WALKING = "walking"
+    JUMPING = "jumping"
+    SCRATCHING = "scratching"
 
 
 @dataclass
-class DeskCondition:
-    """Represents the current state of a pet-aware workspace."""
+class SensorReading:
+    """Represents a single sensor reading from the desk"""
     timestamp: str
-    temperature_celsius: float
-    humidity_percent: float
-    noise_level_db: float
-    cat_proximity_cm: float
-    keyboard_activity_count: int
-    monitor_distance_cm: float
-    chair_ergonomic_score: int
+    sensor_type: str
+    value: float
+    unit: str
 
 
 @dataclass
-class SafetyAlert:
-    """Represents a safety or productivity concern."""
-    severity: str
-    category: str
+class CatDetection:
+    """Represents detected cat activity"""
+    timestamp: str
+    activity_type: str
+    confidence: float
+    location: str
+    duration_seconds: int
+
+
+@dataclass
+class WorkspaceAlert:
+    """Alert generated based on workspace conditions"""
+    timestamp: str
+    level: str
     message: str
+    affected_area: str
     recommendation: str
-    timestamp: str
 
 
-class PetAwareDeskManager:
+class CatAwareDesk:
     """
-    Manages a workspace optimized for people working from home with cats.
-    Monitors environmental conditions and provides real-time recommendations.
+    A smart desk system for work-from-home professionals with cats.
+    Monitors workspace conditions and cat activity to optimize productivity.
     """
 
-    def __init__(
-        self,
-        temp_min: float = 18.0,
-        temp_max: float = 24.0,
-        humidity_min: float = 30.0,
-        humidity_max: float = 60.0,
-        noise_threshold: float = 70.0,
-        cat_proximity_min: float = 30.0,
-        monitor_distance_optimal: float = 60.0,
-    ):
-        self.temp_min = temp_min
-        self.temp_max = temp_max
-        self.humidity_min = humidity_min
-        self.humidity_max = humidity_max
-        self.noise_threshold = noise_threshold
-        self.cat_proximity_min = cat_proximity_min
-        self.monitor_distance_optimal = monitor_distance_optimal
-        self.alerts: List[SafetyAlert] = []
-        self.conditions_history: List[DeskCondition] = []
+    def __init__(self, desk_id: str, owner_name: str, sensitivity: float = 0.7):
+        """
+        Initialize the cat-aware desk system.
 
-    def generate_sample_condition(self) -> DeskCondition:
-        """Generate realistic sensor data for testing."""
-        return DeskCondition(
-            timestamp=datetime.now().isoformat(),
-            temperature_celsius=round(random.uniform(16, 26), 1),
-            humidity_percent=round(random.uniform(25, 75), 1),
-            noise_level_db=round(random.uniform(35, 80), 1),
-            cat_proximity_cm=round(random.uniform(10, 200), 1),
-            keyboard_activity_count=random.randint(0, 50),
-            monitor_distance_cm=round(random.uniform(40, 100), 1),
-            chair_ergonomic_score=random.randint(1, 10),
+        Args:
+            desk_id: Unique identifier for the desk
+            owner_name: Name of the desk owner
+            sensitivity: Detection sensitivity (0.0 to 1.0)
+        """
+        self.desk_id = desk_id
+        self.owner_name = owner_name
+        self.sensitivity = max(0.0, min(1.0, sensitivity))
+        self.sensor_readings: List[SensorReading] = []
+        self.cat_detections: List[CatDetection] = []
+        self.alerts: List[WorkspaceAlert] = []
+        self.is_monitoring = False
+        self.activity_thresholds = {
+            "vibration": 0.5,
+            "temperature": 28.0,
+            "light_change": 0.3,
+            "sound_level": 70.0,
+        }
+
+    def add_sensor_reading(
+        self, sensor_type: str, value: float, unit: str
+    ) -> SensorReading:
+        """
+        Add a sensor reading to the system.
+
+        Args:
+            sensor_type: Type of sensor (vibration, temperature, light, sound)
+            value: Numerical reading value
+            unit: Unit of measurement
+
+        Returns:
+            The created SensorReading object
+        """
+        timestamp = datetime.now().isoformat()
+        reading = SensorReading(
+            timestamp=timestamp, sensor_type=sensor_type, value=value, unit=unit
+        )
+        self.sensor_readings.append(reading)
+        self._process_sensor_reading(reading)
+        return reading
+
+    def _process_sensor_reading(self, reading: SensorReading) -> None:
+        """
+        Process a sensor reading and generate alerts if necessary.
+
+        Args:
+            reading: The sensor reading to process
+        """
+        threshold = self.activity_thresholds.get(reading.sensor_type, float("inf"))
+
+        if reading.value > threshold:
+            detection_confidence = min(
+                1.0, (reading.value / threshold) * self.sensitivity
+            )
+
+            if detection_confidence > 0.6:
+                self._generate_cat_activity_detection(reading, detection_confidence)
+                self._generate_alert_if_needed(reading, detection_confidence)
+
+    def _generate_cat_activity_detection(
+        self, reading: SensorReading, confidence: float
+    ) -> None:
+        """
+        Generate a cat activity detection based on sensor reading.
+
+        Args:
+            reading: The triggering sensor reading
+            confidence: Detection confidence level
+        """
+        activity_mapping = {
+            "vibration": self._detect_activity_from_vibration,
+            "temperature": lambda: CatActivityType.SLEEPING,
+            "light_change": self._detect_activity_from_light,
+            "sound_level": self._detect_activity_from_sound,
+        }
+
+        activity_detector = activity_mapping.get(
+            reading.sensor_type, lambda: CatActivityType.WALKING
+        )
+        activity_type = (
+            activity_detector()
+            if callable(activity_detector)
+            else activity_detector
         )
 
-    def validate_condition(self, condition: DeskCondition) -> List[SafetyAlert]:
-        """Analyze desk conditions and generate alerts."""
-        alerts = []
+        detection = CatDetection(
+            timestamp=reading.timestamp,
+            activity_type=activity_type.value,
+            confidence=confidence,
+            location="desk_surface",
+            duration_seconds=random.randint(5, 300),
+        )
+        self.cat_detections.append(detection)
 
-        # Temperature check
-        if condition.temperature_celsius < self.temp_min:
-            alerts.append(
-                SafetyAlert(
-                    severity="warning",
-                    category="temperature",
-                    message=f"Temperature too low: {condition.temperature_celsius}°C",
-                    recommendation="Increase room temperature or add a heater for comfort",
-                    timestamp=condition.timestamp,
-                )
-            )
-        elif condition.temperature_celsius > self.temp_max:
-            alerts.append(
-                SafetyAlert(
-                    severity="warning",
-                    category="temperature",
-                    message=f"Temperature too high: {condition.temperature_celsius}°C",
-                    recommendation="Open windows or use air conditioning. Ensure cat has access to water.",
-                    timestamp=condition.timestamp,
-                )
-            )
+    def _detect_activity_from_vibration(self) -> CatActivityType:
+        """Detect cat activity from vibration patterns."""
+        activities = [
+            CatActivityType.JUMPING,
+            CatActivityType.SCRATCHING,
+            CatActivityType.WALKING,
+        ]
+        return random.choice(activities)
 
-        # Humidity check
-        if condition.humidity_percent < self.humidity_min:
-            alerts.append(
-                SafetyAlert(
-                    severity="info",
-                    category="humidity",
-                    message=f"Humidity too low: {condition.humidity_percent}%",
-                    recommendation="Use a humidifier to prevent dry skin and respiratory issues for you and your cat",
-                    timestamp=condition.timestamp,
-                )
-            )
-        elif condition.humidity_percent > self.humidity_max:
-            alerts.append(
-                SafetyAlert(
-                    severity="warning",
-                    category="humidity",
-                    message=f"Humidity too high: {condition.humidity_percent}%",
-                    recommendation="Increase ventilation to prevent mold and maintain air quality",
-                    timestamp=condition.timestamp,
-                )
-            )
+    def _detect_activity_from_light(self) -> CatActivityType:
+        """Detect cat activity from light sensor changes."""
+        activities = [CatActivityType.WALKING, CatActivityType.PLAYING]
+        return random.choice(activities)
 
-        # Noise level check
-        if condition.noise_level_db > self.noise_threshold:
-            alerts.append(
-                SafetyAlert(
-                    severity="warning",
-                    category="noise",
-                    message=f"Noise level excessive: {condition.noise_level_db}dB",
-                    recommendation="Use noise-canceling headphones and provide a quiet retreat for your cat",
-                    timestamp=condition.timestamp,
-                )
-            )
+    def _detect_activity_from_sound(self) -> CatActivityType:
+        """Detect cat activity from sound level changes."""
+        activities = [
+            CatActivityType.PLAYING,
+            CatActivityType.MEOWING,
+            CatActivityType.SCRATCHING,
+        ]
+        return random.choice(activities[:-1])
 
-        # Cat proximity check
-        if condition.cat_proximity_cm < self.cat_proximity_min:
-            alerts.append(
-                SafetyAlert(
-                    severity="info",
-                    category="pet_interaction",
-                    message=f"Cat very close: {condition.cat_proximity_cm}cm away",
-                    recommendation="Your cat is seeking attention. Consider a short break or provide a nearby perch.",
-                    timestamp=condition.timestamp,
-                )
-            )
+    def _generate_alert_if_needed(
+        self, reading: SensorReading, confidence: float
+    ) -> None:
+        """
+        Generate an alert if the sensor reading indicates a problem.
 
-        # Monitor distance check
-        if abs(condition.monitor_distance_cm - self.monitor_distance_optimal) > 20:
-            alerts.append(
-                SafetyAlert(
-                    severity="info",
-                    category="ergonomics",
-                    message=f"Monitor distance suboptimal: {condition.monitor_distance_cm}cm",
-                    recommendation="Adjust monitor distance to approximately 60cm for optimal eye health",
-                    timestamp=condition.timestamp,
-                )
-            )
-
-        # Chair ergonomic score check
-        if condition.chair_ergonomic_score < 5:
-            alerts.append(
-                SafetyAlert(
-                    severity="warning",
-                    category="ergonomics",
-                    message=f"Poor chair ergonomics: score {condition.chair_ergonomic_score}/10",
-                    recommendation="Invest in an ergonomic chair designed for extended work with pets nearby",
-                    timestamp=condition.timestamp,
-                )
-            )
-
-        # Keyboard activity check (inactivity warning)
-        if condition.keyboard_activity_count == 0:
-            alerts.append(
-                SafetyAlert(
-                    severity="info",
-                    category="productivity",
-                    message="No keyboard activity detected",
-                    recommendation="Take a break, stretch, and engage with your cat to maintain work-life balance",
-                    timestamp=condition.timestamp,
-                )
-            )
-
-        return alerts
-
-    def process_condition(self, condition: DeskCondition) -> Dict[str, Any]:
-        """Process a desk condition and return analysis results."""
-        self.conditions_history.append(condition)
-        new_alerts = self.validate_condition(condition)
-        self.alerts.extend(new_alerts)
-
-        return {
-            "condition": asdict(condition),
-            "alerts": [asdict(alert) for alert in new_alerts],
-            "alert_count": len(new_alerts),
-        }
-
-    def get_statistics(self) -> Dict[str, Any]:
-        """Calculate statistics from condition history."""
-        if not self.conditions_history:
-            return {"error": "No data available"}
-
-        temps = [c.temperature_celsius for c in self.conditions_history]
-        humidities = [c.humidity_percent for c in self.conditions_history]
-        noise_levels = [c.noise_level_db for c in self.conditions_history]
-        distances = [c.cat_proximity_cm for c in self.conditions_history]
-
-        return {
-            "samples_recorded": len(self.conditions_history),
+        Args:
+            reading: The sensor reading
+            confidence: Detection confidence
+        """
+        alert_config = {
+            "vibration": {
+                "level": AlertLevel.WARNING,
+                "message": "High vibration detected - cat may be jumping on desk",
+                "recommendation": "Consider using a keyboard protector or cat bed",
+            },
             "temperature": {
-                "min": round(min(temps), 1),
-                "max": round(max(temps), 1),
-                "avg": round(sum(temps) / len(temps), 1),
+                "level": AlertLevel.INFO,
+                "message": "Temperature increase detected - cat may be resting on equipment",
+                "recommendation": "Ensure proper ventilation around electronics",
             },
-            "humidity": {
-                "min": round(min(humidities), 1),
-                "max": round(max(humidities), 1),
-                "avg": round(sum(humidities) / len(humidities), 1),
+            "light_change": {
+                "level": AlertLevel.INFO,
+                "message": "Sudden light change detected - cat movement near work area",
+                "recommendation": "Check that cat is not blocking your monitor or light source",
             },
-            "noise_level": {
-                "min": round(min(noise_levels), 1),
-                "max": round(max(noise_levels), 1),
-                "avg": round(sum(noise_levels) / len(noise_levels), 1),
+            "sound_level": {
+                "level": AlertLevel.WARNING,
+                "message": "High sound level detected - cat vocalization or activity",
+                "recommendation": "Take a short break or move cat to a comfortable spot",
             },
-            "cat_proximity": {
-                "min": round(min(distances), 1),
-                "max": round(max(distances), 1),
-                "avg": round(sum(distances) / len(distances), 1),
-            },
-            "total_alerts": len(self.alerts),
-            "alert_breakdown": self._count_alerts_by_category(),
         }
 
-    def _count_alerts_by_category(self) -> Dict[str, int]:
-        """Count alerts by category."""
-        counts: Dict[str, int] = {}
+        config = alert_config.get(reading.sensor_type)
+        if config:
+            alert = WorkspaceAlert(
+                timestamp=reading.timestamp,
+                level=config["level"].value,
+                message=config["message"],
+                affected_area="desk_workspace",
+                recommendation=config["recommendation"],
+            )
+            self.alerts.append(alert)
+
+    def get_statistics(self) -> Dict:
+        """
+        Get comprehensive statistics about desk activity.
+
+        Returns:
+            Dictionary containing various statistics
+        """
+        activity_counts = {}
+        for detection in self.cat_detections:
+            activity = detection.activity_type
+            activity_counts[activity] = activity_counts.get(activity, 0) + 1
+
+        alert_counts = {}
         for alert in self.alerts:
-            counts[alert.category] = counts.get(alert.category, 0) + 1
-        return counts
+            level = alert.level
+            alert_counts[level] = alert_counts.get(level, 0) + 1
 
-    def get_recommendations(self) -> List[str]:
-        """Generate overall recommendations based on collected data."""
-        recommendations = []
+        avg_confidence = (
+            sum(d.confidence for d in self.cat_detections)
+            / len(self.cat_detections)
+            if self.cat_detections
+            else 0.0
+        )
 
-        if not self.conditions_history:
-            return ["No data available for recommendations"]
+        return {
+            "desk_id": self.desk_id,
+            "owner": self.owner_name,
+            "total_sensor_readings": len(self.sensor_readings),
+            "total_detections": len(self.cat_detections),
+            "total_alerts": len(self.alerts),
+            "average_confidence": round(avg_confidence, 2),
+            "activity_breakdown": activity_counts,
+            "alert_breakdown": alert_counts,
+            "monitoring_active": self.is_monitoring,
+        }
 
-        stats = self.get_statistics()
+    def generate_report(self) -> Dict:
+        """
+        Generate a comprehensive report of desk activity.
 
-        if stats["temperature"]["avg"] < self.temp_min:
-            recommendations.append("Consider improving insulation or using supplemental heating")
+        Returns:
+            Dictionary containing full report data
+        """
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "desk_id": self.desk_id,
+            "owner": self.owner_name,
+            "statistics": self.get_statistics(),
+            "recent_detections": [
+                asdict(d) for d in self.cat_detections[-10:]
+            ],
+            "recent_alerts": [asdict(a) for a in self.alerts[-10:]],
+            "sensor_readings_count": len(self.sensor_readings),
+        }
 
-        if stats["humidity"]["avg"] > self.humidity_max:
-            recommendations.append("Improve ventilation to reduce humidity levels")
+    def simulate_monitoring_session(self, duration_seconds: int) -> None:
+        """
+        Simulate a monitoring session with random sensor readings.
 
-        if stats["noise_level"]["avg"] > self.noise_threshold:
-            recommendations.append("Install acoustic panels or use active noise cancellation")
+        Args:
+            duration_seconds: Duration of simulation
+        """
+        self.is_monitoring = True
+        start_time = time.time()
 
-        if stats["cat_proximity"]["avg"] < 50:
-            recommendations.append("Consider a cat tree or elevated perch near your desk area")
+        sensor_types = [
+            ("vibration", "arbitrary", 0.0, 2.0),
+            ("temperature", "celsius", 20.0, 35.0),
+            ("light_change", "lux_change", -0.5, 1.0),
+            ("sound_level", "decibels", 30.0, 100.0),
+        ]
 
-        if not recommendations:
-            recommendations.append("Your workspace is well-optimized for working with your cat!")
+        while time.time() - start_time < duration_seconds:
+            sensor_type, unit, min_val, max_val = random.choice(sensor_types)
+            value = random.uniform(min_val, max_val)
+            self.add_sensor_reading(sensor_type, value, unit)
+            time.sleep(0.5)
 
-        return recommendations
+        self.is_monitoring = False
 
-    def monitor_continuous(self, duration_seconds: int, interval_seconds: int) -> List[Dict[str, Any]]:
-        """Monitor desk conditions continuously for a specified duration."""
-        results = []
-        end_time = time.time() + duration_seconds
-        sample_count = 0
+    def export_data(self, format_type: str = "json") -> str:
+        """
+        Export collected data in specified format.
 
-        while time.time() < end_time:
-            condition = self.generate_sample_condition()
-            result = self.process_condition(condition)
-            result["sample_number"] = sample_count + 1
-            results.append(result)
-            sample_count += 1
-            time.sleep(interval_seconds)
+        Args:
+            format_type: Export format (json, csv)
 
-        return results
+        Returns:
+            Exported data as string
+        """
+        if format_type == "json":
+            report = self.generate_report()
+            return json.dumps(report, indent=2)
+        elif format_type == "csv":
+            lines = [
+                "timestamp,sensor_type,value,unit",
+            ]
+            for reading in self.sensor_readings:
+                lines.append(
+                    f'{reading.timestamp},{reading.sensor_type},{reading.value},{reading.unit}'
+                )
+            return "\n".join(lines)
+        else:
+            raise ValueError(f"Unsupported format: {format_type}")
 
 
 def main():
     """Main entry point with CLI argument parsing."""
     parser = argparse.ArgumentParser(
-        description="Pet-aware desk management system for remote workers with cats"
+        description="Cat-Aware Work Desk Management System",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --owner "Alice" --sensitivity 0.8
+  %(prog)s --monitor 30
+  %(prog)s --export json --owner "Bob"
+        """,
     )
 
     parser.add_argument(
-        "--mode",
-        choices=["single", "continuous", "stats", "recommendations"],
-        default="single",
-        help="Operating mode",
+        "--desk-id",
+        type=str,
+        default="DESK-001",
+        help="Unique desk identifier (default: DESK-001)",
     )
-
     parser.add_argument(
-        "--duration",
+        "--owner",
+        type=str,
+        default="John Doe",
+        help="Name of desk owner (default: John Doe)",
+    )
+    parser.add_argument(
+        "--sensitivity",
+        type=float,
+        default=0.7,
+        help="Cat detection sensitivity 0.0-1.0 (default: 0.7)",
+    )
+    parser.add_argument(
+        "--monitor",
         type=int,
-        default=10,
-        help="Duration in seconds for continuous monitoring",
+        default=0,
+        help="Run monitoring simulation for N seconds (default: 0, disabled)",
     )
-
     parser.add_argument(
-        "--interval",
-        type=int,
-        default=2,
-        help="Sampling interval in seconds for continuous monitoring",
+        "--export",
+        type=str,
+        choices=["json", "csv"],
+        default="json",
+        help="Export format (default: json)",
     )
-
     parser.add_argument(
-        "--temp-min",
-        type=float,
-        default=18.0,
-        help="Minimum comfortable temperature in Celsius",
-    )
-
-    parser.add_argument(
-        "--temp-max",
-        type=float,
-        default=24.0,
-        help="Maximum comfortable temperature in Celsius",
-    )
-
-    parser.add_argument(
-        "--humidity-min",
-        type=float,
-        default=30.0,
-        help="Minimum comfortable humidity percentage",
-    )
-
-    parser.add_argument(
-        "--humidity-max",
-        type=float,
-        default=60.0,
-        help="Maximum comfortable humidity percentage",
-    )
-
-    parser.add_argument(
-        "--noise-threshold",
-        type=float,
-        default=70.0,
-        help="Maximum acceptable noise level in dB",
-    )
-
-    parser.add_argument(
-        "--cat-proximity-min",
-        type=float,
-        default=30.0,
-        help="Minimum safe distance to cat in cm",
-    )
-
-    parser.add_argument(
-        "--output-json",
+        "--report",
         action="store_true",
-        help="Output results as JSON",
+        help="Generate and display report after operation",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose output",
     )
 
     args = parser.parse_args()
 
-    manager = PetAwareDeskManager(
-        temp_min=args.temp_min,
-        temp_max=args.temp_max,
-        humidity_min=args.humidity_min,
-        humidity_max=args.humidity_max,
-        noise_threshold=args.noise_threshold,
-        cat_proximity_min=args.cat_proximity_min,
+    desk = CatAwareDesk(
+        desk_id=args.desk_id, owner_name=args.owner, sensitivity=args.sensitivity
     )
 
-    if args.mode == "single":
-        condition = manager.generate_sample_condition()
-        result = manager.process_condition(condition)
+    if args.verbose:
+        print(f"[*] Initializing desk: {args.desk_id}")
+        print(f"[*] Owner: {args.owner}")
+        print(f"[*] Sensitivity: {args.sensitivity}")
 
-        if args.output_json:
-            print(json.dumps(result, indent=2))
-        else:
-            print("\n=== DESK CONDITION ANALYSIS ===")
-            print(f"Timestamp: {condition.timestamp}")
-            print(f"Temperature: {condition.temperature_celsius}°C")
-            print(f"Humidity: {condition.humidity_percent}%")
-            print(f"Noise Level: {condition.noise_level_db}dB")
-            print(f"Cat Proximity: {condition.cat_proximity_cm}cm")
-            print(f"Monitor Distance: {condition.monitor_distance_cm}cm")
-            print(f"Chair Ergonomics: {condition.chair_ergonomic_score}/10")
-            print(f"\nAlerts Generated: {result['alert_count']}")
-            if result["alerts"]:
-                for alert in result["alerts"]:
-                    print(f"  [{alert['severity'].upper()}] {alert['category']}: {alert['message']}")
-                    print(f"    → {alert['recommendation']}")
+    if args.monitor > 0:
+        if args.verbose:
+            print(f"[*] Starting monitoring simulation for {args.monitor} seconds...")
+        desk.simulate_monitoring_session(args.monitor)
+        if args.verbose:
+            print("[+] Monitoring session completed")
 
-    elif args.mode == "continuous":
-        print(f"Starting continuous monitoring for {args.duration}s (interval: {args.interval}s)...")
-        results = manager.monitor_continuous(args.duration, args.interval)
-
-        if args.output_json:
-            print(json.dumps(results, indent=2))
-        else:
-            print(f"\nCollected {len(results)} samples")
-            total_alerts = sum(r["alert_count"] for r in results)
-            print(f"Total alerts: {total_alerts}")
-
-    elif args.mode == "stats":
-        # Generate some sample data
-        for _ in range(5):
-            condition = manager.generate_sample_condition()
-            manager.process_condition(condition)
-
-        stats = manager.get_statistics()
-
-        if args.output_json:
-            print(json.dumps(stats, indent=2))
-        else:
-            print("\n=== WORKSPACE STATISTICS ===")
-            print(f"Samples Recorded: {stats['samples_recorded']}")
-            print(f"\nTemperature (°C): min={stats['temperature']['min']}, "
-                  f"avg={stats['temperature']['avg']}, max={stats['temperature']['max']}")
-            print(f"Humidity (%): min={stats['humidity']['min']}, "
-                  f"avg={stats['humidity']['avg']}, max={stats['humidity']['max']}")
-            print(f"Noise Level (dB): min={stats['noise_level']['min']}, "
-                  f"avg={stats['noise_level']['avg']}, max={stats['noise_level']['max']}")
-            print(f"Cat Proximity (cm): min={stats['cat_proximity']['min']}, "
-                  f"avg={stats['cat_proximity']['avg']}, max={stats['cat_proximity']['max']}")
-            print(f"Total Alerts: {stats['total_alerts']}")
-            print(f"Alert Breakdown: {stats['alert_breakdown']}")
-
-    elif args.mode == "recommendations":
-        # Generate sample data
-        for _ in range(5):
-            condition = manager.generate_sample_condition()
-            manager.process_condition(condition)
-
-        recommendations = manager.get_recommendations()
-
-        if args.output_json:
-            print(json.dumps({"recommendations": recommendations}, indent=2))
-        else:
-            print("\n=== WORKSPACE RECOMMENDATIONS ===")
-            for i, rec in enumerate(recommendations, 1):
-                print(f"{i}. {rec}")
+    if args.report:
+        report = desk.generate_report()
+        print("\n=== DESK ACTIVITY REPORT ===")
+        print(json.dumps(report, indent=2))
+    else:
+        exported = desk.export_data(args.export)
+        print(exported)
 
 
 if __name__ == "__main__":
     main()
+
+    print("\n=== DEMO: Cat-Aware Desk System ===\n")
+
+    demo_desk = CatAwareDesk(
+        desk_id="DEMO-DESK-001", owner_name="Alice Chen", sensitivity=0.75
+    )
+
+    print(f"[*] Initializing desk for {demo_desk.owner_name}...")
+    print(f"[*] Desk ID: {demo_desk.desk_id}")
+    print(f"[*] Sensitivity: {demo_desk.sensitivity}\n")
+
+    print("[*] Simulating sensor readings...\n")
+
+    readings = [
+        ("vibration", 1.2, "arbitrary"),
+        ("temperature", 32.5, "celsius"),
+        ("light_change", 0.6, "lux_change"),
+        ("sound_level", 85.0, "decibels"),
+        ("vibration", 0.8, "arbitrary"),
+        ("temperature", 25.0, "celsius"),
+    ]
+
+    for sensor_type, value, unit in readings:
+        reading = demo_desk.add_sensor_reading(sensor_type, value, unit)
+        print(f"  [{reading.timestamp}] {sensor_type}: {value} {unit}")
+
+    print("\n[*] Generating report...\n")
+    report = demo_desk.generate_report()
+    print(json.dumps(report, indent=2))
+
+    print("\n[*] System test completed successfully!")
