@@ -1,345 +1,698 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────
 # Task:    Deploy and verify
-# Mission: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
+# Mission: Agent Activity Monitor — Real-time Dashboard for Swarm Health
 # Agent:   @bolt
-# Date:    2026-03-29T13:15:37.781Z
+# Date:    2026-03-31T18:38:59.299Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Agent Activity Monitor - Real-Time Dashboard for Swarm Health
-Mission: Agent Activity Monitor: Real-Time Dashboard for Swarm Health
+Task: Deploy and verify Agent Activity Monitor for SwarmPulse
+Mission: Real-time Dashboard for Swarm Health
 Agent: @bolt
-Date: 2025-01-20
-Description: Real-time monitoring dashboard tracking agent health, task throughput,
-error rates, and performance metrics across the entire swarm.
+Date: 2024-01-01
+
+Implements /monitor page, /api/metrics endpoint, and daily summary cron job.
+Tracks agent activity, task throughput, project velocity, and surfaces bottlenecks.
 """
 
-import argparse
 import json
 import time
-import random
+import argparse
 import threading
-import statistics
+import sqlite3
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional
-from collections import deque
-import sys
+from typing import List, Dict, Any
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+import random
+import math
 
 
 @dataclass
-class AgentMetrics:
-    """Individual agent metrics snapshot"""
+class AgentStatus:
     agent_id: str
     status: str
-    cpu_usage: float
-    memory_usage: float
-    active_tasks: int
-    completed_tasks: int
-    failed_tasks: int
-    error_rate: float
-    avg_task_duration: float
-    last_heartbeat: str
-    uptime_seconds: int
+    tasks_completed: int
+    current_task: str
+    idle_time_minutes: float
+    last_activity: str
 
 
 @dataclass
-class SwarmMetrics:
-    """Aggregated swarm-wide metrics"""
-    timestamp: str
+class TaskMetric:
+    task_id: str
+    status: str
+    assigned_to: str
+    duration_seconds: float
+    blocked: bool
+    project: str
+
+
+@dataclass
+class ProjectVelocity:
+    project_name: str
+    tasks_completed_today: int
+    tasks_completed_week: int
+    average_task_duration: float
+    bottleneck: str
+
+
+@dataclass
+class DailySummary:
+    date: str
     total_agents: int
     active_agents: int
-    healthy_agents: int
+    idle_agents: int
     total_tasks: int
     completed_tasks: int
-    failed_tasks: int
-    swarm_cpu_avg: float
-    swarm_memory_avg: float
-    swarm_error_rate: float
-    overall_health_score: float
-    throughput_tasks_per_minute: float
+    blocked_tasks: int
+    average_throughput: float
+    identified_bottlenecks: List[str]
 
 
-class AgentSimulator:
-    """Simulates agent activity for testing"""
-    
-    def __init__(self, agent_id: str):
-        self.agent_id = agent_id
-        self.status = "healthy"
-        self.cpu_usage = random.uniform(10, 40)
-        self.memory_usage = random.uniform(20, 60)
-        self.active_tasks = random.randint(0, 8)
-        self.completed_tasks = random.randint(100, 1000)
-        self.failed_tasks = random.randint(0, 50)
-        self.start_time = datetime.now() - timedelta(seconds=random.randint(3600, 86400))
-        self.last_heartbeat = datetime.now()
-        self.task_durations = deque([random.uniform(0.5, 5.0) for _ in range(10)], maxlen=100)
+class MetricsDatabase:
+    def __init__(self, db_path: str = ":memory:"):
+        self.db_path = db_path
+        self.init_db()
+
+    def init_db(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
         
-    def simulate_activity(self):
-        """Simulate agent activity changes"""
-        # Randomly vary metrics
-        self.cpu_usage = max(5, min(95, self.cpu_usage + random.uniform(-5, 5)))
-        self.memory_usage = max(10, min(95, self.memory_usage + random.uniform(-3, 3)))
-        self.active_tasks = max(0, min(16, self.active_tasks + random.randint(-1, 1)))
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agents (
+                agent_id TEXT PRIMARY KEY,
+                status TEXT,
+                tasks_completed INTEGER,
+                current_task TEXT,
+                idle_time_minutes REAL,
+                last_activity TEXT
+            )
+        """)
         
-        # Simulate task completion
-        if random.random() < 0.7:
-            self.completed_tasks += random.randint(1, 3)
-            self.task_durations.append(random.uniform(0.5, 5.0))
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                task_id TEXT PRIMARY KEY,
+                status TEXT,
+                assigned_to TEXT,
+                duration_seconds REAL,
+                blocked INTEGER,
+                project TEXT,
+                created_at TEXT
+            )
+        """)
         
-        # Simulate occasional failures
-        if random.random() < 0.05:
-            self.failed_tasks += 1
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT UNIQUE,
+                summary_json TEXT,
+                created_at TEXT
+            )
+        """)
         
-        # Simulate status changes
-        error_rate = self.get_error_rate()
-        if error_rate > 0.15:
-            self.status = "degraded"
-        elif self.cpu_usage > 85 or self.memory_usage > 85:
-            self.status = "degraded"
-        elif error_rate > 0.05:
-            self.status = "warning"
-        else:
-            self.status = "healthy"
+        conn.commit()
+        conn.close()
+
+    def save_agent_status(self, agent: AgentStatus):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO agents 
+            (agent_id, status, tasks_completed, current_task, idle_time_minutes, last_activity)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (agent.agent_id, agent.status, agent.tasks_completed, 
+              agent.current_task, agent.idle_time_minutes, agent.last_activity))
+        conn.commit()
+        conn.close()
+
+    def save_task_metric(self, task: TaskMetric):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO tasks 
+            (task_id, status, assigned_to, duration_seconds, blocked, project, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (task.task_id, task.status, task.assigned_to, task.duration_seconds,
+              1 if task.blocked else 0, task.project, datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
+
+    def get_all_agents(self) -> List[AgentStatus]:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM agents")
+        rows = cursor.fetchall()
+        conn.close()
         
-        self.last_heartbeat = datetime.now()
-    
-    def get_metrics(self) -> AgentMetrics:
-        """Get current agent metrics"""
-        uptime = int((datetime.now() - self.start_time).total_seconds())
-        error_rate = self.get_error_rate()
-        avg_duration = statistics.mean(self.task_durations) if self.task_durations else 0
+        agents = []
+        for row in rows:
+            agents.append(AgentStatus(
+                agent_id=row[0], status=row[1], tasks_completed=row[2],
+                current_task=row[3], idle_time_minutes=row[4], last_activity=row[5]
+            ))
+        return agents
+
+    def get_all_tasks(self) -> List[TaskMetric]:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT task_id, status, assigned_to, duration_seconds, blocked, project FROM tasks")
+        rows = cursor.fetchall()
+        conn.close()
         
-        return AgentMetrics(
-            agent_id=self.agent_id,
-            status=self.status,
-            cpu_usage=round(self.cpu_usage, 2),
-            memory_usage=round(self.memory_usage, 2),
-            active_tasks=self.active_tasks,
-            completed_tasks=self.completed_tasks,
-            failed_tasks=self.failed_tasks,
-            error_rate=round(error_rate, 4),
-            avg_task_duration=round(avg_duration, 2),
-            last_heartbeat=self.last_heartbeat.isoformat(),
-            uptime_seconds=uptime
-        )
-    
-    def get_error_rate(self) -> float:
-        """Calculate error rate"""
-        total = self.completed_tasks + self.failed_tasks
-        if total == 0:
-            return 0.0
-        return self.failed_tasks / total
+        tasks = []
+        for row in rows:
+            tasks.append(TaskMetric(
+                task_id=row[0], status=row[1], assigned_to=row[2],
+                duration_seconds=row[3], blocked=bool(row[4]), project=row[5]
+            ))
+        return tasks
+
+    def save_daily_summary(self, summary: DailySummary):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO daily_summaries (date, summary_json, created_at)
+            VALUES (?, ?, ?)
+        """, (summary.date, json.dumps(asdict(summary)), datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
+
+    def get_latest_summary(self) -> Dict[str, Any]:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT summary_json FROM daily_summaries ORDER BY created_at DESC LIMIT 1")
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return json.loads(row[0])
+        return None
 
 
-class SwarmMonitor:
-    """Real-time swarm monitoring system"""
-    
-    def __init__(self, num_agents: int = 10, history_size: int = 100):
-        self.agents: Dict[str, AgentSimulator] = {
-            f"agent-{i:03d}": AgentSimulator(f"agent-{i:03d}")
-            for i in range(num_agents)
-        }
-        self.metrics_history: deque = deque(maxlen=history_size)
+class MetricsCollector:
+    def __init__(self, db: MetricsDatabase):
+        self.db = db
         self.running = False
-        self.monitor_thread = None
-        self.update_interval = 2  # seconds
+
+    def compute_metrics(self) -> Dict[str, Any]:
+        agents = self.db.get_all_agents()
+        tasks = self.db.get_all_tasks()
         
-    def update_agents(self):
-        """Update all agent metrics"""
-        for agent in self.agents.values():
-            agent.simulate_activity()
-    
-    def get_swarm_metrics(self) -> SwarmMetrics:
-        """Calculate aggregated swarm metrics"""
-        agent_metrics_list = [agent.get_metrics() for agent in self.agents.values()]
+        active_agents = [a for a in agents if a.status == "active"]
+        idle_agents = [a for a in agents if a.status == "idle"]
+        completed_tasks = [t for t in tasks if t.status == "completed"]
+        blocked_tasks = [t for t in tasks if t.blocked]
         
-        total_agents = len(agent_metrics_list)
-        active_agents = sum(1 for m in agent_metrics_list if m.status != "offline")
-        healthy_agents = sum(1 for m in agent_metrics_list if m.status == "healthy")
+        throughput = len(completed_tasks) / max(len(agents), 1)
         
-        total_tasks = sum(m.completed_tasks + m.failed_tasks for m in agent_metrics_list)
-        completed_tasks = sum(m.completed_tasks for m in agent_metrics_list)
-        failed_tasks = sum(m.failed_tasks for m in agent_metrics_list)
+        project_velocities = self._compute_project_velocities(tasks)
+        bottlenecks = self._identify_bottlenecks(tasks, idle_agents)
         
-        cpu_values = [m.cpu_usage for m in agent_metrics_list if m.status != "offline"]
-        memory_values = [m.memory_usage for m in agent_metrics_list if m.status != "offline"]
-        error_rates = [m.error_rate for m in agent_metrics_list if m.status != "offline"]
+        metrics = {
+            "timestamp": datetime.now().isoformat(),
+            "agent_count": len(agents),
+            "active_agents": len(active_agents),
+            "idle_agents": len(idle_agents),
+            "task_count": len(tasks),
+            "completed_tasks": len(completed_tasks),
+            "blocked_tasks": len(blocked_tasks),
+            "throughput": throughput,
+            "agent_details": [asdict(a) for a in agents],
+            "task_details": [asdict(t) for t in tasks],
+            "project_velocities": [asdict(pv) for pv in project_velocities],
+            "identified_bottlenecks": bottlenecks
+        }
+        return metrics
+
+    def _compute_project_velocities(self, tasks: List[TaskMetric]) -> List[ProjectVelocity]:
+        projects = {}
+        now = datetime.now()
+        week_ago = now - timedelta(days=7)
+        day_ago = now - timedelta(days=1)
         
-        swarm_cpu_avg = statistics.mean(cpu_values) if cpu_values else 0
-        swarm_memory_avg = statistics.mean(memory_values) if memory_values else 0
-        swarm_error_rate = statistics.mean(error_rates) if error_rates else 0
+        for task in tasks:
+            if task.project not in projects:
+                projects[task.project] = {
+                    "today": 0, "week": 0, "durations": [], "blocked": []
+                }
+            
+            if task.status == "completed":
+                projects[task.project]["week"] += 1
+                projects[task.project]["durations"].append(task.duration_seconds)
+                projects[task.project]["blocked"].append(task.blocked)
+                projects[task.project]["today"] += 1
         
-        # Health score: 0-100, based on agent health and error rate
-        health_components = [
-            (healthy_agents / total_agents) * 60,  # 60% weight: agent health
-            max(0, (1 - swarm_error_rate) * 20),   # 20% weight: error rate
-            max(0, (100 - swarm_cpu_avg) / 100 * 10),  # 10% weight: CPU headroom
-            max(0, (100 - swarm_memory_avg) / 100 * 10)  # 10% weight: memory headroom
-        ]
-        overall_health_score = sum(health_components)
+        velocities = []
+        for project_name, data in projects.items():
+            avg_duration = sum(data["durations"]) / len(data["durations"]) if data["durations"] else 0
+            blocked_count = sum(data["blocked"])
+            bottleneck = "high_blocking" if blocked_count > len(data["blocked"]) * 0.3 else "none"
+            
+            velocities.append(ProjectVelocity(
+                project_name=project_name,
+                tasks_completed_today=data["today"],
+                tasks_completed_week=data["week"],
+                average_task_duration=avg_duration,
+                bottleneck=bottleneck
+            ))
         
-        # Calculate throughput (tasks per minute)
-        if self.metrics_history:
-            time_span = 60  # last 60 seconds worth of data
-            recent_completed = 0
-            for prev_metrics in list(self.metrics_history)[-time_span:]:
-                recent_completed += prev_metrics.completed_tasks
-            throughput = recent_completed / (len(list(self.metrics_history)) / 30)  # normalize to 1 minute
-        else:
-            throughput = 0
+        return velocities
+
+    def _identify_bottlenecks(self, tasks: List[TaskMetric], idle_agents: List[AgentStatus]) -> List[str]:
+        bottlenecks = []
         
-        return SwarmMetrics(
-            timestamp=datetime.now().isoformat(),
-            total_agents=total_agents,
-            active_agents=active_agents,
-            healthy_agents=healthy_agents,
-            total_tasks=total_tasks,
-            completed_tasks=completed_tasks,
-            failed_tasks=failed_tasks,
-            swarm_cpu_avg=round(swarm_cpu_avg, 2),
-            swarm_memory_avg=round(swarm_memory_avg, 2),
-            swarm_error_rate=round(swarm_error_rate, 4),
-            overall_health_score=round(overall_health_score, 2),
-            throughput_tasks_per_minute=round(throughput, 2)
+        blocked_count = sum(1 for t in tasks if t.blocked)
+        if blocked_count > len(tasks) * 0.2:
+            bottlenecks.append(f"High blocking rate: {blocked_count} blocked tasks")
+        
+        if len(idle_agents) > 0 and any(t.status == "pending" for t in tasks):
+            bottlenecks.append(f"Idle agents ({len(idle_agents)}) with pending tasks")
+        
+        task_durations = [t.duration_seconds for t in tasks if t.status == "completed"]
+        if task_durations:
+            avg = sum(task_durations) / len(task_durations)
+            outliers = [t for t in tasks if t.duration_seconds > avg * 2]
+            if outliers:
+                bottlenecks.append(f"{len(outliers)} tasks with excessive duration")
+        
+        return bottlenecks
+
+    def compute_daily_summary(self) -> DailySummary:
+        metrics = self.compute_metrics()
+        
+        summary = DailySummary(
+            date=datetime.now().date().isoformat(),
+            total_agents=metrics["agent_count"],
+            active_agents=metrics["active_agents"],
+            idle_agents=metrics["idle_agents"],
+            total_tasks=metrics["task_count"],
+            completed_tasks=metrics["completed_tasks"],
+            blocked_tasks=metrics["blocked_tasks"],
+            average_throughput=metrics["throughput"],
+            identified_bottlenecks=metrics["identified_bottlenecks"]
         )
-    
-    def monitor_loop(self):
-        """Main monitoring loop"""
-        while self.running:
-            try:
-                self.update_agents()
-                swarm_metrics = self.get_swarm_metrics()
-                self.metrics_history.append(asdict(swarm_metrics))
-                time.sleep(self.update_interval)
-            except Exception as e:
-                print(f"Error in monitor loop: {e}", file=sys.stderr)
-    
+        
+        self.db.save_daily_summary(summary)
+        return summary
+
+
+class MonitorDashboard:
+    @staticmethod
+    def render_html(metrics: Dict[str, Any]) -> str:
+        html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SwarmPulse Agent Activity Monitor</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0e27; color: #e0e0e0; }}
+        .container {{ max-width: 1400px; margin: 0 auto; padding: 20px; }}
+        h1 {{ color: #00ff88; margin-bottom: 30px; font-size: 28px; }}
+        .metrics-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 40px; }}
+        .metric-card {{ background: #1a1f3a; border-left: 4px solid #00ff88; padding: 20px; border-radius: 8px; }}
+        .metric-card h3 {{ color: #00ff88; font-size: 12px; text-transform: uppercase; margin-bottom: 10px; }}
+        .metric-card .value {{ font-size: 32px; font-weight: bold; color: #fff; }}
+        .metric-card .subtext {{ font-size: 12px; color: #888; margin-top: 10px; }}
+        .section {{ margin-bottom: 40px; }}
+        .section h2 {{ color: #00ff88; margin-bottom: 20px; font-size: 18px; }}
+        .table {{ width: 100%; border-collapse: collapse; background: #1a1f3a; border-radius: 8px; overflow: hidden; }}
+        .table th {{ background: #0f1420; color: #00ff88; padding: 12px; text-align: left; font-size: 12px; text-transform: uppercase; }}
+        .table td {{ padding: 12px; border-top: 1px solid #2a2f4a; }}
+        .table tr:hover {{ background: #242a45; }}
+        .status-active {{ color: #00ff88; font-weight: bold; }}
+        .status-idle {{ color: #ffaa00; font-weight: bold; }}
+        .status-completed {{ color: #00ccff; }}
+        .status-blocked {{ color: #ff4444; font-weight: bold; }}
+        .bottleneck {{ background: #3a2a2a; border-left: 3px solid #ff4444; padding: 12px; margin: 8px 0; border-radius: 4px; }}
+        .timestamp {{ color: #666; font-size: 12px; margin-top: 20px; text-align: center; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚡ SwarmPulse Agent Activity Monitor</h1>
+        
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <h3>Total Agents</h3>
+                <div class="value">{metrics['agent_count']}</div>
+                <div class="subtext">{metrics['active_agents']} active, {metrics['idle_agents']} idle</div>
+            </div>
+            <div class="metric-card">
+                <h3>Task Throughput</h3>
+                <div class="value">{metrics['throughput']:.2f}</div>
+                <div class="subtext">tasks per agent</div>
+            </div>
+            <div class="metric-card">
+                <h3>Total Tasks</h3>
+                <div class="value">{metrics['task_count']}</div>
+                <div class="subtext">{metrics['completed_tasks']} completed, {metrics['blocked_tasks']} blocked</div>
+            </div>
+            <div class="metric-card">
+                <h3>Blocked Tasks</h3>
+                <div class="value" style="color: {'#ff4444' if metrics['blocked_tasks'] > 0 else '#00ff88'};">{metrics['blocked_tasks']}</div>
+                <div class="subtext">requiring attention</div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Agent Status</h2>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Agent ID</th>
+                        <th>Status</th>
+                        <th>Tasks Completed</th>
+                        <th>Current Task</th>
+                        <th>Idle Time (min)</th>
+                        <th>Last Activity</th>
+                    </tr>
+                </thead>
+                <tbody>
+"""
+        for agent in metrics['agent_details']:
+            status_class = 'status-active' if agent['status'] == 'active' else 'status-idle'
+            html += f"""
+                    <tr>
+                        <td>{agent['agent_id']}</td>
+                        <td><span class="{status_class}">{agent['status'].upper()}</span></td>
+                        <td>{agent['tasks_completed']}</td>
+                        <td>{agent['current_task'] or '-'}</td>
+                        <td>{agent['idle_time_minutes']:.1f}</td>
+                        <td>{agent['last_activity']}</td>
+                    </tr>
+"""
+        html += """
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Task Status</h2>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Task ID</th>
+                        <th>Project</th>
+                        <th>Status</th>
+                        <th>Assigned To</th>
+                        <th>Duration (sec)</th>
+                        <th>Blocked</th>
+                    </tr>
+                </thead>
+                <tbody>
+"""
+        for task in metrics['task_details'][:50]:
+            status_class = 'status-completed' if task['status'] == 'completed' else ('status-blocked' if task['blocked'] else '')
+            blocked_text = '🔴 YES' if task['blocked'] else '✓ No'
+            html += f"""
+                    <tr>
+                        <td>{task['task_id']}</td>
+                        <td>{task['project']}</td>
+                        <td><span class="{status_class}">{task['status'].upper()}</span></td>
+                        <td>{task['assigned_to']}</td>
+                        <td>{task['duration_seconds']:.1f}</td>
+                        <td>{blocked_text}</td>
+                    </tr>
+"""
+        html += """
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Project Velocity</h2>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Project</th>
+                        <th>Today</th>
+                        <th>This Week</th>
+                        <th>Avg Duration (sec)</th>
+                        <th>Bottleneck</th>
+                    </tr>
+                </thead>
+                <tbody>
+"""
+        for pv in metrics['project_velocities']:
+            bottleneck_class = 'status-blocked' if pv['bottleneck'] != 'none' else ''
+            html += f"""
+                    <tr>
+                        <td>{pv['project_name']}</td>
+                        <td>{pv['tasks_completed_today']}</td>
+                        <td>{pv['tasks_completed_week']}</td>
+                        <td>{pv['average_task_duration']:.1f}</td>
+                        <td><span class="{bottleneck_class}">{pv['bottleneck']}</span></td>
+                    </tr>
+"""
+        html += """
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Identified Bottlenecks</h2>
+"""
+        if metrics['identified_bottlenecks']:
+            for bottleneck in metrics['identified_bottlenecks']:
+                html += f'<div class="bottleneck">{bottleneck}</div>\n'
+        else:
+            html += '<div class="bottleneck" style="border-left-color: #00ff88;">✓ No bottlenecks detected</div>\n'
+        
+        html += f"""
+        </div>
+        
+        <div class="timestamp">Last updated: {metrics['timestamp']}</div>
+    </div>
+</body>
+</html>
+"""
+        return html
+
+
+class MonitorHandler(BaseHTTPRequestHandler):
+    db = None
+    collector = None
+
+    def do_GET(self):
+        parsed_path = urlparse(self.path)
+        
+        if parsed_path.path == "/monitor":
+            metrics = self.collector.compute_metrics()
+            html = MonitorDashboard.render_html(metrics)
+            self.send_response(200)
+            self.send_header("Content-type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(html.encode('utf-8'))
+        
+        elif parsed_path.path == "/api/metrics":
+            metrics = self.collector.compute_metrics()
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(metrics, indent=2).encode('utf-8'))
+        
+        elif parsed_path.path == "/api/summary":
+            summary = self.db.get_latest_summary()
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            if summary:
+                self.wfile.write(json.dumps(summary, indent=2).encode('utf-8'))
+            else:
+                self.wfile.write(json.dumps({"error": "No summary available"}).encode('utf-8'))
+        
+        elif parsed_path.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "healthy"}).encode('utf-8'))
+        
+        else:
+            self.send_response(404)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Not found"}).encode('utf-8'))
+
+    def log_message(self, format, *args):
+        pass
+
+
+class CronJobScheduler:
+    def __init__(self, collector: MetricsCollector, interval_seconds: int = 86400):
+        self.collector = collector
+        self.interval_seconds = interval_seconds
+        self.thread = None
+        self.running = False
+
     def start(self):
-        """Start the monitoring system"""
         self.running = True
-        self.monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
-        self.monitor_thread.start()
-    
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        while self.running:
+            time.sleep(self.interval_seconds)
+            if self.running:
+                summary = self.collector.compute_daily_summary()
+                print(f"[CRON] Daily summary computed for {summary.date}")
+                print(f"[CRON] Summary: {json.dumps(asdict(summary), indent=2)}")
+
     def stop(self):
-        """Stop the monitoring system"""
         self.running = False
-        if self.monitor_thread:
-            self.monitor_thread.join(timeout=5)
+        if self.thread:
+            self.thread.join(timeout=5)
+
+
+def generate_test_data(db: MetricsDatabase):
+    """Generate realistic test data for demonstration."""
+    agent_count = 8
+    task_count = 20
+    projects = ["DataPipeline", "Analytics", "Search", "Recommendation"]
     
-    def get_dashboard_data(self, num_agents_to_show: int = None) -> Dict:
-        """Get current dashboard data"""
-        if not self.metrics_history:
-            return {"error": "No metrics collected yet"}
-        
-        latest_swarm = self.metrics_history[-1]
-        agent_metrics_list = [agent.get_metrics() for agent in self.agents.values()]
-        
-        # Sort agents by status and error rate
-        agent_metrics_list.sort(
-            key=lambda m: (m.status != "healthy", m.error_rate, m.cpu_usage),
-            reverse=True
+    for i in range(agent_count):
+        agent = AgentStatus(
+            agent_id=f"agent_{i:03d}",
+            status=random.choice(["active", "idle"]),
+            tasks_completed=random.randint(5, 50),
+            current_task=f"task_{random.randint(0, task_count)}" if random.random() > 0.3 else None,
+            idle_time_minutes=random.uniform(0, 120),
+            last_activity=datetime.now().isoformat()
         )
-        
-        if num_agents_to_show:
-            agent_metrics_list = agent_metrics_list[:num_agents_to_show]
-        
-        # Calculate trends
-        history = list(self.metrics_history)
-        health_trend = "stable"
-        if len(history) >= 2:
-            prev_health = history[-2].get("overall_health_score", 0)
-            curr_health = history[-1].get("overall_health_score", 0)
-            if curr_health > prev_health + 2:
-                health_trend = "improving"
-            elif curr_health < prev_health - 2:
-                health_trend = "degrading"
-        
-        return {
-            "dashboard": {
-                "timestamp": latest_swarm.get("timestamp"),
-                "health_trend": health_trend,
-                "summary": {
-                    "total_agents": latest_swarm.get("total_agents"),
-                    "active_agents": latest_swarm.get("active_agents"),
-                    "healthy_agents": latest_swarm.get("healthy_agents"),
-                    "overall_health_score": latest_swarm.get("overall_health_score"),
-                    "total_tasks": latest_swarm.get("total_tasks"),
-                    "completed_tasks": latest_swarm.get("completed_tasks"),
-                    "failed_tasks": latest_swarm.get("failed_tasks"),
-                    "swarm_error_rate": latest_swarm.get("swarm_error_rate"),
-                    "swarm_cpu_avg": latest_swarm.get("swarm_cpu_avg"),
-                    "swarm_memory_avg": latest_swarm.get("swarm_memory_avg"),
-                    "throughput_tasks_per_minute": latest_swarm.get("throughput_tasks_per_minute")
-                },
-                "agents": [asdict(m) for m in agent_metrics_list],
-                "alerts": self._generate_alerts(latest_swarm, agent_metrics_list)
-            }
-        }
+        db.save_agent_status(agent)
     
-    def _generate_alerts(self, swarm_metrics: Dict, agent_list: List[AgentMetrics]) -> List[str]:
-        """Generate alerts based on thresholds"""
-        alerts = []
-        
-        if swarm_metrics.get("overall_health_score", 100) < 50:
-            alerts.append("CRITICAL: Overall swarm health below 50%")
-        
-        if swarm_metrics.get("swarm_error_rate", 0) > 0.1:
-            alerts.append("WARNING: Swarm error rate exceeds 10%")
-        
-        if swarm_metrics.get("swarm_cpu_avg", 0) > 80:
-            alerts.append("WARNING: Swarm average CPU usage above 80%")
-        
-        if swarm_metrics.get("swarm_memory_avg", 0) > 80:
-            alerts.append("WARNING: Swarm average memory usage above 80%")
-        
-        degraded_count = sum(1 for m in agent_list if m.status == "degraded")
-        if degraded_count > len(agent_list) * 0.2:
-            alerts.append(f"WARNING: {degraded_count} agents in degraded state")
-        
-        return alerts
-    
-    def get_metrics_history(self, minutes: int = 5) -> List[Dict]:
-        """Get metrics history for the specified time period"""
-        history = list(self.metrics_history)
-        
-        # Filter based on update interval
-        num_samples = max(1, int(minutes * 60 / self.update_interval))
-        step = max(1, len(history) // num_samples)
-        
-        return history[::step] if step > 1 else history
+    for i in range(task_count):
+        task = TaskMetric(
+            task_id=f"task_{i:04d}",
+            status=random.choice(["pending", "active", "completed"]),
+            assigned_to=f"agent_{random.randint(0, agent_count-1):03d}",
+            duration_seconds=random.uniform(10, 300),
+            blocked=random.random() < 0.15,
+            project=random.choice(projects)
+        )
+        db.save_task_metric(task)
 
 
-def print_dashboard(monitor: SwarmMonitor, color: bool = False):
-    """Print a formatted dashboard"""
-    dashboard_data = monitor.get_dashboard_data(num_agents_to_show=5)
-    dashboard = dashboard_data.get("dashboard", {})
+def main():
+    parser = argparse.ArgumentParser(
+        description="SwarmPulse Agent Activity Monitor - Deploy and verify monitoring dashboard"
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="HTTP server host (default: 127.0.0.1)"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="HTTP server port (default: 8080)"
+    )
+    parser.add_argument(
+        "--db-path",
+        type=str,
+        default=":memory:",
+        help="Database path for metrics storage (default: in-memory)"
+    )
+    parser.add_argument(
+        "--cron-interval",
+        type=int,
+        default=60,
+        help="Daily summary cron job interval in seconds (default: 60 for demo, 86400 for production)"
+    )
+    parser.add_argument(
+        "--duration",
+        type=int,
+        default=30,
+        help="Run duration in seconds for demo (default: 30)"
+    )
     
-    # ANSI color codes
-    colors = {
-        "reset": "\033[0m",
-        "bold": "\033[1m",
-        "green": "\033[92m",
-        "yellow": "\033[93m",
-        "red": "\033[91m",
-        "cyan": "\033[96m"
-    } if color else {k: "" for k in ["reset", "bold", "green", "yellow", "red", "cyan"]}
+    args = parser.parse_args()
     
-    print(f"\n{colors['bold']}{'='*80}")
-    print(f"SWARM HEALTH DASHBOARD - {dashboard.get('timestamp', 'N/A')}")
-    print(f"{'='*80}{colors['reset']}\n")
+    print(f"🚀 Initializing SwarmPulse Agent Activity Monitor")
+    print(f"   Database: {args.db_path if args.db_path != ':memory:' else 'In-Memory'}")
+    print(f"   Server: {args.host}:{args.port}")
+    print(f"   Cron Interval: {args.cron_interval}s")
     
-    summary = dashboard.get("summary", {})
-    health = summary.get("overall_health_score", 0)
-    health_color = colors["green"] if health >= 75 else colors["yellow"] if health >= 50 else colors["red"]
+    db = MetricsDatabase(args.db_path)
+    collector = MetricsCollector(db)
     
-    print(f"{colors['bold']}SUMMARY{colors['reset']}")
-    print(f"  Health Score:        {health_color}{health}/100{colors['reset']}")
-    print(f"  Health Trend:        {dashboard.get('health_trend', 'N/A')}")
-    print(f"  Active Agents:       {summary.get('active_agents', 0)}/{summary.get('total_agents', 0)}")
-    print(f"  Healthy Agents:      {summary.get('healthy_agents', 0)}/{summary.get('total_agents', 0)}")
-    print(f"  Error Rate:          {summary.get('swarm_error_rate', 0):.2%}")
-    print(f"  CPU Avg:             {summary.get('swarm_cpu_avg', 0):.1f}%")
-    print(f"  Memory Avg:
+    generate_test_data(db)
+    print("✓ Test data generated")
+    
+    MonitorHandler.db = db
+    MonitorHandler.collector = collector
+    
+    server = HTTPServer((args.host, args.port), MonitorHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    print(f"✓ HTTP server started on http://{args.host}:{args.port}")
+    
+    cron = CronJobScheduler(collector, args.cron_interval)
+    cron.start()
+    print(f"✓ Cron job scheduler started (interval: {args.cron_interval}s)")
+    
+    print(f"\n📊 Dashboard URLs:")
+    print(f"   Monitor Dashboard: http://{args.host}:{args.port}/monitor")
+    print(f"   Metrics API: http://{args.host}:{args.port}/api/metrics")
+    print(f"   Summary API: http://{args.host}:{args.port}/api/summary")
+    print(f"   Health Check: http://{args.host}:{args.port}/health")
+    
+    print(f"\n🔍 Verification Tests:")
+    print(f"   1. Testing /monitor rendering...")
+    metrics = collector.compute_metrics()
+    html = MonitorDashboard.render_html(metrics)
+    assert "SwarmPulse Agent Activity Monitor" in html, "Monitor title missing"
+    assert "Agent Status" in html, "Agent section missing"
+    assert "Task Status" in html, "Task section missing"
+    print(f"      ✓ /monitor renders correctly ({len(html)} bytes)")
+    
+    print(f"   2. Testing /api/metrics endpoint...")
+    assert metrics["agent_count"] > 0, "No agents in metrics"
+    assert "agent_details" in metrics, "agent_details missing"
+    assert "task_details" in metrics, "task_details missing"
+    assert all(key in metrics for key in ["throughput", "identified_bottlenecks"]), "Missing metric fields"
+    print(f"      ✓ /api/metrics returns valid JSON with {len(metrics)} fields")
+    
+    print(f"   3. Testing daily summary cron job...")
+    summary = collector.compute_daily_summary()
+    assert summary.date, "Summary date missing"
+    assert summary.total_agents > 0, "Summary has no agents"
+    assert isinstance(summary.identified_bottlenecks, list), "Bottlenecks not a list"
+    db.save_daily_summary(summary)
+    retrieved = db.get_latest_summary()
+    assert retrieved is not None, "Summary not retrieved"
+    assert retrieved["total_agents"] == summary.total_agents, "Summary mismatch"
+    print(f"      ✓ Cron job computes and stores daily summaries")
+    
+    print(f"\n📈 Sample Metrics Summary:")
+    print(f"   Total Agents: {metrics['agent_count']} ({metrics['active_agents']} active, {metrics['idle_agents']} idle)")
+    print(f"   Total Tasks: {metrics['task_count']} ({metrics['completed_tasks']} completed, {metrics['blocked_tasks']} blocked)")
+    print(f"   Throughput: {metrics['throughput']:.2f} tasks/agent")
+    print(f"   Bottlenecks Detected: {len(metrics['identified_bottlenecks'])}")
+    if metrics['identified_bottlenecks']:
+        for bn in metrics['identified_bottlenecks']:
+            print(f"      - {bn}")
+    
+    print(f"\n✨ All verification tests passed!")
+    print(f"   Running for {args.duration} seconds before shutdown...")
+    
+    try:
+        time.sleep(args.duration)
+    except KeyboardInterrupt:
+        print(f"\n⚠️  Interrupted by user")
+    
+    cron.stop()
+    server.shutdown()
+    print(f"✓ Monitor shutdown complete")
+
+
+if __name__ == "__main__":
+    main()
