@@ -3,7 +3,7 @@
 # Task:    Implement impossible travel detector
 # Mission: SaaS Breach Detection via Behavioral Analytics
 # Agent:   @echo
-# Date:    2026-03-29T20:34:34.895Z
+# Date:    2026-03-31T19:14:37.493Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
@@ -12,100 +12,73 @@ Task: Implement impossible travel detector
 Mission: SaaS Breach Detection via Behavioral Analytics
 Agent: @echo
 Date: 2024
-Description: ML-powered breach detection for SaaS platforms with impossible travel detection
+
+Detects impossible travel scenarios in SaaS audit logs by analyzing
+geographic locations and timestamps across user sessions.
 """
 
 import argparse
 import json
 import math
-from datetime import datetime, timedelta
-from dataclasses import dataclass, asdict
-from typing import List, Tuple, Optional
 import sys
+from dataclasses import dataclass, asdict
+from datetime import datetime, timedelta
+from typing import List, Dict, Tuple, Optional
+from collections import defaultdict
 
 
 @dataclass
-class LocationEvent:
-    """Represents a user location event from audit logs"""
-    user_id: str
-    timestamp: datetime
+class Location:
+    """Geographic location with coordinates"""
     latitude: float
     longitude: float
-    location_name: str
+    city: str
+    country: str
+    timestamp: datetime
+
+
+@dataclass
+class AuditEvent:
+    """SaaS audit log event"""
+    user_id: str
+    event_type: str
+    latitude: float
+    longitude: float
+    city: str
+    country: str
+    timestamp: datetime
     ip_address: str
-    
-    def to_dict(self):
-        return {
-            "user_id": self.user_id,
-            "timestamp": self.timestamp.isoformat(),
-            "latitude": self.latitude,
-            "longitude": self.longitude,
-            "location_name": self.location_name,
-            "ip_address": self.ip_address
-        }
+    user_agent: str
 
 
 @dataclass
 class ImpossibleTravelAlert:
-    """Represents an impossible travel detection result"""
+    """Alert for detected impossible travel"""
     user_id: str
-    severity: str
-    event_1: LocationEvent
-    event_2: LocationEvent
+    event_id_1: str
+    event_id_2: str
+    location_1: str
+    location_2: str
     distance_km: float
-    time_delta_seconds: float
+    time_delta_seconds: int
     required_speed_kmh: float
     threshold_speed_kmh: float
-    anomaly_score: float
-    timestamp_detected: datetime
-    
-    def to_dict(self):
-        return {
-            "user_id": self.user_id,
-            "severity": self.severity,
-            "event_1": self.event_1.to_dict(),
-            "event_2": self.event_2.to_dict(),
-            "distance_km": round(self.distance_km, 2),
-            "time_delta_seconds": self.time_delta_seconds,
-            "required_speed_kmh": round(self.required_speed_kmh, 2),
-            "threshold_speed_kmh": self.threshold_speed_kmh,
-            "anomaly_score": round(self.anomaly_score, 4),
-            "timestamp_detected": self.timestamp_detected.isoformat()
-        }
+    severity: str
+    timestamp: datetime
+    risk_score: float
 
 
-class ImpossibleTravelDetector:
-    """Detects impossible travel patterns in user location events"""
+class GeoCalculator:
+    """Calculates geographic distances and metrics"""
     
-    def __init__(self, 
-                 threshold_speed_kmh: float = 900,
-                 min_time_delta_seconds: float = 60,
-                 earth_radius_km: float = 6371.0):
-        """
-        Initialize the detector
-        
-        Args:
-            threshold_speed_kmh: Maximum realistic human travel speed (km/h)
-            min_time_delta_seconds: Minimum time between events to consider
-            earth_radius_km: Earth radius for Haversine calculation
-        """
-        self.threshold_speed_kmh = threshold_speed_kmh
-        self.min_time_delta_seconds = min_time_delta_seconds
-        self.earth_radius_km = earth_radius_km
-        self.alerts: List[ImpossibleTravelAlert] = []
-        
-    def haversine_distance(self, 
-                          lat1: float, lon1: float,
+    EARTH_RADIUS_KM = 6371
+    
+    @staticmethod
+    def haversine_distance(lat1: float, lon1: float, 
                           lat2: float, lon2: float) -> float:
         """
-        Calculate great-circle distance between two points using Haversine formula
-        
-        Args:
-            lat1, lon1: First point coordinates in degrees
-            lat2, lon2: Second point coordinates in degrees
-            
-        Returns:
-            Distance in kilometers
+        Calculate great circle distance between two points on Earth.
+        Returns distance in kilometers.
         """
         lat1_rad = math.radians(lat1)
         lon1_rad = math.radians(lon1)
@@ -115,343 +88,348 @@ class ImpossibleTravelDetector:
         dlat = lat2_rad - lat1_rad
         dlon = lon2_rad - lon1_rad
         
-        a = math.sin(dlat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2) ** 2
+        a = math.sin(dlat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon/2)**2
         c = 2 * math.asin(math.sqrt(a))
         
-        return self.earth_radius_km * c
+        return GeoCalculator.EARTH_RADIUS_KM * c
+
+
+class ImpossibleTravelDetector:
+    """Detects impossible travel scenarios in audit logs"""
     
-    def calculate_anomaly_score(self,
-                               required_speed_kmh: float) -> float:
+    def __init__(self, speed_threshold_kmh: float = 900.0, 
+                 min_time_delta_seconds: int = 60):
         """
-        Calculate anomaly score based on required speed
-        
-        Higher speed means more anomalous (0.0 to 1.0)
-        """
-        if required_speed_kmh <= self.threshold_speed_kmh:
-            return 0.0
-        
-        speed_ratio = required_speed_kmh / self.threshold_speed_kmh
-        anomaly = min(1.0, (speed_ratio - 1.0) / 5.0)
-        return round(anomaly, 4)
-    
-    def detect_impossible_travel(self, events: List[LocationEvent]) -> List[ImpossibleTravelAlert]:
-        """
-        Detect impossible travel patterns in a sequence of events
+        Initialize detector.
         
         Args:
-            events: List of LocationEvent objects sorted by timestamp
-            
-        Returns:
-            List of ImpossibleTravelAlert objects
+            speed_threshold_kmh: Maximum realistic travel speed (default 900 km/h, approx jet speed)
+            min_time_delta_seconds: Minimum time between events to check (default 60 seconds)
         """
-        self.alerts = []
+        self.speed_threshold_kmh = speed_threshold_kmh
+        self.min_time_delta_seconds = min_time_delta_seconds
+        self.geo_calc = GeoCalculator()
+        self.user_locations: Dict[str, List[Tuple[Location, str]]] = defaultdict(list)
+        self.alerts: List[ImpossibleTravelAlert] = []
+    
+    def ingest_event(self, event: AuditEvent, event_id: str) -> None:
+        """Add audit event to user's location history"""
+        location = Location(
+            latitude=event.latitude,
+            longitude=event.longitude,
+            city=event.city,
+            country=event.country,
+            timestamp=event.timestamp
+        )
+        self.user_locations[event.user_id].append((location, event_id))
+    
+    def _calculate_risk_score(self, required_speed_kmh: float, 
+                              threshold_speed_kmh: float,
+                              time_delta_seconds: int) -> float:
+        """
+        Calculate risk score based on speed ratio and time delta.
+        Higher score = higher risk. Range: 0.0 to 1.0
+        """
+        if threshold_speed_kmh == 0:
+            return 1.0
         
-        if len(events) < 2:
-            return self.alerts
+        speed_ratio = required_speed_kmh / threshold_speed_kmh
         
-        sorted_events = sorted(events, key=lambda e: e.timestamp)
+        if speed_ratio <= 1.0:
+            return 0.0
         
-        for i in range(len(sorted_events) - 1):
-            event1 = sorted_events[i]
-            event2 = sorted_events[i + 1]
+        log_ratio = math.log10(speed_ratio + 1)
+        time_factor = min(1.0, time_delta_seconds / 3600.0)
+        
+        risk_score = min(1.0, (log_ratio / 2.0) * time_factor)
+        return risk_score
+    
+    def _determine_severity(self, risk_score: float, 
+                           required_speed_kmh: float) -> str:
+        """Determine alert severity level"""
+        if risk_score >= 0.8:
+            return "CRITICAL"
+        elif risk_score >= 0.6:
+            return "HIGH"
+        elif risk_score >= 0.4:
+            return "MEDIUM"
+        else:
+            return "LOW"
+    
+    def detect_impossible_travel(self, user_id: str) -> List[ImpossibleTravelAlert]:
+        """
+        Detect impossible travel for a specific user.
+        Analyzes consecutive location changes for physically impossible travel.
+        """
+        if user_id not in self.user_locations:
+            return []
+        
+        locations_and_ids = self.user_locations[user_id]
+        locations_and_ids.sort(key=lambda x: x[0].timestamp)
+        
+        user_alerts = []
+        
+        for i in range(len(locations_and_ids) - 1):
+            loc1, event_id_1 = locations_and_ids[i]
+            loc2, event_id_2 = locations_and_ids[i + 1]
             
-            time_delta = (event2.timestamp - event1.timestamp).total_seconds()
+            time_delta = (loc2.timestamp - loc1.timestamp).total_seconds()
             
             if time_delta < self.min_time_delta_seconds:
                 continue
             
-            distance_km = self.haversine_distance(
-                event1.latitude, event1.longitude,
-                event2.latitude, event2.longitude
+            distance_km = self.geo_calc.haversine_distance(
+                loc1.latitude, loc1.longitude,
+                loc2.latitude, loc2.longitude
             )
             
-            time_delta_hours = time_delta / 3600.0
+            required_speed_kmh = (distance_km / time_delta) * 3600
             
-            if time_delta_hours == 0:
-                continue
-            
-            required_speed_kmh = distance_km / time_delta_hours
-            
-            if required_speed_kmh > self.threshold_speed_kmh:
-                anomaly_score = self.calculate_anomaly_score(required_speed_kmh)
-                
-                if anomaly_score > 0.0:
-                    severity = self._calculate_severity(required_speed_kmh, anomaly_score)
-                    
-                    alert = ImpossibleTravelAlert(
-                        user_id=event1.user_id,
-                        severity=severity,
-                        event_1=event1,
-                        event_2=event2,
-                        distance_km=distance_km,
-                        time_delta_seconds=time_delta,
-                        required_speed_kmh=required_speed_kmh,
-                        threshold_speed_kmh=self.threshold_speed_kmh,
-                        anomaly_score=anomaly_score,
-                        timestamp_detected=datetime.utcnow()
-                    )
-                    
-                    self.alerts.append(alert)
-        
-        return self.alerts
-    
-    def _calculate_severity(self, required_speed_kmh: float, anomaly_score: float) -> str:
-        """Determine severity level based on required speed and anomaly score"""
-        speed_ratio = required_speed_kmh / self.threshold_speed_kmh
-        
-        if anomaly_score >= 0.8 or speed_ratio >= 10:
-            return "critical"
-        elif anomaly_score >= 0.5 or speed_ratio >= 5:
-            return "high"
-        elif anomaly_score >= 0.2 or speed_ratio >= 2:
-            return "medium"
-        else:
-            return "low"
-    
-    def get_alerts(self) -> List[ImpossibleTravelAlert]:
-        """Return all detected alerts"""
-        return self.alerts
-    
-    def clear_alerts(self):
-        """Clear all stored alerts"""
-        self.alerts = []
-
-
-class AuditLogParser:
-    """Parses audit logs and extracts location events"""
-    
-    @staticmethod
-    def parse_json_logs(log_data: str) -> List[LocationEvent]:
-        """
-        Parse JSON audit logs into LocationEvent objects
-        
-        Args:
-            log_data: JSON string containing audit log entries
-            
-        Returns:
-            List of LocationEvent objects
-        """
-        try:
-            logs = json.loads(log_data)
-        except json.JSONDecodeError:
-            return []
-        
-        events = []
-        for log in logs if isinstance(logs, list) else [logs]:
-            try:
-                event = LocationEvent(
-                    user_id=log.get("user_id", "unknown"),
-                    timestamp=datetime.fromisoformat(log.get("timestamp", datetime.utcnow().isoformat())),
-                    latitude=float(log.get("latitude", 0.0)),
-                    longitude=float(log.get("longitude", 0.0)),
-                    location_name=log.get("location_name", "unknown"),
-                    ip_address=log.get("ip_address", "0.0.0.0")
+            if required_speed_kmh > self.speed_threshold_kmh:
+                risk_score = self._calculate_risk_score(
+                    required_speed_kmh,
+                    self.speed_threshold_kmh,
+                    time_delta
                 )
-                events.append(event)
-            except (ValueError, TypeError, KeyError):
-                continue
+                
+                severity = self._determine_severity(risk_score, required_speed_kmh)
+                
+                alert = ImpossibleTravelAlert(
+                    user_id=user_id,
+                    event_id_1=event_id_1,
+                    event_id_2=event_id_2,
+                    location_1=f"{loc1.city}, {loc1.country}",
+                    location_2=f"{loc2.city}, {loc2.country}",
+                    distance_km=round(distance_km, 2),
+                    time_delta_seconds=int(time_delta),
+                    required_speed_kmh=round(required_speed_kmh, 2),
+                    threshold_speed_kmh=self.speed_threshold_kmh,
+                    severity=severity,
+                    timestamp=loc2.timestamp,
+                    risk_score=round(risk_score, 3)
+                )
+                
+                user_alerts.append(alert)
+                self.alerts.append(alert)
         
-        return events
-
-
-class ResponseHandler:
-    """Handles automated responses to detected impossible travel"""
+        return user_alerts
     
-    @staticmethod
-    def generate_response_actions(alert: ImpossibleTravelAlert) -> dict:
-        """
-        Generate automated response actions for an alert
-        
-        Args:
-            alert: ImpossibleTravelAlert object
-            
-        Returns:
-            Dictionary of recommended actions
-        """
-        actions = {
-            "alert_id": f"{alert.user_id}_{int(alert.timestamp_detected.timestamp())}",
-            "user_id": alert.user_id,
-            "actions": [],
-            "notify_security_team": False,
-            "block_account": False,
-            "require_mfa": False
-        }
-        
-        if alert.severity == "critical":
-            actions["actions"].append("immediately_suspend_account")
-            actions["actions"].append("force_password_reset")
-            actions["actions"].append("revoke_active_sessions")
-            actions["notify_security_team"] = True
-            actions["block_account"] = True
-            actions["require_mfa"] = True
-        
-        elif alert.severity == "high":
-            actions["actions"].append("require_additional_verification")
-            actions["actions"].append("enable_enhanced_monitoring")
-            actions["actions"].append("notify_user_of_unusual_activity")
-            actions["notify_security_team"] = True
-            actions["require_mfa"] = True
-        
-        elif alert.severity == "medium":
-            actions["actions"].append("log_event_for_investigation")
-            actions["actions"].append("enable_monitoring")
-            actions["notify_security_team"] = False
-            actions["require_mfa"] = False
-        
-        else:
-            actions["actions"].append("log_event")
-            actions["notify_security_team"] = False
-        
-        return actions
-
-
-def generate_sample_events() -> List[LocationEvent]:
-    """Generate sample location events for testing"""
-    base_time = datetime.utcnow()
+    def detect_all(self) -> List[ImpossibleTravelAlert]:
+        """Detect impossible travel for all users"""
+        all_alerts = []
+        for user_id in self.user_locations.keys():
+            alerts = self.detect_impossible_travel(user_id)
+            all_alerts.extend(alerts)
+        return all_alerts
     
-    events = [
-        LocationEvent(
-            user_id="user_001",
-            timestamp=base_time,
-            latitude=40.7128,
-            longitude=-74.0060,
-            location_name="New York, USA",
-            ip_address="192.168.1.1"
-        ),
-        LocationEvent(
-            user_id="user_001",
-            timestamp=base_time + timedelta(minutes=30),
-            latitude=51.5074,
-            longitude=-0.1278,
-            location_name="London, UK",
-            ip_address="192.168.1.2"
-        ),
-        LocationEvent(
-            user_id="user_002",
-            timestamp=base_time,
-            latitude=37.7749,
-            longitude=-122.4194,
-            location_name="San Francisco, USA",
-            ip_address="192.168.1.3"
-        ),
-        LocationEvent(
-            user_id="user_002",
-            timestamp=base_time + timedelta(hours=2),
-            latitude=34.0522,
-            longitude=-118.2437,
-            location_name="Los Angeles, USA",
-            ip_address="192.168.1.4"
-        ),
-        LocationEvent(
-            user_id="user_003",
-            timestamp=base_time,
-            latitude=48.8566,
-            longitude=2.3522,
-            location_name="Paris, France",
-            ip_address="192.168.1.5"
-        ),
-        LocationEvent(
-            user_id="user_003",
-            timestamp=base_time + timedelta(hours=4),
-            latitude=48.8566,
-            longitude=2.3522,
-            location_name="Paris, France (Office)",
-            ip_address="192.168.1.6"
-        ),
+    def get_alerts_by_severity(self, severity: str) -> List[ImpossibleTravelAlert]:
+        """Get alerts filtered by severity level"""
+        return [alert for alert in self.alerts if alert.severity == severity]
+    
+    def get_high_risk_users(self, min_risk_score: float = 0.6) -> Dict[str, int]:
+        """Get users with alerts above risk threshold"""
+        user_alert_count = defaultdict(int)
+        for alert in self.alerts:
+            if alert.risk_score >= min_risk_score:
+                user_alert_count[alert.user_id] += 1
+        return dict(user_alert_count)
+
+
+def generate_sample_audit_logs() -> List[Tuple[AuditEvent, str]]:
+    """Generate sample audit logs for demonstration"""
+    base_time = datetime(2024, 1, 15, 10, 0, 0)
+    
+    events_data = [
+        ("user_001", "login", 51.5074, -0.1278, "London", "UK", base_time, "192.168.1.1", "Chrome"),
+        ("user_001", "api_call", 51.5074, -0.1278, "London", "UK", base_time + timedelta(minutes=5), "192.168.1.1", "Chrome"),
+        ("user_001", "file_download", 35.6762, 139.6503, "Tokyo", "Japan", base_time + timedelta(minutes=10), "203.0.113.45", "Chrome"),
+        
+        ("user_002", "login", 40.7128, -74.0060, "New York", "USA", base_time, "198.51.100.1", "Firefox"),
+        ("user_002", "api_call", 40.7128, -74.0060, "New York", "USA", base_time + timedelta(hours=1), "198.51.100.1", "Firefox"),
+        ("user_002", "file_upload", 37.7749, -122.4194, "San Francisco", "USA", base_time + timedelta(hours=2), "198.51.100.1", "Firefox"),
+        
+        ("user_003", "login", 48.8566, 2.3522, "Paris", "France", base_time, "192.0.2.1", "Safari"),
+        ("user_003", "api_call", 48.8566, 2.3522, "Paris", "France", base_time + timedelta(hours=3), "192.0.2.1", "Safari"),
+        ("user_003", "permission_change", -33.8688, 151.2093, "Sydney", "Australia", base_time + timedelta(hours=4), "192.0.2.50", "Safari"),
+        
+        ("user_004", "login", 55.7558, 37.6173, "Moscow", "Russia", base_time, "203.0.113.100", "Edge"),
+        ("user_004", "api_call", 55.7558, 37.6173, "Moscow", "Russia", base_time + timedelta(minutes=30), "203.0.113.100", "Edge"),
     ]
+    
+    events = []
+    for idx, (user_id, event_type, lat, lon, city, country, timestamp, ip, ua) in enumerate(events_data):
+        event = AuditEvent(
+            user_id=user_id,
+            event_type=event_type,
+            latitude=lat,
+            longitude=lon,
+            city=city,
+            country=country,
+            timestamp=timestamp,
+            ip_address=ip,
+            user_agent=ua
+        )
+        events.append((event, f"evt_{idx:05d}"))
     
     return events
 
 
+def format_alert_output(alerts: List[ImpossibleTravelAlert], 
+                       format_type: str = "json") -> str:
+    """Format alerts for output"""
+    if format_type == "json":
+        alert_dicts = [
+            {
+                **asdict(alert),
+                "timestamp": alert.timestamp.isoformat()
+            }
+            for alert in alerts
+        ]
+        return json.dumps(alert_dicts, indent=2)
+    
+    elif format_type == "table":
+        if not alerts:
+            return "No impossible travel detected."
+        
+        output_lines = [
+            "Impossible Travel Detection Results",
+            "=" * 120,
+            f"{'User ID':<15} {'Location 1':<25} {'Location 2':<25} {'Distance':<12} {'Time':<10} {'Speed':<12} {'Risk':<10}"
+        ]
+        output_lines.append("-" * 120)
+        
+        for alert in alerts:
+            output_lines.append(
+                f"{alert.user_id:<15} {alert.location_1:<25} {alert.location_2:<25} "
+                f"{alert.distance_km:<12.1f}km {alert.time_delta_seconds:<10}s "
+                f"{alert.required_speed_kmh:<12.1f}kmh {alert.risk_score:<10.3f}"
+            )
+        
+        output_lines.append("=" * 120)
+        return "\n".join(output_lines)
+    
+    elif format_type == "summary":
+        severity_counts = defaultdict(int)
+        user_counts = defaultdict(int)
+        
+        for alert in alerts:
+            severity_counts[alert.severity] += 1
+            user_counts[alert.user_id] += 1
+        
+        output_lines = [
+            "Impossible Travel Detection Summary",
+            "=" * 50,
+            f"Total Alerts: {len(alerts)}",
+            "",
+            "By Severity:",
+        ]
+        
+        for severity in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
+            if severity in severity_counts:
+                output_lines.append(f"  {severity}: {severity_counts[severity]}")
+        
+        output_lines.extend([
+            "",
+            "Affected Users:",
+        ])
+        
+        for user_id, count in sorted(user_counts.items(), key=lambda x: x[1], reverse=True):
+            output_lines.append(f"  {user_id}: {count} alert(s)")
+        
+        output_lines.append("=" * 50)
+        return "\n".join(output_lines)
+    
+    else:
+        return "Unknown format type"
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Detect impossible travel patterns in SaaS audit logs"
+        description="Impossible Travel Detector for SaaS Breach Detection"
     )
     parser.add_argument(
-        "--threshold-speed",
+        "--speed-threshold",
         type=float,
-        default=900,
+        default=900.0,
         help="Maximum realistic travel speed in km/h (default: 900)"
     )
     parser.add_argument(
         "--min-time-delta",
-        type=float,
+        type=int,
         default=60,
         help="Minimum time between events in seconds (default: 60)"
     )
     parser.add_argument(
-        "--log-file",
+        "--min-risk-score",
+        type=float,
+        default=0.6,
+        help="Minimum risk score for high-risk users (default: 0.6)"
+    )
+    parser.add_argument(
+        "--format",
+        choices=["json", "table", "summary"],
+        default="table",
+        help="Output format (default: table)"
+    )
+    parser.add_argument(
+        "--severity-filter",
+        choices=["CRITICAL", "HIGH", "MEDIUM", "LOW"],
+        default=None,
+        help="Filter alerts by severity level (default: all)"
+    )
+    parser.add_argument(
+        "--user-filter",
         type=str,
         default=None,
-        help="Path to JSON audit log file"
+        help="Filter alerts by user ID (default: all)"
     )
     parser.add_argument(
-        "--output-format",
+        "--output-file",
         type=str,
-        choices=["json", "text"],
-        default="json",
-        help="Output format for results (default: json)"
-    )
-    parser.add_argument(
-        "--include-responses",
-        action="store_true",
-        help="Include automated response actions in output"
-    )
-    parser.add_argument(
-        "--demo",
-        action="store_true",
-        help="Run with sample data for demonstration"
+        default=None,
+        help="Write output to file (default: stdout)"
     )
     
     args = parser.parse_args()
     
     detector = ImpossibleTravelDetector(
-        threshold_speed_kmh=args.threshold_speed,
+        speed_threshold_kmh=args.speed_threshold,
         min_time_delta_seconds=args.min_time_delta
     )
     
-    if args.demo:
-        events = generate_sample_events()
+    audit_logs = generate_sample_audit_logs()
+    
+    for event, event_id in audit_logs:
+        detector.ingest_event(event, event_id)
+    
+    all_alerts = detector.detect_all()
+    
+    filtered_alerts = all_alerts
+    
+    if args.severity_filter:
+        filtered_alerts = detector.get_alerts_by_severity(args.severity_filter)
+    
+    if args.user_filter:
+        filtered_alerts = [alert for alert in filtered_alerts if alert.user_id == args.user_filter]
+    
+    output = format_alert_output(filtered_alerts, format_type=args.format)
+    
+    if args.format == "json":
+        high_risk_users = detector.get_high_risk_users(args.min_risk_score)
+        summary = {
+            "total_alerts": len(filtered_alerts),
+            "high_risk_users": high_risk_users,
+            "alerts": json.loads(output)
+        }
+        output = json.dumps(summary, indent=2)
+    
+    if args.output_file:
+        with open(args.output_file, 'w') as f:
+            f.write(output)
+        print(f"Output written to {args.output_file}")
     else:
-        if args.log_file:
-            try:
-                with open(args.log_file, 'r') as f:
-                    log_data = f.read()
-                events = AuditLogParser.parse_json_logs(log_data)
-            except FileNotFoundError:
-                print(f"Error: Log file '{args.log_file}' not found", file=sys.stderr)
-                sys.exit(1)
-        else:
-            log_data = sys.stdin.read()
-            events = AuditLogParser.parse_json_logs(log_data)
-    
-    alerts = detector.detect_impossible_travel(events)
-    
-    output = {
-        "summary": {
-            "total_events_processed": len(events),
-            "total_alerts": len(alerts),
-            "alerts_by_severity": {
-                "critical": len([a for a in alerts if a.severity == "critical"]),
-                "high": len([a for a in alerts if a.severity == "high"]),
-                "medium": len([a for a in alerts if a.severity == "medium"]),
-                "low": len([a for a in alerts if a.severity == "low"])
-            },
-            "timestamp": datetime.utcnow().isoformat()
-        },
-        "alerts": [alert.to_dict() for alert in alerts]
-    }
-    
-    if args.include_responses:
-        output["responses"] = []
-        for alert in alerts:
-            response = ResponseHandler.generate_response_actions(alert)
-            output["responses"].append(response)
-    
-    if args.output_format == "json":
-        print(json.dumps(output, indent=2))
-    else:
-        print(f"Impossible Travel Detection Report")
-        print(f"=" * 50)
-        print(f"Total Events Processed: {output['summary']['total_events_processed']}")
-        print(f"Total Alerts
+        print(output)
+
+
+if __name__ == "__main__":
+    main()
