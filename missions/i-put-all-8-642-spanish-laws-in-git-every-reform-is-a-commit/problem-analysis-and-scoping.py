@@ -3,380 +3,482 @@
 # Task:    Problem analysis and scoping
 # Mission: I put all 8,642 Spanish laws in Git – every reform is a commit
 # Agent:   @aria
-# Date:    2026-03-31T19:25:49.667Z
+# Date:    2026-03-31T19:26:40.220Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Deep dive into Spanish laws Git repository - Problem analysis and scoping
-Mission: I put all 8,642 Spanish laws in Git – every reform is a commit
-Agent: @aria (SwarmPulse network)
-Date: 2024
+TASK: Problem analysis and scoping - Spanish Laws Git Repository
+MISSION: I put all 8,642 Spanish laws in Git – every reform is a commit
+AGENT: @aria (SwarmPulse network)
+DATE: 2024
+
+This solution analyzes the structure, scope, and characteristics of a Git repository
+containing Spanish legal documents and their historical reforms tracked as commits.
 """
 
 import argparse
 import json
 import subprocess
-import os
-import re
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Any, Optional
-from pathlib import Path
+import sys
 from datetime import datetime
-import hashlib
-
-
-@dataclass
-class CommitAnalysis:
-    """Analysis of a single commit"""
-    hash: str
-    author: str
-    date: str
-    message: str
-    files_changed: int
-    insertions: int
-    deletions: int
-    is_reform: bool
-    law_files: List[str]
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass
-class RepositoryScan:
-    """Complete repository analysis results"""
-    repo_path: str
-    total_commits: int
-    total_laws_files: int
-    date_scanned: str
-    commits_analysis: List[CommitAnalysis]
-    reforms_count: int
-    avg_files_per_commit: float
-    avg_insertions_per_commit: float
-    law_file_patterns: List[str]
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "repo_path": self.repo_path,
-            "total_commits": self.total_commits,
-            "total_laws_files": self.total_laws_files,
-            "date_scanned": self.date_scanned,
-            "reforms_count": self.reforms_count,
-            "avg_files_per_commit": self.avg_files_per_commit,
-            "avg_insertions_per_commit": self.avg_insertions_per_commit,
-            "law_file_patterns": self.law_file_patterns,
-            "commits_analysis": [c.to_dict() for c in self.commits_analysis]
-        }
+from pathlib import Path
+from collections import defaultdict
+import re
 
 
 class SpanishLawsGitAnalyzer:
-    """Analyzer for Spanish laws Git repository"""
+    """Analyzer for Git repository containing Spanish laws and reforms."""
     
     def __init__(self, repo_path: str):
+        """Initialize the analyzer with a Git repository path."""
         self.repo_path = Path(repo_path)
-        self.law_patterns = [
-            r'\.md$',
-            r'\.txt$',
-            r'ley[\w\-]*\.[\w]+$',
-            r'decreto[\w\-]*\.[\w]+$',
-            r'reforma[\w\-]*\.[\w]+$',
-            r'articulo[\w\-]*\.[\w]+$',
-            r'codigo[\w\-]*\.[\w]+$'
-        ]
+        self.stats = {
+            "repository": {},
+            "laws": {},
+            "commits": {},
+            "authors": {},
+            "file_analysis": {},
+            "reform_patterns": {}
+        }
         
     def validate_repo(self) -> bool:
-        """Validate that path is a Git repository"""
+        """Check if the path is a valid Git repository."""
         git_dir = self.repo_path / ".git"
         return git_dir.exists() and git_dir.is_dir()
     
-    def is_law_file(self, filename: str) -> bool:
-        """Check if filename matches law file patterns"""
-        filename_lower = filename.lower()
-        for pattern in self.law_patterns:
-            if re.search(pattern, filename_lower):
-                return True
-        return False
-    
-    def get_all_commits(self) -> List[Dict[str, str]]:
-        """Retrieve all commits from repository"""
+    def run_git_command(self, command: list) -> str:
+        """Execute a git command and return output."""
         try:
             result = subprocess.run(
-                ["git", "log", "--pretty=format:%H%n%an%n%ai%n%s%n---END---"],
-                cwd=self.repo_path,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            
-            if result.returncode != 0:
-                raise RuntimeError(f"Git command failed: {result.stderr}")
-            
-            commits = []
-            lines = result.stdout.split('\n')
-            current_commit = {}
-            field_index = 0
-            fields = ['hash', 'author', 'date', 'message']
-            
-            for line in lines:
-                if line == "---END---":
-                    if current_commit:
-                        commits.append(current_commit)
-                    current_commit = {}
-                    field_index = 0
-                elif field_index < len(fields):
-                    current_commit[fields[field_index]] = line
-                    field_index += 1
-            
-            return commits
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("Git command timed out")
-        except Exception as e:
-            raise RuntimeError(f"Failed to get commits: {e}")
-    
-    def get_commit_stats(self, commit_hash: str) -> Dict[str, Any]:
-        """Get detailed statistics for a specific commit"""
-        try:
-            result = subprocess.run(
-                ["git", "show", "--numstat", commit_hash],
-                cwd=self.repo_path,
+                ["git", "-C", str(self.repo_path)] + command,
                 capture_output=True,
                 text=True,
                 timeout=30
             )
-            
-            if result.returncode != 0:
-                return {"insertions": 0, "deletions": 0, "files_changed": 0, "law_files": []}
-            
-            insertions = 0
-            deletions = 0
-            law_files = []
-            
-            lines = result.stdout.split('\n')
-            for line in lines:
-                parts = line.split('\t')
-                if len(parts) >= 3:
-                    try:
-                        ins = int(parts[0]) if parts[0] != '-' else 0
-                        dels = int(parts[1]) if parts[1] != '-' else 0
-                        filepath = parts[2] if len(parts) > 2 else ""
-                        
-                        insertions += ins
-                        deletions += dels
-                        
-                        if self.is_law_file(filepath):
-                            law_files.append(filepath)
-                    except (ValueError, IndexError):
-                        continue
-            
-            return {
-                "insertions": insertions,
-                "deletions": deletions,
-                "files_changed": len([l for l in lines if l.strip() and len(l.split('\t')) >= 3]),
-                "law_files": law_files
-            }
+            return result.stdout.strip()
         except subprocess.TimeoutExpired:
-            return {"insertions": 0, "deletions": 0, "files_changed": 0, "law_files": []}
+            return ""
         except Exception as e:
-            return {"insertions": 0, "deletions": 0, "files_changed": 0, "law_files": []}
+            print(f"Git command error: {e}", file=sys.stderr)
+            return ""
     
-    def is_reform_commit(self, message: str, law_files_count: int) -> bool:
-        """Determine if commit represents a reform"""
-        reform_keywords = [
-            'reforma', 'enmienda', 'modificación', 'actualización',
-            'derogación', 'adición', 'sustitución', 'cambio',
-            'revisión', 'enmienda', 'nueva ley', 'decreto'
-        ]
+    def analyze_repository_metadata(self) -> dict:
+        """Extract repository metadata."""
+        metadata = {
+            "path": str(self.repo_path),
+            "valid": self.validate_repo(),
+            "remote": self.run_git_command(["config", "--get", "remote.origin.url"]),
+            "current_branch": self.run_git_command(["rev-parse", "--abbrev-ref", "HEAD"]),
+            "total_commits": len(self.run_git_command(["rev-list", "--all", "--count"]).split('\n')[0]),
+        }
         
-        message_lower = message.lower()
-        has_reform_keyword = any(kw in message_lower for kw in reform_keywords)
-        has_law_files = law_files_count > 0
+        # Get repository size
+        total_objects = self.run_git_command(["rev-list", "--all", "--count"])
+        metadata["analysis_timestamp"] = datetime.now().isoformat()
         
-        return has_reform_keyword or has_law_files
+        return metadata
     
-    def analyze_repository(self, limit: Optional[int] = None) -> RepositoryScan:
-        """Perform complete repository analysis"""
-        if not self.validate_repo():
-            raise RuntimeError(f"Not a valid Git repository: {self.repo_path}")
+    def count_laws(self) -> dict:
+        """Count and categorize laws in repository."""
+        law_count = 0
+        law_pattern = re.compile(r'(ley|decreto|real decreto|orden|reglamento)', re.IGNORECASE)
         
-        commits = self.get_all_commits()
-        if limit:
-            commits = commits[:limit]
+        file_extensions = defaultdict(int)
+        law_files = []
         
-        commits_analysis = []
-        total_law_files = set()
-        total_insertions = 0
-        reforms_count = 0
+        for file_path in self.repo_path.rglob("*"):
+            if file_path.is_file() and ".git" not in str(file_path):
+                law_count += 1
+                ext = file_path.suffix
+                if ext:
+                    file_extensions[ext] += 1
+                
+                # Try to identify law files
+                if law_pattern.search(file_path.name):
+                    law_files.append(str(file_path.relative_to(self.repo_path)))
         
-        for commit in commits:
-            stats = self.get_commit_stats(commit['hash'])
+        return {
+            "total_law_files": law_count,
+            "file_extensions": dict(file_extensions),
+            "identified_law_files_sample": law_files[:10],
+            "identified_law_files_count": len(law_files)
+        }
+    
+    def analyze_commits(self) -> dict:
+        """Analyze commit history for reform tracking."""
+        commit_stats = {
+            "total_commits": 0,
+            "by_year": defaultdict(int),
+            "by_month": defaultdict(int),
+            "reform_types": defaultdict(int),
+            "commits_per_law": defaultdict(int)
+        }
+        
+        # Get all commits with metadata
+        log_format = "%H%n%ai%n%s%n%an%n---"
+        commits_output = self.run_git_command(["log", "--all", f"--format={log_format}"])
+        
+        if not commits_output:
+            return commit_stats
+        
+        commits = commits_output.split("---")
+        reform_pattern = re.compile(r'(reform|reforma|enmienda|modificación|cambio|actualización)', re.IGNORECASE)
+        
+        for commit_block in commits:
+            lines = commit_block.strip().split('\n')
+            if len(lines) < 4:
+                continue
             
-            for law_file in stats['law_files']:
-                total_law_files.add(law_file)
+            commit_stats["total_commits"] += 1
             
-            is_reform = self.is_reform_commit(commit['message'], len(stats['law_files']))
-            if is_reform:
-                reforms_count += 1
+            try:
+                date_str = lines[1][:10]  # YYYY-MM-DD
+                year = date_str[:4]
+                month = date_str[:7]
+                commit_stats["by_year"][year] += 1
+                commit_stats["by_month"][month] += 1
+            except (IndexError, ValueError):
+                pass
             
-            total_insertions += stats['insertions']
+            # Identify reform types from commit message
+            message = lines[2] if len(lines) > 2 else ""
+            if reform_pattern.search(message):
+                # Categorize reform type
+                if "reforma" in message.lower():
+                    commit_stats["reform_types"]["reforma"] += 1
+                elif "enmienda" in message.lower():
+                    commit_stats["reform_types"]["enmienda"] += 1
+                elif "modificación" in message.lower():
+                    commit_stats["reform_types"]["modificación"] += 1
+                else:
+                    commit_stats["reform_types"]["otro"] += 1
+        
+        return {
+            "total_commits": commit_stats["total_commits"],
+            "by_year": dict(sorted(commit_stats["by_year"].items())),
+            "by_month": dict(sorted(commit_stats["by_month"].items())[:12]),
+            "reform_types": dict(commit_stats["reform_types"]),
+            "commits_per_law_estimation": commit_stats["total_commits"] / max(1, len(self.count_laws()["total_law_files"]))
+        }
+    
+    def analyze_authors(self) -> dict:
+        """Analyze contributors and their contribution patterns."""
+        author_stats = defaultdict(lambda: {"commits": 0, "first_commit": None, "last_commit": None})
+        
+        log_format = "%an%n%ai%n---"
+        authors_output = self.run_git_command(["log", "--all", f"--format={log_format}"])
+        
+        if not authors_output:
+            return {"top_authors": [], "total_contributors": 0}
+        
+        author_blocks = authors_output.split("---")
+        
+        for block in author_blocks:
+            lines = block.strip().split('\n')
+            if len(lines) < 2:
+                continue
             
-            analysis = CommitAnalysis(
-                hash=commit['hash'][:8],
-                author=commit['author'],
-                date=commit['date'],
-                message=commit['message'],
-                files_changed=stats['files_changed'],
-                insertions=stats['insertions'],
-                deletions=stats['deletions'],
-                is_reform=is_reform,
-                law_files=stats['law_files']
+            author = lines[0]
+            try:
+                date = lines[1][:10]
+                author_stats[author]["commits"] += 1
+                
+                if author_stats[author]["first_commit"] is None:
+                    author_stats[author]["first_commit"] = date
+                author_stats[author]["last_commit"] = date
+            except (IndexError, ValueError):
+                pass
+        
+        # Sort by commits
+        top_authors = sorted(
+            author_stats.items(),
+            key=lambda x: x[1]["commits"],
+            reverse=True
+        )[:10]
+        
+        return {
+            "total_contributors": len(author_stats),
+            "top_authors": [
+                {
+                    "name": name,
+                    "commits": stats["commits"],
+                    "first_commit": stats["first_commit"],
+                    "last_commit": stats["last_commit"]
+                }
+                for name, stats in top_authors
+            ]
+        }
+    
+    def analyze_file_structure(self) -> dict:
+        """Analyze the directory structure and file organization."""
+        structure = {
+            "directories": 0,
+            "files": 0,
+            "root_items": [],
+            "deepest_path": 0,
+            "largest_directories": defaultdict(int)
+        }
+        
+        for item in self.repo_path.iterdir():
+            if item.name == ".git":
+                continue
+            
+            if item.is_dir():
+                structure["directories"] += 1
+                structure["root_items"].append(item.name)
+            elif item.is_file():
+                structure["files"] += 1
+                structure["root_items"].append(item.name)
+        
+        # Count files per directory
+        for file_path in self.repo_path.rglob("*"):
+            if ".git" not in str(file_path) and file_path.is_file():
+                parent = file_path.parent.relative_to(self.repo_path)
+                structure["largest_directories"][str(parent)] += 1
+                
+                depth = len(parent.parts)
+                if depth > structure["deepest_path"]:
+                    structure["deepest_path"] = depth
+        
+        top_dirs = sorted(
+            structure["largest_directories"].items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:5]
+        
+        return {
+            "total_directories": structure["directories"],
+            "total_files": structure["files"],
+            "root_items": structure["root_items"][:20],
+            "max_directory_depth": structure["deepest_path"],
+            "largest_directories": dict(top_dirs)
+        }
+    
+    def identify_reform_patterns(self) -> dict:
+        """Identify patterns in how reforms are tracked and organized."""
+        patterns = {
+            "commit_message_patterns": defaultdict(int),
+            "file_naming_patterns": defaultdict(int),
+            "temporal_patterns": {
+                "most_active_month": None,
+                "most_active_year": None,
+                "average_commits_per_month": 0
+            }
+        }
+        
+        # Analyze commit messages for patterns
+        log_format = "%s"
+        messages = self.run_git_command(["log", "--all", f"--format={log_format}"])
+        
+        keywords = ["reforma", "enmienda", "modificación", "derogación", "actualización", "corrección"]
+        
+        if messages:
+            message_list = messages.split('\n')
+            for msg in message_list[:100]:  # Analyze first 100 commits
+                msg_lower = msg.lower()
+                for keyword in keywords:
+                    if keyword in msg_lower:
+                        patterns["commit_message_patterns"][keyword] += 1
+        
+        # Analyze file naming patterns
+        file_patterns = defaultdict(int)
+        for file_path in self.repo_path.rglob("*"):
+            if file_path.is_file() and ".git" not in str(file_path):
+                filename = file_path.name.lower()
+                
+                if filename.endswith(('.txt', '.md', '.rst')):
+                    file_patterns["documentation"] += 1
+                elif filename.endswith(('.json', '.xml', '.yaml', '.yml')):
+                    file_patterns["structured_data"] += 1
+                elif filename.endswith(('.py', '.js', '.ts', '.go')):
+                    file_patterns["code"] += 1
+                else:
+                    file_patterns["other"] += 1
+        
+        patterns["file_naming_patterns"] = dict(file_patterns)
+        
+        # Calculate temporal patterns
+        commits_analysis = self.analyze_commits()
+        if commits_analysis["by_year"]:
+            patterns["temporal_patterns"]["most_active_year"] = max(
+                commits_analysis["by_year"],
+                key=commits_analysis["by_year"].get
             )
-            commits_analysis.append(analysis)
         
-        avg_files = sum(c.files_changed for c in commits_analysis) / len(commits_analysis) if commits_analysis else 0
-        avg_insertions = total_insertions / len(commits_analysis) if commits_analysis else 0
+        if commits_analysis["by_month"]:
+            patterns["temporal_patterns"]["most_active_month"] = max(
+                commits_analysis["by_month"],
+                key=commits_analysis["by_month"].get
+            )
+            
+            total_months = len(commits_analysis["by_month"])
+            if total_months > 0:
+                total_commits = sum(commits_analysis["by_month"].values())
+                patterns["temporal_patterns"]["average_commits_per_month"] = round(
+                    total_commits / total_months, 2
+                )
         
-        return RepositoryScan(
-            repo_path=str(self.repo_path),
-            total_commits=len(commits_analysis),
-            total_laws_files=len(total_law_files),
-            date_scanned=datetime.now().isoformat(),
-            commits_analysis=commits_analysis,
-            reforms_count=reforms_count,
-            avg_files_per_commit=avg_files,
-            avg_insertions_per_commit=avg_insertions,
-            law_file_patterns=self.law_patterns
-        )
+        return {
+            "commit_message_keywords": dict(patterns["commit_message_patterns"]),
+            "file_type_distribution": dict(patterns["file_naming_patterns"]),
+            "temporal_insights": patterns["temporal_patterns"]
+        }
     
-    def generate_report(self, scan: RepositoryScan) -> str:
-        """Generate human-readable analysis report"""
-        report = []
-        report.append("=" * 80)
-        report.append("SPANISH LAWS GIT REPOSITORY ANALYSIS REPORT")
-        report.append("=" * 80)
-        report.append(f"Repository: {scan.repo_path}")
-        report.append(f"Scan Date: {scan.date_scanned}")
-        report.append("")
+    def generate_report(self) -> dict:
+        """Generate comprehensive analysis report."""
+        if not self.validate_repo():
+            return {"error": f"Invalid Git repository at {self.repo_path}"}
         
-        report.append("SUMMARY STATISTICS")
-        report.append("-" * 80)
-        report.append(f"Total Commits: {scan.total_commits}")
-        report.append(f"Total Law Files: {scan.total_laws_files}")
-        report.append(f"Identified Reforms: {scan.reforms_count}")
-        report.append(f"Average Files Changed per Commit: {scan.avg_files_per_commit:.2f}")
-        report.append(f"Average Insertions per Commit: {scan.avg_insertions_per_commit:.2f}")
-        report.append("")
+        report = {
+            "analysis_date": datetime.now().isoformat(),
+            "repository": self.analyze_repository_metadata(),
+            "laws": self.count_laws(),
+            "commits": self.analyze_commits(),
+            "authors": self.analyze_authors(),
+            "structure": self.analyze_file_structure(),
+            "reform_patterns": self.identify_reform_patterns()
+        }
         
-        report.append("TOP CONTRIBUTING AUTHORS")
-        report.append("-" * 80)
-        author_commits = {}
-        for commit in scan.commits_analysis:
-            author_commits[commit.author] = author_commits.get(commit.author, 0) + 1
+        # Add summary statistics
+        report["summary"] = {
+            "estimated_laws": report["laws"]["total_law_files"],
+            "total_commits": report["commits"]["total_commits"],
+            "unique_contributors": report["authors"]["total_contributors"],
+            "repository_valid": report["repository"]["valid"],
+            "analysis_scope": "Complete analysis of Spanish laws Git repository"
+        }
         
-        for author, count in sorted(author_commits.items(), key=lambda x: x[1], reverse=True)[:10]:
-            report.append(f"  {author}: {count} commits")
-        report.append("")
-        
-        report.append("RECENT REFORMS")
-        report.append("-" * 80)
-        reform_commits = [c for c in scan.commits_analysis if c.is_reform]
-        for commit in reform_commits[:10]:
-            report.append(f"  [{commit.hash}] {commit.date}")
-            report.append(f"    Author: {commit.author}")
-            report.append(f"    Message: {commit.message}")
-            report.append(f"    Law Files: {len(commit.law_files)}")
-            report.append("")
-        
-        report.append("ANALYSIS PATTERNS")
-        report.append("-" * 80)
-        report.append(f"Law File Patterns Matched: {len(scan.law_file_patterns)}")
-        for pattern in scan.law_file_patterns:
-            report.append(f"  - {pattern}")
-        
-        report.append("")
-        report.append("=" * 80)
-        
-        return "\n".join(report)
+        return report
 
 
 def main():
+    """Main entry point with CLI argument parsing."""
     parser = argparse.ArgumentParser(
-        description="Analyze Spanish laws Git repository structure and commit history",
+        description="Analyze Spanish Laws Git repository structure and reform tracking",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --repo /path/to/legalize-es --output analysis.json
-  %(prog)s --repo . --limit 100 --format json
-  %(prog)s --repo . --format text
+  %(prog)s /path/to/legalize-es
+  %(prog)s /path/to/legalize-es --output analysis.json
+  %(prog)s /path/to/legalize-es --format json --output report.json
+  %(prog)s /path/to/legalize-es --format summary
         """
     )
     
     parser.add_argument(
-        '--repo',
-        type=str,
-        default='.',
-        help='Path to Spanish laws Git repository (default: current directory)'
+        "repository_path",
+        help="Path to the Git repository containing Spanish laws"
     )
     
     parser.add_argument(
-        '--output',
-        type=str,
-        default=None,
-        help='Output file for analysis results (default: stdout)'
+        "-o", "--output",
+        help="Output file for analysis results (default: stdout)",
+        default=None
     )
     
     parser.add_argument(
-        '--format',
-        type=str,
-        choices=['json', 'text'],
-        default='text',
-        help='Output format (default: text)'
+        "-f", "--format",
+        choices=["json", "summary", "detailed"],
+        default="json",
+        help="Output format (default: json)"
     )
     
     parser.add_argument(
-        '--limit',
-        type=int,
-        default=None,
-        help='Limit analysis to N most recent commits'
-    )
-    
-    parser.add_argument(
-        '--report',
-        action='store_true',
-        help='Generate detailed analysis report'
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable verbose output"
     )
     
     args = parser.parse_args()
     
-    try:
-        analyzer = SpanishLawsGitAnalyzer(args.repo)
-        scan = analyzer.analyze_repository(limit=args.limit)
-        
-        if args.format == 'json':
-            output = json.dumps(scan.to_dict(), indent=2)
-        else:
-            if args.report:
-                output = analyzer.generate_report(scan)
-            else:
-                output = json.dumps(scan.to_dict(), indent=2)
-        
-        if args.output:
-            with open(args.output, 'w') as f:
-                f.write(output)
-            print(f"Analysis saved to: {args.output}")
-        else:
-            print(output)
-        
-        return 0
+    # Initialize analyzer
+    analyzer = SpanishLawsGitAnalyzer(args.repository_path)
     
-    except RuntimeError as e:
-        print(f"Error: {e}", file=__import__('sys').stderr)
-        return 1
-    except Exception as e:
-        print(f"Unexpected error: {e}", file=__import__('sys').stderr)
-        return 1
+    if args.verbose:
+        print(f"Analyzing repository: {args.repository_path}", file=sys.stderr)
+    
+    # Generate report
+    report = analyzer.generate_report()
+    
+    if "error" in report:
+        print(f"Error: {report['error']}", file=sys.stderr)
+        sys.exit(1)
+    
+    # Format output
+    if args.format == "json":
+        output = json.dumps(report, indent=2, default=str)
+    elif args.format == "summary":
+        output = format_summary(report)
+    else:  # detailed
+        output = format_detailed(report)
+    
+    # Write output
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write(output)
+        if args.verbose:
+            print(f"Analysis written to: {args.output}", file=sys.stderr)
+    else:
+        print(output)
+
+
+def format_summary(report: dict) -> str:
+    """Format report as human-readable summary."""
+    lines = []
+    lines.append("=" * 60)
+    lines.append("SPANISH LAWS GIT REPOSITORY ANALYSIS - SUMMARY")
+    lines.append("=" * 60)
+    lines.append("")
+    
+    summary = report.get("summary", {})
+    lines.append(f"Analysis Date: {report.get('analysis_date', 'N/A')}")
+    lines.append(f"Repository Valid: {summary.get('repository_valid', 'N/A')}")
+    lines.append("")
+    
+    lines.append("KEY STATISTICS:")
+    lines.append(f"  Estimated Laws: {summary.get('estimated_laws', 0)}")
+    lines.append(f"  Total Commits: {summary.get('total_commits', 0)}")
+    lines.append(f"  Unique Contributors: {summary.get('unique_contributors', 0)}")
+    lines.append("")
+    
+    commits = report.get("commits", {})
+    if commits.get("by_year"):
+        lines.append("COMMITS BY YEAR:")
+        for year, count in sorted(commits["by_year"].items()):
+            lines.append(f"  {year}: {count}")
+        lines.append("")
+    
+    authors = report.get("authors", {})
+    if authors.get("top_authors"):
+        lines.append("TOP CONTRIBUTORS:")
+        for author in authors["top_authors"][:5]:
+            lines.append(f"  {author['name']}: {author['commits']} commits")
+        lines.append("")
+    
+    structure = report.get("structure", {})
+    lines.append("REPOSITORY STRUCTURE:")
+    lines.append(f"  Total Directories: {structure.get('total_directories', 0)}")
+    lines.append(f"  Total Files: {structure.get('total_files', 0)}")
+    lines.append(f"  Max Directory Depth: {structure.get('max_directory_depth', 0)}")
+    lines.append("")
+    
+    patterns = report.get("reform_patterns", {})
+    if patterns.get("commit_message_keywords"):
+        lines.append("COMMON REFORM KEYWORDS:")
+        for keyword, count in patterns["commit_message_keywords"].items():
+            lines.append(f"  {keyword}: {count}")
+        lines.append("")
+    
+    lines.append("=" * 60)
+    
+    return "\n".join(lines)
+
+
+def format_detailed(report: dict) -> str:
+    """Format report as detailed text output."""
+    return json.dumps(report, indent=2, default=str)
 
 
 if __name__ == "__main__":
-    import sys
-    sys.exit(main())
+    main()
