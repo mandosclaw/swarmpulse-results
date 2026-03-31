@@ -3,387 +3,491 @@
 # Task:    Build SBOM generator
 # Mission: OSS Supply Chain Compromise Monitor
 # Agent:   @dex
-# Date:    2026-03-29T13:21:42.374Z
+# Date:    2026-03-31T18:52:44.285Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
-
 """
-SBOM Generator - Open Source Supply Chain Compromise Monitor
+SBOM (Software Bill of Materials) Generator
 Mission: OSS Supply Chain Compromise Monitor
-Agent: @dex (SwarmPulse)
-Date: 2025-01-15
+Agent: @dex
+Date: 2024
 """
 
 import json
-import hashlib
-import argparse
 import sys
+import argparse
+import hashlib
+import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Set
-import subprocess
-import re
-from collections import defaultdict
-import xml.etree.ElementTree as ET
+from typing import Dict, List, Any, Optional, Tuple
+import urllib.request
+import urllib.error
 
-class SBOMGenerator:
-    """Generate Software Bill of Materials for supply chain monitoring."""
+
+class DependencyParser:
+    """Parse various dependency manifest formats."""
     
-    SUPPORTED_FORMATS = ['json', 'xml', 'cyclonedx', 'spdx']
-    
-    def __init__(self, project_path: str, format_type: str = 'json'):
-        self.project_path = Path(project_path)
-        self.format_type = format_type.lower()
-        self.dependencies: Dict[str, Dict[str, Any]] = {}
-        self.metadata: Dict[str, Any] = {
-            'generated_at': datetime.utcnow().isoformat(),
-            'format': format_type,
-            'project_path': str(self.project_path)
-        }
-        
-        if self.format_type not in self.SUPPORTED_FORMATS:
-            raise ValueError(f"Unsupported format: {format_type}")
-    
-    def analyze_python_requirements(self) -> None:
-        """Analyze Python requirements.txt and setup.py files."""
-        requirements_files = [
-            self.project_path / 'requirements.txt',
-            self.project_path / 'requirements-dev.txt',
-            self.project_path / 'setup.py',
-            self.project_path / 'pyproject.toml',
-            self.project_path / 'Pipfile',
-        ]
-        
-        for req_file in requirements_files:
-            if req_file.exists():
-                self._parse_requirements_file(req_file)
-    
-    def _parse_requirements_file(self, file_path: Path) -> None:
-        """Parse various Python requirement file formats."""
-        try:
-            content = file_path.read_text()
-            
-            if file_path.name == 'setup.py':
-                self._parse_setup_py(content)
-            elif file_path.name == 'pyproject.toml':
-                self._parse_pyproject_toml(content)
-            elif file_path.name == 'Pipfile':
-                self._parse_pipfile(content)
-            else:
-                self._parse_requirements_txt(content)
-        except Exception as e:
-            print(f"Warning: Could not parse {file_path}: {e}", file=sys.stderr)
-    
-    def _parse_requirements_txt(self, content: str) -> None:
-        """Parse requirements.txt format."""
-        for line in content.strip().split('\n'):
+    @staticmethod
+    def parse_requirements_txt(content: str) -> List[Dict[str, Any]]:
+        """Parse Python requirements.txt format."""
+        deps = []
+        for line in content.split('\n'):
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
             
-            match = re.match(r'^([a-zA-Z0-9_\-]+)\s*([=!<>~;].*)?$', line)
-            if match:
-                package_name = match.group(1)
-                version_spec = match.group(2) or 'unspecified'
+            # Handle different requirement formats
+            spec_match = re.match(r'^([a-zA-Z0-9._-]+)\s*([><=!~]+.*)?$', line)
+            if spec_match:
+                name = spec_match.group(1)
+                version_spec = spec_match.group(2) or ""
                 
-                self._add_dependency(
-                    name=package_name,
-                    version=version_spec,
-                    source='requirements.txt',
-                    source_type='python_package'
-                )
+                # Extract version constraint
+                version = ""
+                constraint = ""
+                if version_spec:
+                    version_match = re.search(r'(\d+\.\d+[\w.-]*)', version_spec)
+                    if version_match:
+                        version = version_match.group(1)
+                    constraint = version_spec.strip()
+                
+                deps.append({
+                    "name": name,
+                    "version": version,
+                    "constraint": constraint,
+                    "type": "pip"
+                })
+        return deps
     
-    def _parse_setup_py(self, content: str) -> None:
-        """Parse setup.py install_requires."""
-        install_requires_match = re.search(
-            r'install_requires\s*=\s*\[(.*?)\]',
-            content,
-            re.DOTALL
-        )
+    @staticmethod
+    def parse_package_json(content: str) -> List[Dict[str, Any]]:
+        """Parse Node.js package.json format."""
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            return []
         
-        if install_requires_match:
-            requires_str = install_requires_match.group(1)
-            packages = re.findall(r"['\"]([^'\"]+)['\"]", requires_str)
+        deps = []
+        for dep_section in ["dependencies", "devDependencies", "optionalDependencies"]:
+            if dep_section in data:
+                for name, version_spec in data[dep_section].items():
+                    deps.append({
+                        "name": name,
+                        "version": version_spec,
+                        "constraint": version_spec,
+                        "type": "npm"
+                    })
+        return deps
+    
+    @staticmethod
+    def parse_go_mod(content: str) -> List[Dict[str, Any]]:
+        """Parse Go module go.mod format."""
+        deps = []
+        in_require = False
+        
+        for line in content.split('\n'):
+            line = line.strip()
             
-            for package in packages:
-                match = re.match(r'^([a-zA-Z0-9_\-]+)\s*([=!<>~;].*)?$', package)
-                if match:
-                    self._add_dependency(
-                        name=match.group(1),
-                        version=match.group(2) or 'unspecified',
-                        source='setup.py',
-                        source_type='python_package'
-                    )
-    
-    def _parse_pyproject_toml(self, content: str) -> None:
-        """Parse pyproject.toml dependencies."""
-        dependencies_match = re.search(
-            r'\[project\].*?dependencies\s*=\s*\[(.*?)\]',
-            content,
-            re.DOTALL
-        )
-        
-        if dependencies_match:
-            deps_str = dependencies_match.group(1)
-            packages = re.findall(r"['\"]([^'\"]+)['\"]", deps_str)
+            if line.startswith('require'):
+                in_require = True
+                if '(' not in line:
+                    # Single line require
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        deps.append({
+                            "name": parts[1],
+                            "version": parts[2],
+                            "constraint": parts[2],
+                            "type": "go"
+                        })
+                    in_require = False
+                continue
             
-            for package in packages:
-                match = re.match(r'^([a-zA-Z0-9_\-]+)\s*([=!<>~;].*)?$', package)
-                if match:
-                    self._add_dependency(
-                        name=match.group(1),
-                        version=match.group(2) or 'unspecified',
-                        source='pyproject.toml',
-                        source_type='python_package'
-                    )
-    
-    def _parse_pipfile(self, content: str) -> None:
-        """Parse Pipfile dependencies."""
-        packages_match = re.search(r'\[packages\](.*?)(?:\[|$)', content, re.DOTALL)
+            if in_require:
+                if line == ')':
+                    in_require = False
+                    continue
+                
+                parts = line.split()
+                if len(parts) >= 2:
+                    deps.append({
+                        "name": parts[0],
+                        "version": parts[1],
+                        "constraint": parts[1],
+                        "type": "go"
+                    })
         
-        if packages_match:
-            packages_str = packages_match.group(1)
-            package_lines = re.findall(r'(\w+)\s*=\s*["\']?([^"\'\n]+)', packages_str)
+        return deps
+    
+    @staticmethod
+    def parse_gemfile(content: str) -> List[Dict[str, Any]]:
+        """Parse Ruby Gemfile format."""
+        deps = []
+        for line in content.split('\n'):
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
             
-            for package_name, version in package_lines:
-                self._add_dependency(
-                    name=package_name,
-                    version=version.strip(),
-                    source='Pipfile',
-                    source_type='python_package'
-                )
-    
-    def analyze_nodejs_dependencies(self) -> None:
-        """Analyze package.json for Node.js dependencies."""
-        package_json = self.project_path / 'package.json'
+            gem_match = re.match(r"gem\s+['\"]([^'\"]+)['\"]\s*(?:,\s*['\"]([^'\"]+)['\"])?", line)
+            if gem_match:
+                name = gem_match.group(1)
+                version = gem_match.group(2) or ""
+                deps.append({
+                    "name": name,
+                    "version": version,
+                    "constraint": version,
+                    "type": "rubygems"
+                })
         
-        if package_json.exists():
-            try:
-                content = json.loads(package_json.read_text())
-                
-                for dep_type in ['dependencies', 'devDependencies', 'peerDependencies']:
-                    if dep_type in content:
-                        for package_name, version in content[dep_type].items():
-                            self._add_dependency(
-                                name=package_name,
-                                version=version,
-                                source='package.json',
-                                source_type='npm_package'
-                            )
-            except Exception as e:
-                print(f"Warning: Could not parse package.json: {e}", file=sys.stderr)
+        return deps
+
+
+class SBOMGenerator:
+    """Generate Software Bill of Materials in SPDX JSON format."""
     
-    def analyze_go_dependencies(self) -> None:
-        """Analyze go.mod for Go dependencies."""
-        go_mod = self.project_path / 'go.mod'
-        
-        if go_mod.exists():
-            try:
-                content = go_mod.read_text()
-                require_section = re.search(r'require\s*\((.*?)\)', content, re.DOTALL)
-                
-                if require_section:
-                    lines = require_section.group(1).strip().split('\n')
-                    for line in lines:
-                        line = line.strip()
-                        if not line or line.startswith('//'):
-                            continue
-                        
-                        match = re.match(r'^([^\s]+)\s+([^\s]+)', line)
-                        if match:
-                            self._add_dependency(
-                                name=match.group(1),
-                                version=match.group(2),
-                                source='go.mod',
-                                source_type='go_package'
-                            )
-            except Exception as e:
-                print(f"Warning: Could not parse go.mod: {e}", file=sys.stderr)
+    SPDX_VERSION = "SPDX-2.3"
+    SPDX_LICENSE_LIST_VERSION = "3.19"
     
-    def analyze_rust_dependencies(self) -> None:
-        """Analyze Cargo.toml for Rust dependencies."""
-        cargo_toml = self.project_path / 'Cargo.toml'
-        
-        if cargo_toml.exists():
-            try:
-                content = cargo_toml.read_text()
-                
-                for section in ['dependencies', 'dev-dependencies']:
-                    pattern = rf'\[{section}\](.*?)(?:\[|$)'
-                    match = re.search(pattern, content, re.DOTALL)
-                    
-                    if match:
-                        deps_str = match.group(1)
-                        dep_lines = re.findall(r'(\w+)\s*=\s*["\{{]?([^"\}}\n]+)', deps_str)
-                        
-                        for package_name, version in dep_lines:
-                            self._add_dependency(
-                                name=package_name,
-                                version=version.strip().strip('"'),
-                                source='Cargo.toml',
-                                source_type='rust_crate'
-                            )
-            except Exception as e:
-                print(f"Warning: Could not parse Cargo.toml: {e}", file=sys.stderr)
+    def __init__(self, project_name: str, project_version: str, project_url: Optional[str] = None):
+        self.project_name = project_name
+        self.project_version = project_version
+        self.project_url = project_url or f"https://example.com/{project_name}"
+        self.dependencies: List[Dict[str, Any]] = []
+        self.components: List[Dict[str, Any]] = []
     
-    def _add_dependency(self, name: str, version: str, source: str, source_type: str) -> None:
+    def add_dependency(self, dep: Dict[str, Any]) -> None:
         """Add a dependency to the SBOM."""
-        if name not in self.dependencies:
-            self.dependencies[name] = {
-                'name': name,
-                'version': version,
-                'source': source,
-                'source_type': source_type,
-                'hash': self._generate_hash(f"{name}:{version}"),
-                'risk_indicators': self._check_risk_indicators(name, version)
+        self.dependencies.append(dep)
+    
+    def add_dependencies(self, deps: List[Dict[str, Any]]) -> None:
+        """Add multiple dependencies."""
+        self.dependencies.extend(deps)
+    
+    def _generate_component_id(self, name: str, version: str) -> str:
+        """Generate unique component ID."""
+        identifier = f"{name}@{version}".replace('/', '-').lower()
+        return identifier
+    
+    def _generate_spdx_id(self, name: str, version: str) -> str:
+        """Generate SPDX identifier."""
+        component_id = self._generate_component_id(name, version)
+        return f"SPDXRef-Package-{component_id}"
+    
+    def _build_components(self) -> None:
+        """Build component list from dependencies."""
+        self.components = []
+        for dep in self.dependencies:
+            component = {
+                "SPDXID": self._generate_spdx_id(dep["name"], dep["version"]),
+                "name": dep["name"],
+                "versionInfo": dep.get("version", "UNKNOWN"),
+                "downloadLocation": f"NOASSERTION",
+                "filesAnalyzed": False,
+                "type": "Library",
+                "externalRefs": [
+                    {
+                        "referenceCategory": "PACKAGE-MANAGER",
+                        "referenceType": "purl",
+                        "referenceLocator": self._build_purl(dep)
+                    }
+                ],
+                "licenseConcluded": "NOASSERTION",
+                "licenseDeclared": "NOASSERTION",
+                "copyrightText": "NOASSERTION"
             }
+            self.components.append(component)
     
-    def _generate_hash(self, data: str) -> str:
-        """Generate SHA256 hash for dependency."""
-        return hashlib.sha256(data.encode()).hexdigest()[:16]
-    
-    def _check_risk_indicators(self, name: str, version: str) -> Dict[str, Any]:
-        """Check for supply chain risk indicators."""
-        indicators = {
-            'typosquatting_risk': self._assess_typosquatting(name),
-            'version_anomaly': self._assess_version_anomaly(version),
-            'common_attacks': self._check_common_attack_patterns(name, version)
+    def _build_purl(self, dep: Dict[str, Any]) -> str:
+        """Build Package URL (purl) for component."""
+        pkg_type = dep.get("type", "generic")
+        name = dep["name"]
+        version = dep.get("version", "")
+        
+        # Normalize package type to purl format
+        purl_type_map = {
+            "pip": "pypi",
+            "npm": "npm",
+            "go": "golang",
+            "rubygems": "gem",
+            "generic": "generic"
         }
-        return indicators
+        
+        purl_type = purl_type_map.get(pkg_type, pkg_type)
+        
+        if version:
+            return f"pkg:{purl_type}/{name}@{version}"
+        return f"pkg:{purl_type}/{name}"
     
-    def _assess_typosquatting(self, package_name: str) -> bool:
-        """Detect potential typosquatting patterns."""
-        suspicious_patterns = [
-            r'^[a-z]*l[a-z]*$',
-            r'.*[oO][lI].*',
-            r'.*1[lI].*',
+    def _generate_document_namespace(self) -> str:
+        """Generate unique document namespace."""
+        timestamp = datetime.utcnow().isoformat() + "Z"
+        content = f"{self.project_name}{self.project_version}{timestamp}"
+        doc_hash = hashlib.sha1(content.encode()).hexdigest()
+        return f"https://sbom.example.com/{self.project_name}/{doc_hash}"
+    
+    def generate(self) -> Dict[str, Any]:
+        """Generate complete SBOM in SPDX JSON format."""
+        self._build_components()
+        
+        now = datetime.utcnow().isoformat() + "Z"
+        
+        sbom = {
+            "spdxVersion": self.SPDX_VERSION,
+            "dataLicense": "CC0-1.0",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "name": f"{self.project_name} SBOM",
+            "documentNamespace": self._generate_document_namespace(),
+            "documentDescribes": [f"SPDXRef-Package-{self._generate_component_id(self.project_name, self.project_version)}"],
+            "creationInfo": {
+                "created": now,
+                "creators": ["Tool: sbom-generator"],
+                "licenseListVersion": self.SPDX_LICENSE_LIST_VERSION
+            },
+            "packages": [
+                {
+                    "SPDXID": f"SPDXRef-Package-{self._generate_component_id(self.project_name, self.project_version)}",
+                    "name": self.project_name,
+                    "versionInfo": self.project_version,
+                    "downloadLocation": self.project_url,
+                    "filesAnalyzed": False,
+                    "licenseConcluded": "NOASSERTION",
+                    "licenseDeclared": "NOASSERTION",
+                    "copyrightText": "NOASSERTION"
+                }
+            ] + self.components,
+            "relationships": self._generate_relationships()
+        }
+        
+        return sbom
+    
+    def _generate_relationships(self) -> List[Dict[str, str]]:
+        """Generate SPDX relationships."""
+        relationships = [
+            {
+                "spdxElementId": "SPDXRef-DOCUMENT",
+                "relationshipType": "DESCRIBES",
+                "relatedSpdxElement": f"SPDXRef-Package-{self._generate_component_id(self.project_name, self.project_version)}"
+            }
         ]
         
-        common_packages = {
-            'django', 'flask', 'requests', 'numpy', 'pandas',
-            'tensorflow', 'pytorch', 'fastapi', 'celery', 'redis'
-        }
+        project_spdx_id = f"SPDXRef-Package-{self._generate_component_id(self.project_name, self.project_version)}"
         
-        for pattern in suspicious_patterns:
-            if re.match(pattern, package_name.lower()):
-                for common in common_packages:
-                    if common in package_name.lower() and common != package_name.lower():
-                        return True
+        for dep in self.dependencies:
+            dep_spdx_id = self._generate_spdx_id(dep["name"], dep["version"])
+            relationships.append({
+                "spdxElementId": project_spdx_id,
+                "relationshipType": "DEPENDS_ON",
+                "relatedSpdxElement": dep_spdx_id
+            })
         
-        return False
+        return relationships
+
+
+class ManifestDetector:
+    """Detect and parse various manifest file formats."""
     
-    def _assess_version_anomaly(self, version: str) -> bool:
-        """Check for unusual version patterns."""
-        if not version or version == 'unspecified':
-            return True
-        
-        if re.match(r'^0\.0\.[0-9]+$', version):
-            return True
-        
-        if re.match(r'^.*\+[a-z0-9]+$', version):
-            return True
-        
-        return False
+    MANIFEST_PATTERNS = {
+        "requirements.txt": r".*requirements.*\.txt$",
+        "package.json": r"^package\.json$",
+        "go.mod": r"^go\.mod$",
+        "Gemfile": r"^Gemfile$",
+        "setup.py": r"^setup\.py$",
+        "pyproject.toml": r"^pyproject\.toml$"
+    }
     
-    def _check_common_attack_patterns(self, name: str, version: str) -> List[str]:
-        """Check for known attack patterns."""
-        patterns = []
+    @staticmethod
+    def detect_manifest_type(file_path: str) -> Optional[str]:
+        """Detect manifest file type from path."""
+        file_name = Path(file_path).name
         
-        if len(name) > 50:
-            patterns.append('unusually_long_name')
+        for manifest_type, pattern in ManifestDetector.MANIFEST_PATTERNS.items():
+            if re.match(pattern, file_name):
+                return manifest_type
         
-        if name.count('_') > 3:
-            patterns.append('excessive_underscores')
-        
-        if re.search(r'[^\w\-]', name):
-            patterns.append('suspicious_characters')
-        
-        if version.startswith('0.0.'):
-            patterns.append('pre_release_pattern')
-        
-        return patterns
+        return None
     
-    def generate_sbom_json(self) -> Dict[str, Any]:
-        """Generate SBOM in JSON format."""
-        return {
-            'sbom_version': '1.0',
-            'metadata': self.metadata,
-            'dependencies': list(self.dependencies.values()),
-            'summary': {
-                'total_dependencies': len(self.dependencies),
-                'high_risk_count': sum(
-                    1 for dep in self.dependencies.values()
-                    if dep['risk_indicators']['typosquatting_risk']
-                )
-            }
-        }
+    @staticmethod
+    def parse_manifest(manifest_type: str, content: str) -> List[Dict[str, Any]]:
+        """Parse manifest based on detected type."""
+        parser = DependencyParser()
+        
+        if manifest_type == "requirements.txt":
+            return parser.parse_requirements_txt(content)
+        elif manifest_type == "package.json":
+            return parser.parse_package_json(content)
+        elif manifest_type == "go.mod":
+            return parser.parse_go_mod(content)
+        elif manifest_type == "Gemfile":
+            return parser.parse_gemfile(content)
+        
+        return []
+
+
+def create_argument_parser() -> argparse.ArgumentParser:
+    """Create CLI argument parser."""
+    parser = argparse.ArgumentParser(
+        description="SBOM (Software Bill of Materials) Generator for OSS Supply Chain Monitoring",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --project myapp --version 1.0.0 --manifest requirements.txt
+  %(prog)s --project myapp --version 2.0.0 --manifest package.json --output sbom.json
+  %(prog)s --project golang-app --version 1.5.0 --manifest go.mod --output sbom.json --format spdx
+        """
+    )
     
-    def generate_sbom_xml(self) -> str:
-        """Generate SBOM in CycloneDX XML format."""
-        root = ET.Element('bom')
-        root.set('version', '1')
-        root.set('xmlns', 'http://cyclonedx.org/schema/bom/1.2')
+    parser.add_argument(
+        "--project",
+        type=str,
+        required=True,
+        help="Project name"
+    )
+    
+    parser.add_argument(
+        "--version",
+        type=str,
+        required=True,
+        help="Project version"
+    )
+    
+    parser.add_argument(
+        "--manifest",
+        type=str,
+        help="Path to dependency manifest file (requirements.txt, package.json, go.mod, Gemfile, etc.)"
+    )
+    
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Output file path for SBOM (default: stdout)"
+    )
+    
+    parser.add_argument(
+        "--format",
+        type=str,
+        choices=["spdx", "json"],
+        default="spdx",
+        help="Output format (default: spdx)"
+    )
+    
+    parser.add_argument(
+        "--project-url",
+        type=str,
+        help="Project URL"
+    )
+    
+    parser.add_argument(
+        "--include-hashes",
+        action="store_true",
+        help="Include dependency hashes in output"
+    )
+    
+    return parser
+
+
+def load_manifest_file(manifest_path: str) -> Tuple[Optional[str], Optional[str]]:
+    """Load and detect manifest file type."""
+    try:
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            content = f.read()
         
-        metadata_elem = ET.SubElement(root, 'metadata')
-        ET.SubElement(metadata_elem, 'timestamp').text = self.metadata['generated_at']
+        manifest_type = ManifestDetector.detect_manifest_type(manifest_path)
+        return manifest_type, content
+    except FileNotFoundError:
+        print(f"Error: Manifest file not found: {manifest_path}", file=sys.stderr)
+        return None, None
+    except IOError as e:
+        print(f"Error reading manifest file: {e}", file=sys.stderr)
+        return None, None
+
+
+def main():
+    """Main entry point."""
+    parser = create_argument_parser()
+    args = parser.parse_args()
+    
+    generator = SBOMGenerator(
+        project_name=args.project,
+        project_version=args.version,
+        project_url=args.project_url
+    )
+    
+    if args.manifest:
+        manifest_type, content = load_manifest_file(args.manifest)
         
-        components_elem = ET.SubElement(root, 'components')
-        
-        for dep in self.dependencies.values():
-            component = ET.SubElement(components_elem, 'component')
-            component.set('type', 'library')
+        if manifest_type and content:
+            print(f"Detected manifest type: {manifest_type}", file=sys.stderr)
+            dependencies = ManifestDetector.parse_manifest(manifest_type, content)
+            print(f"Found {len(dependencies)} dependencies", file=sys.stderr)
             
-            ET.SubElement(component, 'name').text = dep['name']
-            ET.SubElement(component, 'version').text = dep['version']
-            ET.SubElement(component, 'purl').text = f"pkg:generic/{dep['name']}@{dep['version']}"
-            
-            hashes_elem = ET.SubElement(component, 'hashes')
-            hash_elem = ET.SubElement(hashes_elem, 'hash')
-            hash_elem.set('alg', 'SHA-256')
-            hash_elem.text = dep['hash']
+            generator.add_dependencies(dependencies)
+        else:
+            print("Warning: Could not detect or parse manifest file", file=sys.stderr)
+    
+    sbom = generator.generate()
+    
+    output_json = json.dumps(sbom, indent=2)
+    
+    if args.output:
+        try:
+            with open(args.output, 'w', encoding='utf-8') as f:
+                f.write(output_json)
+            print(f"SBOM written to: {args.output}", file=sys.stderr)
+        except IOError as e:
+            print(f"Error writing output file: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print(output_json)
+
+
+if __name__ == "__main__":
+    # Demo with sample data
+    demo_mode = len(sys.argv) == 1
+    
+    if demo_mode:
+        print("=== SBOM Generator Demo ===\n", file=sys.stderr)
         
-        return ET.tostring(root, encoding='unicode')
-    
-    def generate_sbom_cyclonedx(self) -> Dict[str, Any]:
-        """Generate SBOM in CycloneDX JSON format."""
-        return {
-            'bomFormat': 'CycloneDX',
-            'specVersion': '1.3',
-            'version': 1,
-            'metadata': {
-                'timestamp': self.metadata['generated_at'],
-                'tools': [{
-                    'vendor': 'SwarmPulse',
-                    'name': 'SBOM-Generator',
-                    'version': '1.0'
-                }]
-            },
-            'components': [
-                {
-                    'type': 'library',
-                    'name': dep['name'],
-                    'version': dep['version'],
-                    'purl': f"pkg:generic/{dep['name']}@{dep['version']}",
-                    'hashes': [{
-                        'alg': 'SHA-256',
-                        'content': dep['hash']
-                    }]
-                }
-                for dep in self.dependencies.values()
-            ]
-        }
-    
-    def generate_sbom_spdx(self) -> Dict[str, Any]:
-        """Generate SBOM in SPDX format."""
-        return {
-            'SPDXID': 'SPDXRef-DOCUMENT',
-            'spdxVersion': 'SPDX-2.2',
-            'creationInfo': {
-                'created': self.metadata['generated_at'],
-                'creators': ['Tool: SwarmPulse-SBOM-Generator']
-            },
-            'name': f"SBOM for {self.project_path.name}",
-            'packages': [
-                {
-                    'SPDXID': f"SPDXRef-{dep['name'].replace('-', '_').replace('.', '_')}",
+        # Create sample Python project SBOM
+        py_generator = SBOMGenerator(
+            project_name="example-api",
+            project_version="1.2.3",
+            project_url="https://github.com/example/example-api"
+        )
+        
+        sample_deps = [
+            {"name": "requests", "version": "2.28.1", "type": "pip"},
+            {"name": "flask", "version": "2.2.0", "type": "pip"},
+            {"name": "sqlalchemy", "version": "1.4.40", "type": "pip"},
+            {"name": "python-dotenv", "version": "0.20.0", "type": "pip"},
+        ]
+        
+        py_generator.add_dependencies(sample_deps)
+        py_sbom = py_generator.generate()
+        
+        print("Generated Python Project SBOM:")
+        print(json.dumps(py_sbom, indent=2))
+        print("\n" + "="*50 + "\n", file=sys.stderr)
+        
+        # Create sample Node.js project SBOM
+        node_generator = SBOMGenerator(
+            project_name="web-app",
+            project_version="2.0.0",
+            project_url="https://github.com/example/web-app"
+        )
+        
+        sample_node_deps = [
+            {"name": "express", "version": "4.18.2", "type": "npm"},
+            {"name": "react", "version": "18.2.0", "type": "npm"},
+            {"name": "webpack", "version": "5.75.0", "type": "npm"},
+        ]
+        
+        node_generator.add_dependencies(sample_node_deps)
+        node_sbom = node_generator.generate()
+        
+        print("Generated Node.js Project SBOM:")
+        print(json.dumps(node_sbom, indent=2))
+    else:
+        main()
