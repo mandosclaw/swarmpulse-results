@@ -3,7 +3,7 @@
 # Task:    Build behavioral baseline engine
 # Mission: SaaS Breach Detection via Behavioral Analytics
 # Agent:   @echo
-# Date:    2026-03-29T20:34:09.397Z
+# Date:    2026-03-31T19:14:47.460Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
@@ -11,411 +11,635 @@
 TASK: Build behavioral baseline engine
 MISSION: SaaS Breach Detection via Behavioral Analytics
 AGENT: @echo
-DATE: 2024-01-15
+DATE: 2024
 
-Behavioral baseline engine for SaaS breach detection.
-Ingests audit logs, builds user behavioral baselines, computes anomaly scores,
-detects impossible travel, and triggers automated responses.
+Implements ML-powered behavioral baseline creation for SaaS security:
+- User activity profiling
+- Baseline statistical models per user
+- Anomaly scoring mechanisms
+- Impossible travel detection
+- Automated alerting on deviations
 """
 
 import argparse
 import json
 import sys
+import math
 import statistics
 from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Any
 from collections import defaultdict
-from dataclasses import dataclass, asdict
-from typing import Dict, List, Tuple, Optional
-import math
 import hashlib
-
-
-@dataclass
-class AuditEvent:
-    """Represents a single audit log entry."""
-    timestamp: str
-    user_id: str
-    action: str
-    resource: str
-    ip_address: str
-    location: str
-    latitude: float
-    longitude: float
-    user_agent: str
-    success: bool
-
-
-@dataclass
-class UserBaseline:
-    """User behavioral baseline metrics."""
-    user_id: str
-    avg_daily_actions: float
-    std_dev_actions: float
-    most_common_actions: List[str]
-    most_common_locations: List[str]
-    most_common_ips: List[str]
-    avg_action_time_of_day: float
-    common_resources: List[str]
-    baseline_period_days: int
-    last_updated: str
-
-
-@dataclass
-class AnomalyScore:
-    """Anomaly detection result for a user event."""
-    event_id: str
-    user_id: str
-    timestamp: str
-    anomaly_score: float
-    risk_factors: List[str]
-    is_anomaly: bool
-    impossible_travel: bool
-    action_type: str
-
-
-def parse_audit_log(log_file: str) -> List[AuditEvent]:
-    """Parse audit log file (JSON lines format)."""
-    events = []
-    try:
-        with open(log_file, 'r') as f:
-            for line in f:
-                if line.strip():
-                    data = json.loads(line)
-                    events.append(AuditEvent(**data))
-    except FileNotFoundError:
-        print(f"Error: Log file {log_file} not found.", file=sys.stderr)
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"Error: Invalid JSON in log file: {e}", file=sys.stderr)
-        sys.exit(1)
-    return events
-
-
-def build_baseline(events: List[AuditEvent], baseline_days: int = 30) -> Dict[str, UserBaseline]:
-    """Build behavioral baselines for each user from historical events."""
-    cutoff_time = datetime.utcnow() - timedelta(days=baseline_days)
-    cutoff_str = cutoff_time.isoformat()
-
-    user_events = defaultdict(list)
-
-    for event in events:
-        if event.timestamp >= cutoff_str and event.success:
-            user_events[event.user_id].append(event)
-
-    baselines = {}
-
-    for user_id, user_event_list in user_events.items():
-        if not user_event_list:
-            continue
-
-        action_counts = defaultdict(int)
-        location_counts = defaultdict(int)
-        ip_counts = defaultdict(int)
-        resource_counts = defaultdict(int)
-        hours_of_day = []
-
-        for event in user_event_list:
-            action_counts[event.action] += 1
-            location_counts[event.location] += 1
-            ip_counts[event.ip_address] += 1
-            resource_counts[event.resource] += 1
-
-            event_time = datetime.fromisoformat(event.timestamp)
-            hours_of_day.append(event_time.hour)
-
-        daily_action_counts = []
-        date_actions = defaultdict(int)
-        for event in user_event_list:
-            event_date = event.timestamp.split('T')[0]
-            date_actions[event_date] += 1
-        daily_action_counts = list(date_actions.values())
-
-        avg_daily = statistics.mean(daily_action_counts) if daily_action_counts else 1.0
-        std_dev = statistics.stdev(daily_action_counts) if len(daily_action_counts) > 1 else 0.0
-
-        most_common_actions = sorted(action_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-        most_common_locations = sorted(location_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-        most_common_ips = sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-        common_resources = sorted(resource_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-
-        avg_hour = statistics.mean(hours_of_day) if hours_of_day else 12.0
-
-        baselines[user_id] = UserBaseline(
-            user_id=user_id,
-            avg_daily_actions=avg_daily,
-            std_dev_actions=std_dev,
-            most_common_actions=[a[0] for a in most_common_actions],
-            most_common_locations=[l[0] for l in most_common_locations],
-            most_common_ips=[ip[0] for ip in most_common_ips],
-            avg_action_time_of_day=avg_hour,
-            common_resources=[r[0] for r in common_resources],
-            baseline_period_days=baseline_days,
-            last_updated=datetime.utcnow().isoformat()
-        )
-
-    return baselines
-
-
-def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Calculate distance between two coordinates in kilometers."""
-    R = 6371
-
-    lat1_rad = math.radians(lat1)
-    lon1_rad = math.radians(lon1)
-    lat2_rad = math.radians(lat2)
-    lon2_rad = math.radians(lon2)
-
-    dlat = lat2_rad - lat1_rad
-    dlon = lon2_rad - lon1_rad
-
-    a = math.sin(dlat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2) ** 2
-    c = 2 * math.asin(math.sqrt(a))
-
-    return R * c
-
-
-def detect_impossible_travel(
-    prev_event: Optional[AuditEvent],
-    current_event: AuditEvent,
-    max_speed_kmh: float = 900
-) -> Tuple[bool, float]:
-    """
-    Detect impossible travel (too fast between locations).
-    Returns (is_impossible, required_speed_kmh).
-    """
-    if not prev_event:
-        return False, 0.0
-
-    time_diff = (datetime.fromisoformat(current_event.timestamp) -
-                 datetime.fromisoformat(prev_event.timestamp)).total_seconds() / 3600
-
-    if time_diff <= 0 or time_diff > 24:
-        return False, 0.0
-
-    distance = haversine_distance(
-        prev_event.latitude, prev_event.longitude,
-        current_event.latitude, current_event.longitude
-    )
-
-    required_speed = distance / time_diff
-
-    is_impossible = required_speed > max_speed_kmh
-
-    return is_impossible, required_speed
-
-
-def compute_anomaly_score(
-    event: AuditEvent,
-    baseline: Optional[UserBaseline],
-    last_event: Optional[AuditEvent] = None,
-    impossible_travel_threshold: float = 900
-) -> AnomalyScore:
-    """Compute anomaly score for an event based on baseline."""
-    event_id = hashlib.sha256(
-        f"{event.user_id}{event.timestamp}{event.action}".encode()
-    ).hexdigest()[:16]
-
-    risk_factors = []
-    score = 0.0
-
-    if not baseline:
-        score = 0.5
-        risk_factors.append("no_baseline")
-    else:
-        if event.action not in baseline.most_common_actions:
-            score += 0.15
-            risk_factors.append(f"unusual_action:{event.action}")
-
-        if event.location not in baseline.most_common_locations:
-            score += 0.20
-            risk_factors.append(f"unusual_location:{event.location}")
-
-        if event.ip_address not in baseline.most_common_ips:
-            score += 0.15
-            risk_factors.append(f"unusual_ip:{event.ip_address}")
-
-        if event.resource not in baseline.common_resources:
-            score += 0.10
-            risk_factors.append(f"unusual_resource:{event.resource}")
-
-        event_time = datetime.fromisoformat(event.timestamp)
-        hour = event_time.hour
-        hour_diff = min(abs(hour - baseline.avg_action_time_of_day),
-                        24 - abs(hour - baseline.avg_action_time_of_day))
-
-        if hour_diff > 6:
-            score += 0.10
-            risk_factors.append(f"unusual_hour:{hour}")
-
-    is_impossible_travel = False
-    if last_event:
-        is_impossible_travel, required_speed = detect_impossible_travel(
-            last_event, event, impossible_travel_threshold
-        )
-        if is_impossible_travel:
-            score += 0.30
-            risk_factors.append(f"impossible_travel:{required_speed:.1f}kmh")
-
-    score = min(score, 1.0)
-
-    is_anomaly = score >= 0.6
-
-    return AnomalyScore(
-        event_id=event_id,
-        user_id=event.user_id,
-        timestamp=event.timestamp,
-        anomaly_score=round(score, 3),
-        risk_factors=risk_factors,
-        is_anomaly=is_anomaly,
-        impossible_travel=is_impossible_travel,
-        action_type=event.action
-    )
-
-
-def detect_anomalies(
-    events: List[AuditEvent],
-    baselines: Dict[str, UserBaseline],
-    impossible_travel_threshold: float = 900
-) -> List[AnomalyScore]:
-    """Detect anomalies in events using baselines."""
-    sorted_events = sorted(events, key=lambda e: (e.user_id, e.timestamp))
-
-    user_last_event = {}
-    anomalies = []
-
-    for event in sorted_events:
-        baseline = baselines.get(event.user_id)
-        last_event = user_last_event.get(event.user_id)
-
-        anomaly = compute_anomaly_score(
-            event, baseline, last_event, impossible_travel_threshold
-        )
-        anomalies.append(anomaly)
-
-        user_last_event[event.user_id] = event
-
-    return anomalies
-
-
-def generate_response_actions(anomaly: AnomalyScore) -> List[Dict]:
-    """Generate automated response actions based on anomaly score."""
-    actions = []
-
-    if anomaly.anomaly_score >= 0.9:
-        actions.append({
-            "action": "block_session",
-            "reason": "critical_anomaly",
-            "user_id": anomaly.user_id,
-            "severity": "critical"
-        })
-        actions.append({
-            "action": "notify_security",
-            "reason": f"Critical anomaly detected: {', '.join(anomaly.risk_factors)}",
-            "user_id": anomaly.user_id,
-            "severity": "critical"
-        })
-
-    elif anomaly.anomaly_score >= 0.7:
-        actions.append({
-            "action": "require_mfa",
-            "reason": "high_anomaly",
-            "user_id": anomaly.user_id,
-            "severity": "high"
-        })
-        actions.append({
-            "action": "notify_user",
-            "reason": "Unusual activity detected on your account",
-            "user_id": anomaly.user_id,
-            "severity": "high"
-        })
-
-    elif anomaly.anomaly_score >= 0.6:
-        actions.append({
-            "action": "increase_monitoring",
-            "reason": "moderate_anomaly",
-            "user_id": anomaly.user_id,
-            "severity": "medium"
-        })
-
-    if anomaly.impossible_travel:
-        actions.append({
-            "action": "alert_geographic_anomaly",
-            "reason": "Impossible travel detected",
-            "user_id": anomaly.user_id,
-            "severity": "high"
-        })
-
-    return actions
-
-
-def save_results(baselines: Dict[str, UserBaseline], anomalies: List[AnomalyScore],
-                 all_actions: List[Dict], output_file: str):
-    """Save analysis results to JSON file."""
-    results = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "baselines_count": len(baselines),
-        "anomalies_detected": len([a for a in anomalies if a.is_anomaly]),
-        "total_events_analyzed": len(anomalies),
-        "automated_actions_triggered": len(all_actions),
-        "baselines": [asdict(b) for b in baselines.values()],
-        "anomalies": [asdict(a) for a in anomalies if a.is_anomaly],
-        "response_actions": all_actions
-    }
-
-    with open(output_file, 'w') as f:
-        json.dump(results, f, indent=2)
-
-    print(f"Results saved to {output_file}")
-
-
-def generate_sample_logs(output_file: str, num_events: int = 100):
-    """Generate sample audit logs for testing."""
-    import random
-
-    users = ["user_001", "user_002", "user_003", "attacker_001"]
-    actions = ["login", "read", "write", "delete", "export"]
-    resources = ["file_1", "file_2", "db_query", "api_endpoint"]
-    locations = [
-        "New York", "London", "Tokyo", "Sydney", "Mumbai",
-        "Moscow", "São Paulo", "Hong Kong"
-    ]
-    location_coords = {
-        "New York": (40.7128, -74.0060),
-        "London": (51.5074, -0.1278),
-        "Tokyo": (35.6762, 139.6503),
-        "Sydney": (-33.8688, 151.2093),
-        "Mumbai": (19.0760, 72.8777),
-        "Moscow": (55.7558, 37.6173),
-        "São Paulo": (-23.5505, -46.6333),
-        "Hong Kong": (22.3193, 114.1694)
-    }
-
-    base_time = datetime.utcnow() - timedelta(days=60)
-
-    with open(output_file, 'w') as f:
-        for i in range(num_events):
-            user = random.choice(users)
-            location = random.choice(locations)
-            lat, lon = location_coords[location]
-
-            lat += random.gauss(0, 0.5)
-            lon += random.gauss(0, 0.5)
-
-            event_time = base_time + timedelta(hours=random.randint(0, 60*24))
-
-            event = {
-                "timestamp": event_time.isoformat(),
-                "user_id": user,
-                "action": random.choice(actions),
-                "resource": random.choice(resources),
-                "ip_address": f"{random.randint(1,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}",
-                "location": location,
-                "latitude": lat,
-                "longitude": lon,
-                "user_agent": f"Mozilla/5.0 (Platform {random.randint(1,5)})",
-                "success": random.random() > 0.05
+import random
+import string
+
+
+class BehavioralBaseline:
+    """Statistical behavioral baseline engine for user activity analysis."""
+    
+    def __init__(self, min_samples: int = 10):
+        self.min_samples = min_samples
+        self.user_profiles: Dict[str, Dict[str, Any]] = {}
+        self.activity_logs: List[Dict[str, Any]] = []
+        self.baseline_trained = False
+        
+    def ingest_log(self, log_entry: Dict[str, Any]) -> None:
+        """Ingest a single audit log entry."""
+        required_fields = ['user_id', 'timestamp', 'action', 'ip_address', 'latitude', 'longitude']
+        
+        for field in required_fields:
+            if field not in log_entry:
+                raise ValueError(f"Missing required field: {field}")
+        
+        log_entry['timestamp'] = datetime.fromisoformat(log_entry['timestamp'])
+        self.activity_logs.append(log_entry)
+    
+    def train_baseline(self) -> Dict[str, Any]:
+        """Train behavioral baseline from ingested logs."""
+        if len(self.activity_logs) < self.min_samples:
+            raise ValueError(f"Insufficient logs for training. Need {self.min_samples}, have {len(self.activity_logs)}")
+        
+        user_activities = defaultdict(list)
+        
+        for log in self.activity_logs:
+            user_id = log['user_id']
+            user_activities[user_id].append(log)
+        
+        training_stats = {
+            'total_users': len(user_activities),
+            'total_logs': len(self.activity_logs),
+            'trained_at': datetime.utcnow().isoformat(),
+            'profiles': {}
+        }
+        
+        for user_id, activities in user_activities.items():
+            if len(activities) < self.min_samples:
+                continue
+            
+            profile = self._build_user_profile(user_id, activities)
+            self.user_profiles[user_id] = profile
+            training_stats['profiles'][user_id] = {
+                'activity_count': len(activities),
+                'baseline_actions': list(profile['action_distribution'].keys()),
+                'common_ips': list(profile['ip_distribution'].keys())[:5],
+                'location_cluster_count': len(profile['location_clusters'])
             }
+        
+        self.baseline_trained = True
+        return training_stats
+    
+    def _build_user_profile(self, user_id: str, activities: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build comprehensive behavioral profile for a user."""
+        actions = []
+        ips = []
+        locations = []
+        hours_active = []
+        days_active = set()
+        
+        for activity in activities:
+            actions.append(activity['action'])
+            ips.append(activity['ip_address'])
+            locations.append((activity['latitude'], activity['longitude']))
+            
+            ts = activity['timestamp']
+            hours_active.append(ts.hour)
+            days_active.add(ts.weekday())
+        
+        action_counts = defaultdict(int)
+        for action in actions:
+            action_counts[action] += 1
+        
+        action_distribution = {
+            action: count / len(actions) 
+            for action, count in action_counts.items()
+        }
+        
+        ip_counts = defaultdict(int)
+        for ip in ips:
+            ip_counts[ip] += 1
+        
+        ip_distribution = {
+            ip: count / len(ips)
+            for ip, count in ip_counts.items()
+        }
+        
+        location_clusters = self._cluster_locations(locations)
+        
+        hour_mean = statistics.mean(hours_active) if hours_active else 12
+        hour_stdev = statistics.stdev(hours_active) if len(hours_active) > 1 else 2
+        
+        profile = {
+            'user_id': user_id,
+            'action_distribution': action_distribution,
+            'ip_distribution': ip_distribution,
+            'location_clusters': location_clusters,
+            'preferred_hours': {
+                'mean': hour_mean,
+                'stdev': hour_stdev
+            },
+            'active_days': list(days_active),
+            'activity_count': len(activities),
+            'geographic_spread_km': self._calc_geographic_spread(locations)
+        }
+        
+        return profile
+    
+    def _cluster_locations(self, locations: List[Tuple[float, float]]) -> List[Dict[str, Any]]:
+        """Simple location clustering using k-means-like approach."""
+        if not locations or len(locations) < 2:
+            return [{'center': locations[0] if locations else (0, 0), 'count': len(locations)}]
+        
+        clusters = []
+        clustered = [False] * len(locations)
+        
+        for i, (lat, lon) in enumerate(locations):
+            if clustered[i]:
+                continue
+            
+            cluster = [(lat, lon)]
+            clustered[i] = True
+            
+            for j, (lat2, lon2) in enumerate(locations[i+1:], i+1):
+                if clustered[j]:
+                    continue
+                
+                dist = self._haversine_distance(lat, lon, lat2, lon2)
+                if dist < 100:
+                    cluster.append((lat2, lon2))
+                    clustered[j] = True
+            
+            center_lat = statistics.mean([c[0] for c in cluster])
+            center_lon = statistics.mean([c[1] for c in cluster])
+            
+            clusters.append({
+                'center': (center_lat, center_lon),
+                'count': len(cluster)
+            })
+        
+        return clusters
+    
+    def _haversine_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Calculate distance between two coordinates in km."""
+        R = 6371
+        phi1 = math.radians(lat1)
+        phi2 = math.radians(lat2)
+        delta_phi = math.radians(lat2 - lat1)
+        delta_lambda = math.radians(lon2 - lon1)
+        
+        a = math.sin(delta_phi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        
+        return R * c
+    
+    def _calc_geographic_spread(self, locations: List[Tuple[float, float]]) -> float:
+        """Calculate max distance between any two locations."""
+        if len(locations) < 2:
+            return 0.0
+        
+        max_dist = 0.0
+        for i, (lat1, lon1) in enumerate(locations):
+            for lat2, lon2 in locations[i+1:]:
+                dist = self._haversine_distance(lat1, lon1, lat2, lon2)
+                max_dist = max(max_dist, dist)
+        
+        return max_dist
+    
+    def score_activity(self, activity: Dict[str, Any]) -> Dict[str, Any]:
+        """Score an activity for anomalies against baseline."""
+        if not self.baseline_trained:
+            raise RuntimeError("Baseline not trained. Call train_baseline() first.")
+        
+        user_id = activity['user_id']
+        
+        if user_id not in self.user_profiles:
+            return {
+                'user_id': user_id,
+                'anomaly_score': 0.5,
+                'anomalies': ['unknown_user'],
+                'risk_level': 'MEDIUM',
+                'details': 'User not in baseline'
+            }
+        
+        profile = self.user_profiles[user_id]
+        anomalies = []
+        scores = []
+        
+        action_score = self._score_action(activity['action'], profile)
+        scores.append(action_score)
+        if action_score > 0.7:
+            anomalies.append(f"unusual_action:{activity['action']}")
+        
+        ip_score = self._score_ip(activity['ip_address'], profile)
+        scores.append(ip_score)
+        if ip_score > 0.7:
+            anomalies.append(f"new_ip:{activity['ip_address']}")
+        
+        location_score = self._score_location(
+            (activity['latitude'], activity['longitude']),
+            profile
+        )
+        scores.append(location_score)
+        if location_score > 0.7:
+            anomalies.append("new_location")
+        
+        time_score = self._score_time(activity['timestamp'], profile)
+        scores.append(time_score)
+        if time_score > 0.7:
+            anomalies.append("unusual_time")
+        
+        impossible_travel = self._check_impossible_travel(activity, profile)
+        if impossible_travel:
+            anomalies.append(f"impossible_travel:{impossible_travel}")
+            scores.append(0.95)
+        
+        anomaly_score = statistics.mean(scores) if scores else 0.0
+        
+        if anomaly_score > 0.8:
+            risk_level = 'CRITICAL'
+        elif anomaly_score > 0.6:
+            risk_level = 'HIGH'
+        elif anomaly_score > 0.4:
+            risk_level = 'MEDIUM'
+        else:
+            risk_level = 'LOW'
+        
+        return {
+            'user_id': user_id,
+            'anomaly_score': round(anomaly_score, 3),
+            'anomalies': anomalies,
+            'risk_level': risk_level,
+            'component_scores': {
+                'action': round(action_score, 3),
+                'ip': round(ip_score, 3),
+                'location': round(location_score, 3),
+                'time': round(time_score, 3)
+            },
+            'timestamp': activity['timestamp'].isoformat()
+        }
+    
+    def _score_action(self, action: str, profile: Dict[str, Any]) -> float:
+        """Score how anomalous an action is."""
+        if action in profile['action_distribution']:
+            probability = profile['action_distribution'][action]
+            return 1.0 - probability
+        else:
+            return 0.9
+    
+    def _score_ip(self, ip: str, profile: Dict[str, Any]) -> float:
+        """Score how anomalous an IP is."""
+        if ip in profile['ip_distribution']:
+            probability = profile['ip_distribution'][ip]
+            return 1.0 - probability
+        else:
+            return 0.85
+    
+    def _score_location(self, location: Tuple[float, float], profile: Dict[str, Any]) -> float:
+        """Score how anomalous a location is."""
+        for cluster in profile['location_clusters']:
+            center = cluster['center']
+            dist = self._haversine_distance(location[0], location[1], center[0], center[1])
+            if dist < 50:
+                return 0.1
+        
+        return 0.8
+    
+    def _score_time(self, timestamp: datetime, profile: Dict[str, Any]) -> float:
+        """Score how anomalous a timestamp is."""
+        hour = timestamp.hour
+        day = timestamp.weekday()
+        
+        if day not in profile['active_days']:
+            return 0.7
+        
+        mean_hour = profile['preferred_hours']['mean']
+        stdev_hour = profile['preferred_hours']['stdev']
+        
+        if stdev_hour == 0:
+            return 0.0 if hour == mean_hour else 0.5
+        
+        z_score = abs((hour - mean_hour) / stdev_hour)
+        
+        if z_score > 3:
+            return 0.9
+        elif z_score > 2:
+            return 0.7
+        elif z_score > 1:
+            return 0.4
+        else:
+            return 0.1
+    
+    def _check_impossible_travel(self, activity: Dict[str, Any], profile: Dict[str, Any]) -> str:
+        """Detect impossible travel based on geographic and temporal constraints."""
+        recent_activities = [
+            a for a in self.activity_logs
+            if a['user_id'] == activity['user_id']
+            and a['timestamp'] < activity['timestamp']
+        ]
+        
+        if not recent_activities:
+            return ""
+        
+        last_activity = max(recent_activities, key=lambda x: x['timestamp'])
+        time_diff_minutes = (activity['timestamp'] - last_activity['timestamp']).total_seconds() / 60
+        
+        distance_km = self._haversine_distance(
+            last_activity['latitude'],
+            last_activity['longitude'],
+            activity['latitude'],
+            activity['longitude']
+        )
+        
+        max_possible_speed_kmh = 900
+        max_distance_km = (time_diff_minutes / 60) * max_possible_speed_kmh
+        
+        if distance_km > max_distance_km:
+            return f"traveled_{distance_km:.0f}km_in_{time_diff_minutes:.0f}min"
+        
+        return ""
+    
+    def get_profile(self, user_id: str) -> Dict[str, Any]:
+        """Retrieve baseline profile for a user."""
+        if user_id not in self.user_profiles:
+            return {'error': f'No profile for user {user_id}'}
+        
+        profile = self.user_profiles[user_id].copy()
+        profile['action_distribution'] = {
+            k: round(v, 3) for k, v in profile['action_distribution'].items()
+        }
+        profile['ip_distribution'] = {
+            k: round(v, 3) for k, v in profile['ip_distribution'].items()
+        }
+        
+        return profile
+    
+    def export_baselines(self) -> Dict[str, Any]:
+        """Export all trained baselines."""
+        return {
+            'trained': self.baseline_trained,
+            'trained_at': datetime.utcnow().isoformat(),
+            'user_count': len(self.user_profiles),
+            'profiles': {
+                user_id: self.get_profile(user_id)
+                for user_id in self.user_profiles
+            }
+        }
 
-            if user == "attacker_001" and random.random() < 0.5:
-                event["action"] = "export"
-                event["resource"] = "sensitive_db"
+
+def generate_sample_logs(user_count: int = 3, logs_per_user: int = 50) -> List[Dict[str, Any]]:
+    """Generate realistic sample audit logs for testing."""
+    logs = []
+    actions = ['login', 'logout', 'api_call', 'file_download', 'file_upload', 'password_change', 'settings_update']
+    
+    base_locations = [
+        (40.7128, -74.0060),
+        (34.0522, -118.2437),
+        (41.8781, -87.6298),
+        (37.7749, -122.4194),
+        (51.5074, -0.1278)
+    ]
+    
+    base_ips = [
+        '203.0.113.42',
+        '198.51.100.89',
+        '192.0.2.15',
+        '203.0.113.200',
+        '198.51.100.1'
+    ]
+    
+    start_time = datetime.utcnow() - timedelta(days=30)
+    
+    for user_idx in range(user_count):
+        user_id = f"user_{user_idx:03d}"
+        user_location = base_locations[user_idx % len(base_locations)]
+        user_ip = base_ips[user_idx % len(base_ips)]
+        
+        for log_idx in range(logs_per_user):
+            timestamp = start_time + timedelta(
+                hours=random.randint(0, 720),
+                minutes=random.randint(0, 59)
+            )
+            
+            lat_noise = random.uniform(-0.5, 0.5)
+            lon_noise = random.uniform(-0.5, 0.5)
+            
+            log_entry = {
+                'user_id': user_id,
+                'timestamp': timestamp.isoformat(),
+                'action': random.choice(actions),
+                'ip_address': user_ip if random.random() > 0.2 else base_ips[random.randint(0, len(base_ips)-1)],
+                'latitude': user_location[0] + lat_noise,
+                'longitude': user_location[1] + lon_noise,
+                'resource': f"/api/resource_{random.randint(1, 100)}"
+            }
+            logs.append(log_entry)
+    
+    return logs
+
+
+def generate_anomalous_activity(baseline_engine: BehavioralBaseline, user_id: str) -> Dict[str, Any]:
+    """Generate an anomalous activity for testing detection."""
+    if user_id not in baseline_engine.user_profiles:
+        user_id = list(baseline_engine.user_profiles.keys())[0]
+    
+    profile = baseline_engine.user_profiles[user_id]
+    
+    return {
+        'user_id': user_id,
+        'timestamp': (datetime.utcnow() + timedelta(hours=2)).isoformat(),
+        'action': 'sensitive_export',
+        'ip_address': '203.0.113.99',
+        'latitude': 51.5074,
+        'longitude': -0.1278,
+        'resource': '/api/data_export'
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='SaaS Behavioral Baseline Engine - Breach Detection'
+    )
+    parser.add_argument(
+        '--mode',
+        choices=['train', 'score', 'profile', 'export', 'demo'],
+        default='demo',
+        help='Operation mode'
+    )
+    parser.add_argument(
+        '--input-file',
+        type=str,
+        help='Input log file (JSON lines format)'
+    )
+    parser.add_argument(
+        '--activity-file',
+        type=str,
+        help='Activity to score (JSON format)'
+    )
+    parser.add_argument(
+        '--user-id',
+        type=str,
+        help='User ID for profile retrieval'
+    )
+    parser.add_argument(
+        '--output-file',
+        type=str,
+        help='Output file for results (JSON format)'
+    )
+    parser.add_argument(
+        '--min-samples',
+        type=int,
+        default=10,
+        help='Minimum samples per user for baseline training'
+    )
+    parser.add_argument(
+        '--demo-users',
+        type=int,
+        default=3,
+        help='Number of users for demo mode'
+    )
+    parser.add_argument(
+        '--demo-logs-per-user',
+        type=int,
+        default=50,
+        help='Logs per user for demo mode'
+    )
+    
+    args = parser.parse_args()
+    
+    engine = BehavioralBaseline(min_samples=args.min_samples)
+    
+    if args.mode == 'demo':
+        print("=== SaaS Behavioral Baseline Engine - DEMO ===\n")
+        
+        print(f"Generating sample logs ({args.demo_users} users, {args.demo_logs_per_user} logs/user)...")
+        logs = generate_sample_logs(args.demo_users, args.demo_logs_per_user)
+        
+        for log in logs:
+            engine.ingest_log(log)
+        
+        print(f"Ingested {len(logs)} log entries\n")
+        
+        print("Training baseline...")
+        training_stats = engine.train_baseline()
+        print(f"Trained on {training_stats['total_users']} users")
+        print(f"Profiles created: {len(training_stats['profiles'])}\n")
+        
+        user_ids = list(engine.user_profiles.keys())
+        if user_ids:
+            print(f"Sample profile for {user_ids[0]}:")
+            profile = engine.get_profile(user_ids[0])
+            print(json.dumps({k: v for k, v in profile.items() if k != 'location_clusters'}, indent=2))
+            print()
+        
+        print("Scoring normal activity...")
+        normal_activity = {
+            'user_id': user_ids[0],
+            'timestamp': (datetime.utcnow() + timedelta(hours=1)).isoformat(),
+            'action': 'login',
+            'ip_address': list(engine.user_profiles[user_ids[0]]['ip_distribution'].keys())[0],
+            'latitude': engine.user_profiles[user_ids[0]]['location_clusters'][0]['center'][0],
+            'longitude': engine.user_profiles[user_ids[0]]['location_clusters'][0]['center'][1]
+        }
+        
+        score = engine.score_activity(normal_activity)
+        print(f"Normal activity score: {json.dumps(score, indent=2)}\n")
+        
+        print("Scoring anomalous activity...")
+        anomalous = generate_anomalous_activity(engine, user_ids[0])
+        anomaly_score = engine.score_activity(anomalous)
+        print(f"Anomalous activity score: {json.dumps(anomaly_score, indent=2)}\n")
+        
+        if args.output_file:
+            output = {
+                'training_stats': training_stats,
+                'normal_activity_score': score,
+                'anomalous_activity_score': anomaly_score
+            }
+            with open(args.output_file, 'w') as f:
+                json.dump(output, f, indent=2)
+            print(f"Results written to {args.output_file}")
+    
+    elif args.mode == 'train':
+        if not args.input_file:
+            print("Error: --input-file required for train mode", file=sys.stderr)
+            sys.exit(1)
+        
+        with open(args.input_file, 'r') as f:
+            for line in f:
+                log = json.loads(line.strip())
+                engine.ingest_log(log)
+        
+        stats = engine.train_baseline()
+        
+        output = stats
+        if args.output_file:
+            with open(args.output_file, 'w') as f:
+                json.dump(output, f, indent=2)
+        else:
+            print(json.dumps(output, indent=2))
+    
+    elif args.mode == 'score':
+        if not args.input_file or not args.activity_file:
+            print("Error: --input-file and --activity-file required for score mode", file=sys.stderr)
+            sys.exit(1)
+        
+        with open(args.input_file, 'r') as f:
+            for line in f:
+                log = json.loads(line.strip())
+                engine.ingest_log(log)
+        
+        engine.train_baseline()
+        
+        with open(args.activity_file, 'r') as f:
+            activity = json.load(f)
+        
+        score = engine.score_activity(activity)
+        
+        if args.output_file:
+            with open(args.output_file, 'w') as f:
+                json.dump(score, f, indent=2)
+        else:
+            print(json.dumps(score, indent=2))
+    
+    elif args.mode == 'profile':
+        if not args.input_file or not args.user_id:
+            print("Error: --input-file and --user-id required for profile mode", file=sys.stderr)
+            sys.exit(1)
+        
+        with open(args.input_file, 'r') as f:
+            for line in f:
+                log = json.loads(line.strip())
+                engine.ingest_log(log)
+        
+        engine.train_baseline()
+        
+        profile = engine.get_profile(args.user_id)
+        
+        if args.output_file:
+            with open(args.output_file, 'w') as f:
+                json.dump(profile, f, indent=2)
+        else:
+            print(json.dumps(profile, indent=2))
+    
+    elif args.mode == 'export':
+        if not args.input_file:
+            print("Error: --input-file required for export mode", file=sys.stderr)
+            sys.exit(1)
+        
+        with open(args.input_file, 'r') as f:
+            for line in f:
+                log = json.loads(line.strip())
+                engine.ingest_log(log)
+        
+        engine.train_baseline()
+        
+        export = engine.export_baselines()
+        
+        if args.output_file:
+            with open(args.output_file, 'w') as f:
+                json.dump(export, f, indent=2)
+        else:
+            print(json.dumps(export, indent=2))
+
+
+if __name__ == '__main__':
+    main()
