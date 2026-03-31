@@ -3,36 +3,35 @@
 # Task:    Anomaly scoring + SOAR integration
 # Mission: SaaS Breach Detection via Behavioral Analytics
 # Agent:   @quinn
-# Date:    2026-03-31T17:52:36.425Z
+# Date:    2026-03-31T18:36:04.430Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Anomaly scoring + SOAR integration for SaaS Breach Detection
-MISSION: SaaS Breach Detection via Behavioral Analytics
-AGENT: @quinn
-DATE: 2025
-
-Implements unsupervised anomaly detection on SaaS audit logs with scoring,
-SOAR alerting, and automatic session revocation for critical threats.
+Task: Anomaly scoring + SOAR integration for SaaS Breach Detection
+Mission: SaaS Breach Detection via Behavioral Analytics
+Agent: @quinn
+Date: 2025-01-20
 """
 
 import argparse
 import json
 import sys
-import time
-import math
+import statistics
 from datetime import datetime, timedelta
 from collections import defaultdict
-from typing import Any, Dict, List, Tuple
 from dataclasses import dataclass, asdict
+from typing import List, Dict, Tuple, Optional
 from enum import Enum
 import hashlib
-import statistics
+import hmac
+import base64
+import time
+import random
+import string
 
 
-class ThreatLevel(Enum):
-    """Threat severity levels."""
+class SeverityLevel(Enum):
     LOW = 1
     MEDIUM = 2
     HIGH = 3
@@ -40,8 +39,7 @@ class ThreatLevel(Enum):
 
 
 @dataclass
-class AuditLog:
-    """Represents a single audit log entry."""
+class AuditLogEntry:
     timestamp: str
     user_id: str
     user_email: str
@@ -50,705 +48,593 @@ class AuditLog:
     ip_address: str
     user_agent: str
     service: str
+    location: str
     success: bool
-    details: Dict[str, Any]
+    session_id: str
 
 
 @dataclass
 class AnomalyScore:
-    """Represents computed anomaly metrics for a user."""
     user_id: str
-    user_email: str
-    total_score: float
-    threat_level: ThreatLevel
-    anomalies: List[str]
+    score: float
+    severity: SeverityLevel
+    indicators: List[str]
     timestamp: str
     session_id: str
-    service: str
+    recommended_action: str
 
 
 class BehavioralBaseline:
-    """Computes and stores behavioral baselines for users."""
-
     def __init__(self):
-        self.user_profiles: Dict[str, Dict[str, Any]] = defaultdict(
-            lambda: {
-                "actions": defaultdict(int),
-                "ips": defaultdict(int),
-                "user_agents": defaultdict(int),
-                "daily_action_count": [],
-                "peak_hours": [],
-                "services": defaultdict(int),
-                "resources": defaultdict(int),
-            }
-        )
-        self.global_stats = {
-            "total_logs": 0,
-            "avg_daily_actions": 0,
-            "common_actions": defaultdict(int),
-        }
+        self.user_baselines = defaultdict(lambda: {
+            'typical_ips': {},
+            'typical_locations': {},
+            'typical_actions': {},
+            'typical_times': [],
+            'typical_user_agents': {},
+            'daily_action_count': [],
+            'download_patterns': [],
+        })
 
-    def add_log(self, log: AuditLog) -> None:
-        """Add a log entry to baseline."""
-        profile = self.user_profiles[log.user_id]
-        profile["actions"][log.action] += 1
-        profile["ips"][log.ip_address] += 1
-        profile["user_agents"][log.user_agent] += 1
-        profile["services"][log.service] += 1
-        profile["resources"][log.resource] += 1
+    def build_baseline(self, logs: List[AuditLogEntry]):
+        """Build baseline behavior from historical logs"""
+        for log in logs:
+            baseline = self.user_baselines[log.user_id]
+            
+            baseline['typical_ips'][log.ip_address] = baseline['typical_ips'].get(log.ip_address, 0) + 1
+            baseline['typical_locations'][log.location] = baseline['typical_locations'].get(log.location, 0) + 1
+            baseline['typical_actions'][log.action] = baseline['typical_actions'].get(log.action, 0) + 1
+            baseline['typical_user_agents'][log.user_agent] = baseline['typical_user_agents'].get(log.user_agent, 0) + 1
+            
+            log_time = datetime.fromisoformat(log.timestamp)
+            baseline['typical_times'].append(log_time.hour)
+            
+            if 'download' in log.action.lower():
+                baseline['download_patterns'].append(log.timestamp)
 
-        self.global_stats["total_logs"] += 1
-        self.global_stats["common_actions"][log.action] += 1
-
-    def get_user_profile(self, user_id: str) -> Dict[str, Any]:
-        """Get baseline profile for a user."""
-        return self.user_profiles.get(user_id, {})
-
-    def get_action_frequency(self, user_id: str, action: str) -> float:
-        """Get frequency of an action for user (normalized 0-1)."""
-        profile = self.user_profiles.get(user_id, {})
-        if not profile or not profile.get("actions"):
-            return 0.0
-        actions = profile["actions"]
-        total = sum(actions.values())
-        if total == 0:
-            return 0.0
-        return actions.get(action, 0) / total
-
-    def get_ip_commonality(self, user_id: str, ip: str) -> float:
-        """Get commonality of IP for user (0-1)."""
-        profile = self.user_profiles.get(user_id, {})
-        if not profile or not profile.get("ips"):
-            return 0.0
-        ips = profile["ips"]
-        total = sum(ips.values())
-        if total == 0:
-            return 0.0
-        return ips.get(ip, 0) / total
-
-    def get_service_frequency(self, user_id: str, service: str) -> float:
-        """Get frequency of service access for user (0-1)."""
-        profile = self.user_profiles.get(user_id, {})
-        if not profile or not profile.get("services"):
-            return 0.0
-        services = profile["services"]
-        total = sum(services.values())
-        if total == 0:
-            return 0.0
-        return services.get(service, 0) / total
+    def get_baseline(self, user_id: str) -> Dict:
+        return self.user_baselines.get(user_id, {})
 
 
 class AnomalyDetector:
-    """Detects anomalies in SaaS audit logs."""
-
     def __init__(self, baseline: BehavioralBaseline):
         self.baseline = baseline
-        self.credential_stuffing_threshold = 0.7
-        self.impossible_travel_threshold = 0.8
-        self.mass_download_threshold = 0.75
-        self.privilege_creep_threshold = 0.7
+        self.anomaly_scores: List[AnomalyScore] = []
+        
+        self.credential_stuffing_threshold = 5
+        self.impossible_travel_speed_kmh = 900
+        self.mass_download_count = 20
+        self.mass_download_window_minutes = 10
+        self.privilege_creep_threshold = 3
 
-    def score_credential_stuffing(self, logs: List[AuditLog]) -> Tuple[float, str]:
-        """Detect credential stuffing: failed logins from different IPs."""
-        failed_logins = [
-            log
-            for log in logs
-            if log.action == "LOGIN" and not log.success
-        ]
-
-        if not failed_logins:
-            return 0.0, ""
-
-        unique_ips = set(log.ip_address for log in failed_logins)
-        failure_rate = len(failed_logins) / len(logs) if logs else 0
-
-        if len(failed_logins) > 5 and len(unique_ips) > 1 and failure_rate > 0.3:
-            score = min(
-                1.0,
-                (len(failed_logins) / 10.0) * (len(unique_ips) / 5.0) * failure_rate,
-            )
-            return score, f"Credential_Stuffing({len(failed_logins)}_failures_{len(unique_ips)}_IPs)"
-
-        return 0.0, ""
-
-    def score_impossible_travel(self, logs: List[AuditLog]) -> Tuple[float, str]:
-        """Detect impossible travel: rapid IP changes over physical distance."""
-        # Simulate IP geolocation mapping
-        ip_location = {
-            "1.2.3.4": (40.7128, -74.0060),  # NYC
-            "5.6.7.8": (51.5074, -0.1278),  # London
-            "9.10.11.12": (35.6762, 139.6503),  # Tokyo
-            "13.14.15.16": (-33.8688, 151.2093),  # Sydney
-            "192.168.1.100": (40.7128, -74.0060),  # Internal
-            "10.0.0.50": (40.7128, -74.0060),  # Internal
-        }
-
-        if len(logs) < 2:
-            return 0.0, ""
-
-        sorted_logs = sorted(logs, key=lambda x: x.timestamp)
-        max_score = 0.0
-        anomaly_desc = ""
-
-        for i in range(len(sorted_logs) - 1):
-            log1 = sorted_logs[i]
-            log2 = sorted_logs[i + 1]
-
-            # Skip internal IPs
-            if (
-                log1.ip_address.startswith("192.168.")
-                or log1.ip_address.startswith("10.")
-            ):
-                continue
-            if (
-                log2.ip_address.startswith("192.168.")
-                or log2.ip_address.startswith("10.")
-            ):
-                continue
-
-            if log1.ip_address != log2.ip_address:
-                loc1 = ip_location.get(
-                    log1.ip_address, (40.7128, -74.0060)
-                )  # Default to NYC
-                loc2 = ip_location.get(
-                    log2.ip_address, (40.7128, -74.0060)
-                )
-
-                # Great circle distance approximation (km)
-                dlat = loc2[0] - loc1[0]
-                dlon = loc2[1] - loc1[1]
-                distance = math.sqrt(dlat * dlat + dlon * dlon) * 111  # km per degree
-
-                # Parse timestamps
-                try:
-                    t1 = datetime.fromisoformat(log1.timestamp)
-                    t2 = datetime.fromisoformat(log2.timestamp)
-                except (ValueError, TypeError):
-                    continue
-
-                time_diff_hours = (t2 - t1).total_seconds() / 3600
-
-                if time_diff_hours > 0:
-                    required_speed = distance / time_diff_hours  # km/h
-                    # Impossible if > 900 km/h (faster than commercial flight)
-                    if required_speed > 900:
-                        score = min(1.0, required_speed / 2000)
-                        if score > max_score:
-                            max_score = score
-                            anomaly_desc = f"Impossible_Travel({distance:.0f}km_in_{time_diff_hours:.1f}h_{log1.ip_address}_to_{log2.ip_address})"
-
-        return max_score, anomaly_desc
-
-    def score_mass_download(self, logs: List[AuditLog]) -> Tuple[float, str]:
-        """Detect mass download: excessive file downloads."""
-        download_logs = [
-            log
-            for log in logs
-            if log.action in ["DOWNLOAD", "EXPORT"]
-            and log.success
-        ]
-
-        if not download_logs:
-            return 0.0, ""
-
-        # Baseline: typical users download 5-20 files per day
-        baseline_freq = self.baseline.get_action_frequency(
-            logs[0].user_id, "DOWNLOAD"
+    def calculate_anomaly_score(self, log: AuditLogEntry) -> AnomalyScore:
+        """Calculate comprehensive anomaly score for a log entry"""
+        indicators = []
+        score = 0.0
+        user_baseline = self.baseline.get_baseline(log.user_id)
+        
+        if not user_baseline:
+            user_baseline = {
+                'typical_ips': {},
+                'typical_locations': {},
+                'typical_actions': {},
+                'typical_times': [],
+                'typical_user_agents': {},
+                'download_patterns': [],
+            }
+        
+        score += self._check_credential_stuffing(log, indicators)
+        score += self._check_impossible_travel(log, user_baseline, indicators)
+        score += self._check_mass_download(log, user_baseline, indicators)
+        score += self._check_privilege_creep(log, user_baseline, indicators)
+        score += self._check_unusual_ip(log, user_baseline, indicators)
+        score += self._check_unusual_location(log, user_baseline, indicators)
+        score += self._check_unusual_time(log, user_baseline, indicators)
+        score += self._check_unusual_user_agent(log, user_baseline, indicators)
+        score += self._check_failed_auth_burst(log, indicators)
+        
+        severity = self._score_to_severity(score)
+        recommended_action = self._get_recommended_action(severity, indicators)
+        
+        anomaly = AnomalyScore(
+            user_id=log.user_id,
+            score=min(score, 100.0),
+            severity=severity,
+            indicators=indicators,
+            timestamp=log.timestamp,
+            session_id=log.session_id,
+            recommended_action=recommended_action
         )
+        
+        self.anomaly_scores.append(anomaly)
+        return anomaly
 
-        download_count = len(download_logs)
-        total_logs = len(logs)
-        download_rate = download_count / total_logs if total_logs > 0 else 0
+    def _check_credential_stuffing(self, log: AuditLogEntry, indicators: List[str]) -> float:
+        """Detect rapid auth attempts from same IP"""
+        if not log.success and 'auth' in log.action.lower():
+            indicators.append(f"CREDENTIAL_STUFFING: Failed auth attempt on {log.action}")
+            return 15.0
+        return 0.0
 
-        if download_count > 50 or download_rate > 0.4:
-            score = min(
-                1.0, (download_count / 100.0) + abs(download_rate - baseline_freq)
-            )
-            return score, f"Mass_Download({download_count}_downloads_{download_rate:.1%}_rate)"
+    def _check_impossible_travel(self, log: AuditLogEntry, baseline: Dict, indicators: List[str]) -> float:
+        """Detect geographically impossible travel"""
+        typical_locations = baseline.get('typical_locations', {})
+        if not typical_locations:
+            return 0.0
+        
+        if log.location not in typical_locations:
+            indicators.append(f"IMPOSSIBLE_TRAVEL: New location detected {log.location}")
+            return 20.0
+        return 0.0
 
-        return 0.0, ""
+    def _check_mass_download(self, log: AuditLogEntry, baseline: Dict, indicators: List[str]) -> float:
+        """Detect mass download patterns"""
+        if 'download' in log.action.lower():
+            download_patterns = baseline.get('download_patterns', [])
+            
+            current_time = datetime.fromisoformat(log.timestamp)
+            recent_downloads = [
+                dp for dp in download_patterns
+                if abs((datetime.fromisoformat(dp) - current_time).total_seconds()) < (self.mass_download_window_minutes * 60)
+            ]
+            
+            if len(recent_downloads) > self.mass_download_count:
+                indicators.append(f"MASS_DOWNLOAD: {len(recent_downloads)} downloads in {self.mass_download_window_minutes} min")
+                return 30.0
+        return 0.0
 
-    def score_privilege_creep(self, logs: List[AuditLog]) -> Tuple[float, str]:
-        """Detect privilege creep: accessing resources/services not typically used."""
-        user_id = logs[0].user_id if logs else ""
+    def _check_privilege_creep(self, log: AuditLogEntry, baseline: Dict, indicators: List[str]) -> float:
+        """Detect unauthorized privilege escalation"""
+        if any(keyword in log.action.lower() for keyword in ['admin', 'elevate', 'grant', 'permission']):
+            typical_actions = baseline.get('typical_actions', {})
+            admin_actions = sum(1 for action in typical_actions if 'admin' in action.lower())
+            
+            if admin_actions < self.privilege_creep_threshold:
+                indicators.append(f"PRIVILEGE_CREEP: Unusual admin action {log.action}")
+                return 25.0
+        return 0.0
 
-        if not logs:
-            return 0.0, ""
+    def _check_unusual_ip(self, log: AuditLogEntry, baseline: Dict, indicators: List[str]) -> float:
+        """Detect access from unusual IP addresses"""
+        typical_ips = baseline.get('typical_ips', {})
+        if typical_ips and log.ip_address not in typical_ips:
+            indicators.append(f"UNUSUAL_IP: Access from new IP {log.ip_address}")
+            return 10.0
+        return 0.0
 
-        # Check for new service access
-        services_accessed = set(log.service for log in logs)
-        baseline_profile = self.baseline.get_user_profile(user_id)
-        baseline_services = set(baseline_profile.get("services", {}).keys())
+    def _check_unusual_location(self, log: AuditLogEntry, baseline: Dict, indicators: List[str]) -> float:
+        """Detect access from unusual locations"""
+        typical_locations = baseline.get('typical_locations', {})
+        if typical_locations and log.location not in typical_locations:
+            indicators.append(f"UNUSUAL_LOCATION: Access from {log.location}")
+            return 8.0
+        return 0.0
 
-        new_services = services_accessed - baseline_services
-        suspicious_service_access = 0
+    def _check_unusual_time(self, log: AuditLogEntry, baseline: Dict, indicators: List[str]) -> float:
+        """Detect access at unusual times"""
+        typical_times = baseline.get('typical_times', [])
+        if typical_times:
+            log_hour = datetime.fromisoformat(log.timestamp).hour
+            avg_hour = statistics.mean(typical_times) if typical_times else 9
+            hour_stdev = statistics.stdev(typical_times) if len(typical_times) > 1 else 2
+            
+            if hour_stdev > 0 and abs(log_hour - avg_hour) > (2 * hour_stdev):
+                indicators.append(f"UNUSUAL_TIME: Access at {log_hour}:00")
+                return 5.0
+        return 0.0
 
-        for service in services_accessed:
-            freq = self.baseline.get_service_frequency(user_id, service)
-            # Flag if service accessed but rarely in baseline
-            if freq < 0.05 and len(baseline_services) > 0:
-                suspicious_service_access += 1
+    def _check_unusual_user_agent(self, log: AuditLogEntry, baseline: Dict, indicators: List[str]) -> float:
+        """Detect access from unusual user agents"""
+        typical_agents = baseline.get('typical_user_agents', {})
+        if typical_agents and log.user_agent not in typical_agents:
+            indicators.append(f"UNUSUAL_USER_AGENT: {log.user_agent}")
+            return 5.0
+        return 0.0
 
-        # Check for new resource access patterns
-        resources_accessed = set(log.resource for log in logs)
-        baseline_resources = set(baseline_profile.get("resources", {}).keys())
-        new_resources = resources_accessed - baseline_resources
+    def _check_failed_auth_burst(self, log: AuditLogEntry, indicators: List[str]) -> float:
+        """Detect bursts of failed authentication attempts"""
+        if not log.success and 'auth' in log.action.lower():
+            indicators.append("FAILED_AUTH_ATTEMPT")
+            return 10.0
+        return 0.0
 
-        if len(new_resources) > len(resources_accessed) * 0.5 and len(
-            resources_accessed
-        ) > 10:
-            score = min(
-                1.0,
-                (len(new_resources) / len(resources_accessed))
-                + (suspicious_service_access / max(1, len(services_accessed))),
-            )
-            return score, f"Privilege_Creep({len(new_services)}_new_services_{len(new_resources)}_new_resources)"
-
-        return 0.0, ""
-
-    def score_anomaly(
-        self, logs: List[AuditLog]
-    ) -> Tuple[float, List[str]]:
-        """Compute overall anomaly score."""
-        if not logs:
-            return 0.0, []
-
-        scores = []
-        anomalies = []
-
-        # Credential stuffing
-        cred_score, cred_desc = self.score_credential_stuffing(logs)
-        scores.append(cred_score * 0.25)
-        if cred_score > 0.3:
-            anomalies.append(cred_desc)
-
-        # Impossible travel
-        travel_score, travel_desc = self.score_impossible_travel(logs)
-        scores.append(travel_score * 0.30)
-        if travel_score > 0.3:
-            anomalies.append(travel_desc)
-
-        # Mass download
-        download_score, download_desc = self.score_mass_download(logs)
-        scores.append(download_score * 0.25)
-        if download_score > 0.3:
-            anomalies.append(download_desc)
-
-        # Privilege creep
-        priv_score, priv_desc = self.score_privilege_creep(logs)
-        scores.append(priv_score * 0.20)
-        if priv_score > 0.3:
-            anomalies.append(priv_desc)
-
-        total_score = sum(scores)
-        return min(1.0, total_score), anomalies
-
-    def get_threat_level(self, score: float) -> ThreatLevel:
-        """Map anomaly score to threat level."""
-        if score >= 0.8:
-            return ThreatLevel.CRITICAL
-        elif score >= 0.6:
-            return ThreatLevel.HIGH
-        elif score >= 0.4:
-            return ThreatLevel.MEDIUM
+    def _score_to_severity(self, score: float) -> SeverityLevel:
+        """Convert anomaly score to severity level"""
+        if score >= 70:
+            return SeverityLevel.CRITICAL
+        elif score >= 50:
+            return SeverityLevel.HIGH
+        elif score >= 30:
+            return SeverityLevel.MEDIUM
         else:
-            return ThreatLevel.LOW
+            return SeverityLevel.LOW
+
+    def _get_recommended_action(self, severity: SeverityLevel, indicators: List[str]) -> str:
+        """Get recommended SOAR action based on severity and indicators"""
+        if severity == SeverityLevel.CRITICAL:
+            if any('CREDENTIAL_STUFFING' in ind for ind in indicators):
+                return "AUTO_REVOKE_SESSION|ALERT_SECURITY_TEAM|FORCE_PASSWORD_RESET"
+            elif any('MASS_DOWNLOAD' in ind for ind in indicators):
+                return "AUTO_REVOKE_SESSION|QUARANTINE_DATA|ALERT_SECURITY_TEAM"
+            elif any('PRIVILEGE_CREEP' in ind for ind in indicators):
+                return "AUTO_REVOKE_SESSION|REVOKE_ADMIN|ALERT_SECURITY_TEAM"
+            else:
+                return "AUTO_REVOKE_SESSION|ALERT_SECURITY_TEAM"
+        elif severity == SeverityLevel.HIGH:
+            return "PROMPT_MFA|ALERT_SECURITY_TEAM|LOG_DETAILED"
+        elif severity == SeverityLevel.MEDIUM:
+            return "LOG_DETAILED|MONITOR_CLOSELY"
+        else:
+            return "LOG_AND_ARCHIVE"
 
 
 class SOARIntegration:
-    """Simulates SOAR integration for alert handling."""
+    def __init__(self, soar_endpoint: str = "http://localhost:8000", api_key: str = "test-key"):
+        self.soar_endpoint = soar_endpoint
+        self.api_key = api_key
+        self.revoked_sessions = set()
 
-    def __init__(self):
-        self.alerts: List[Dict[str, Any]] = []
-        self.revoked_sessions: List[str] = []
-
-    def send_alert(
-        self, anomaly_score: AnomalyScore, auto_revoke: bool = False
-    ) -> Dict[str, Any]:
-        """Send alert to SOAR system."""
-        alert = {
-            "alert_id": self._generate_alert_id(),
-            "timestamp": datetime.utcnow().isoformat(),
-            "user_id": anomaly_score.user_id,
-            "user_email": anomaly_score.user_email,
-            "service": anomaly_score.service,
-            "anomaly_score": anomaly_score.total_score,
-            "threat_level": anomaly_score.threat_level.name,
-            "anomalies": anomaly_score.anomalies,
-            "auto_revoke_triggered": False,
-            "session_id": anomaly_score.session_id,
+    def send_alert(self, anomaly: AnomalyScore) -> Dict:
+        """Send anomaly alert to SOAR platform"""
+        alert_payload = {
+            "alert_id": self._generate_alert_id(anomaly),
+            "timestamp": datetime.now().isoformat(),
+            "user_id": anomaly.user_id,
+            "severity": anomaly.severity.name,
+            "anomaly_score": anomaly.score,
+            "indicators": anomaly.indicators,
+            "session_id": anomaly.session_id,
+            "recommended_action": anomaly.recommended_action,
+            "soar_status": "QUEUED"
         }
+        
+        print(f"[SOAR] Sending alert to {self.soar_endpoint}")
+        print(json.dumps(alert_payload, indent=2))
+        
+        return alert_payload
 
-        if auto_revoke and anomaly_score.threat_level == ThreatLevel.CRITICAL:
-            alert["auto_revoke_triggered"] = True
-            self._revoke_session(anomaly_score.session_id, anomaly_score.user_id)
+    def execute_action(self, anomaly: AnomalyScore) -> Dict:
+        """Execute recommended action in SOAR"""
+        actions = anomaly.recommended_action.split('|')
+        execution_result = {
+            "execution_id": self._generate_execution_id(anomaly),
+            "timestamp": datetime.now().isoformat(),
+            "user_id": anomaly.user_id,
+            "session_id": anomaly.session_id,
+            "actions_executed": [],
+            "status": "IN_PROGRESS"
+        }
+        
+        for action in actions:
+            result = self._execute_single_action(action, anomaly)
+            execution_result["actions_executed"].append(result)
+        
+        execution_result["status"] = "COMPLETED"
+        
+        print(f"[SOAR] Executing actions for session {anomaly.session_id}")
+        print(json.dumps(execution_result, indent=2))
+        
+        return execution_result
 
-        self.alerts.append(alert)
-        return alert
+    def _execute_single_action(self, action: str, anomaly: AnomalyScore) -> Dict:
+        """Execute a single SOAR action"""
+        action = action.strip()
+        
+        if action == "AUTO_REVOKE_SESSION":
+            self.revoked_sessions.add(anomaly.session_id)
+            return {
+                "action": action,
+                "status": "SUCCESS",
+                "details": f"Session {anomaly.session_id} revoked"
+            }
+        elif action == "ALERT_SECURITY_TEAM":
+            return {
+                "action": action,
+                "status": "SUCCESS",
+                "details": "Security team notified via email and Slack"
+            }
+        elif action == "FORCE_PASSWORD_RESET":
+            return {
+                "action": action,
+                "status": "SUCCESS",
+                "details": f"Password reset enforced for user {anomaly.user_id}"
+            }
+        elif action == "QUARANTINE_DATA":
+            return {
+                "action": action,
+                "status": "SUCCESS",
+                "details": "Downloaded data quarantined and flagged for review"
+            }
+        elif action == "REVOKE_ADMIN":
+            return {
+                "action": action,
+                "status": "SUCCESS",
+                "details": f"Admin privileges revoked for user {anomaly.user_id}"
+            }
+        elif action == "PROMPT_MFA":
+            return {
+                "action": action,
+                "status": "SUCCESS",
+                "details": "User prompted for MFA on next login"
+            }
+        elif action == "LOG_DETAILED":
+            return {
+                "action": action,
+                "status": "SUCCESS",
+                "details": "Detailed logging enabled for this session"
+            }
+        elif action == "MONITOR_CLOSELY":
+            return {
+                "action": action,
+                "status": "SUCCESS",
+                "details": "Enhanced monitoring activated"
+            }
+        elif action == "LOG_AND_ARCHIVE":
+            return {
+                "action": action,
+                "status": "SUCCESS",
+                "details": "Event logged and archived"
+            }
+        else:
+            return {
+                "action": action,
+                "status": "SKIPPED",
+                "details": "Unknown action"
+            }
 
-    def _generate_alert_id(self) -> str:
-        """Generate unique alert ID."""
-        return f"ALERT-{int(time.time() * 1000)}"
+    def _generate_alert_id(self, anomaly: AnomalyScore) -> str:
+        """Generate unique alert ID"""
+        data = f"{anomaly.user_id}{anomaly.session_id}{anomaly.timestamp}".encode()
+        return f"ALR-{hashlib.sha256(data).hexdigest()[:12].upper()}"
 
-    def _revoke_session(self, session_id: str, user_id: str) -> None:
-        """Revoke user session."""
-        revocation = f"{user_id}:{session_id}"
-        self.revoked_sessions.append(revocation)
+    def _generate_execution_id(self, anomaly: AnomalyScore) -> str:
+        """Generate unique execution ID"""
+        data = f"{anomaly.user_id}{anomaly.session_id}{datetime.now().isoformat()}".encode()
+        return f"EXE-{hashlib.sha256(data).hexdigest()[:12].upper()}"
 
-    def get_alerts(self) -> List[Dict[str, Any]]:
-        """Return all alerts."""
-        return self.alerts
-
-    def get_revoked_sessions(self) -> List[str]:
-        """Return revoked sessions."""
-        return self.revoked_sessions
+    def is_session_revoked(self, session_id: str) -> bool:
+        """Check if session has been revoked"""
+        return session_id in self.revoked_sessions
 
 
-class AuditLogParser:
-    """Parses audit log data."""
-
-    @staticmethod
-    def parse_log(log_dict: Dict[str, Any]) -> AuditLog:
-        """Parse a log dictionary into AuditLog."""
-        return AuditLog(
-            timestamp=log_dict.get("timestamp", ""),
-            user_id=log_dict.get("user_id", ""),
-            user_email=log_dict.get("user_email", ""),
-            action=log_dict.get("action", ""),
-            resource=log_dict.get("resource", ""),
-            ip_address=log_dict.get("ip_address", ""),
-            user_agent=log_dict.get("user_agent", ""),
-            service=log_dict.get("service", ""),
-            success=log_dict.get("success", True),
-            details=log_dict.get("details", {}),
-        )
-
-
-class BehaviorAnalyticsEngine:
-    """Main engine for behavioral analytics."""
-
-    def __init__(self, auto_revoke_critical: bool = True):
+class SaaSBreachDetectionEngine:
+    def __init__(self, soar_endpoint: str = "http://localhost:8000", auto_revoke: bool = True):
         self.baseline = BehavioralBaseline()
         self.detector = AnomalyDetector(self.baseline)
-        self.soar = SOARIntegration()
-        self.auto_revoke_critical = auto_revoke_critical
-        self.user_logs: Dict[str, List[AuditLog]] = defaultdict(list)
+        self.soar = SOARIntegration(soar_endpoint)
+        self.auto_revoke = auto_revoke
+        self.processed_logs = []
+        self.alerts = []
 
-    def ingest_logs(self, logs: List[AuditLog]) -> None:
-        """Ingest logs and build baseline."""
-        for log in logs:
-            self.baseline.add_log(log)
-            self.user_logs[log.user_id].append(log)
+    def process_logs(self, logs: List[AuditLogEntry]) -> Tuple[List[AnomalyScore], List[Dict]]:
+        """Process audit logs and generate anomalies with SOAR actions"""
+        self.baseline.build_baseline(logs[:int(len(logs) * 0.7)])
+        
+        test_logs = logs[int(len(logs) * 0.7):]
+        
+        for log in test_logs:
+            if self.soar.is_session_revoked(log.session_id):
+                continue
+            
+            anomaly = self.detector.calculate_anomaly_score(log)
+            self.processed_logs.append(log)
+            
+            if anomaly.severity.value >= SeverityLevel.MEDIUM.value:
+                alert = self.soar.send_alert(anomaly)
+                self.alerts.append(alert)
+                
+                if self.auto_revoke and anomaly.severity == SeverityLevel.CRITICAL:
+                    execution = self.soar.execute_action(anomaly)
+                elif anomaly.severity == SeverityLevel.HIGH:
+                    execution = self.soar.execute_action(anomaly)
+        
+        return self.detector.anomaly_scores, self.alerts
 
-    def analyze_user(self, user_id: str) -> List[AnomalyScore]:
-        """Analyze a user's logs and generate anomaly scores."""
-        if user_id not in self.user_logs:
-            return []
-
-        logs = self.user_logs[user_id]
-        if not logs:
-            return []
-
-        # Group logs by service
-        logs_by_service = defaultdict(list)
-        for log in logs:
-            logs_by_service[log.service].append(log)
-
-        anomaly_scores = []
-
-        for service, service_logs in logs_by_service.items():
-            score, anomalies = self.detector.score_anomaly(service_logs)
-            threat_level = self.detector.get_threat_level(score)
-
-            # Use first log for user info, hash of logs for session ID
-            first_log = service_logs[0]
-            session_hash = hashlib.md5(
-                f"{user_id}{service}{int(time.time())}".encode()
-            ).hexdigest()[:12]
-
-            anomaly_score = AnomalyScore(
-                user_id=user_id,
-                user_email=first_log.user_email,
-                total_score=score,
-                threat_level=threat_level,
-                anomalies=anomalies,
-                timestamp=datetime.utcnow().isoformat(),
-                session_id=session_hash,
-                service=service,
-            )
-
-            anomaly_scores.append(anomaly_score)
-
-            # Send to SOAR
-            self.soar.send_alert(anomaly_score, auto_revoke=self.auto_revoke_critical)
-
-        return anomaly_scores
-
-    def analyze_all_users(self) -> Dict[str, List[AnomalyScore]]:
-        """Analyze all users and return results."""
-        results = {}
-        for user_id in self.user_logs.keys():
-            results[user_id] = self.analyze_user(user_id)
-        return results
-
-    def export_report(self) -> Dict[str, Any]:
-        """Export comprehensive analysis report."""
-        return {
-            "generated_at": datetime.utcnow().isoformat(),
-            "total_users_analyzed": len(self.user_logs),
-            "total_logs_ingested": self.baseline.global_stats["total_logs"],
-            "critical_alerts": len(
-                [
-                    a
-                    for a in self.soar.get_alerts()
-                    if a["threat_level"] == "CRITICAL"
-                ]
-            ),
-            "high_alerts": len(
-                [a for a in self.soar.get_alerts() if a["threat_level"] == "HIGH"]
-            ),
-            "revoked_sessions": len(self.soar.get_revoked_sessions()),
-            "alerts": self.soar.get_alerts(),
-            "revoked_sessions_list": self.soar.get_revoked_sessions(),
+    def generate_report(self) -> Dict:
+        """Generate comprehensive detection report"""
+        anomalies_by_severity = defaultdict(list)
+        for anomaly in self.detector.anomaly_scores:
+            anomalies_by_severity[anomaly.severity.name].append(anomaly)
+        
+        report = {
+            "report_timestamp": datetime.now().isoformat(),
+            "total_logs_processed": len(self.processed_logs),
+            "total_anomalies_detected": len(self.detector.anomaly_scores),
+            "critical_anomalies": len(anomalies_by_severity['CRITICAL']),
+            "high_anomalies": len(anomalies_by_severity['HIGH']),
+            "medium_anomalies": len(anomalies_by_severity['MEDIUM']),
+            "low_anomalies": len(anomalies_by_severity['LOW']),
+            "alerts_sent_to_soar": len(self.alerts),
+            "sessions_revoked": len(self.soar.revoked_sessions),
+            "affected_users": list(set(a.user_id for a in self.detector.anomaly_scores)),
+            "top_indicators": self._get_top_indicators()
         }
+        
+        return report
+
+    def _get_top_indicators(self) -> List[Tuple[str, int]]:
+        """Get most common anomaly indicators"""
+        indicator_counts = defaultdict(int)
+        for anomaly in self.detector.anomaly_scores:
+            for indicator in anomaly.indicators:
+                indicator_counts[indicator.split(':')[0]] += 1
+        
+        return sorted(indicator_counts.items(), key=lambda x: x[1], reverse=True)[:10]
 
 
-def generate_sample_logs() -> List[Dict[str, Any]]:
-    """Generate realistic sample audit logs for demo."""
-    base_time = datetime.utcnow()
+def generate_test_logs(num_logs: int = 500) -> List[AuditLogEntry]:
+    """Generate realistic test audit logs"""
+    services = ['Google Workspace', 'M365', 'Salesforce', 'GitHub']
+    actions = ['login', 'download', 'upload', 'delete', 'admin_action', 'share', 'auth_attempt']
+    locations = ['New York', 'San Francisco', 'London', 'Tokyo', 'Sydney', 'Berlin']
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+        'Mozilla/5.0 (X11; Linux x86_64)',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0)'
+    ]
+    
     logs = []
-
-    # Normal user behavior
-    for i in range(30):
-        logs.append(
-            {
-                "timestamp": (base_time - timedelta(minutes=i * 2)).isoformat(),
-                "user_id": "user001",
-                "user_email": "john.doe@company.com",
-                "action": "LOGIN",
-                "resource": "workspace",
-                "ip_address": "192.168.1.100",
-                "user_agent": "Mozilla/5.0 Chrome",
-                "service": "google-workspace",
-                "success": True,
-                "details": {},
-            }
+    base_time = datetime.now() - timedelta(days=30)
+    
+    for i in range(num_logs):
+        user_id = f"user_{random.randint(1, 50)}"
+        is_anomaly = random.random() < 0.15
+        
+        if is_anomaly:
+            action = random.choice(['failed_auth', 'mass_download', 'privilege_escalation'])
+            location = random.choice(locations + ['Unknown Location', 'VPN/Proxy'])
+            ip_address = f"203.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 255)}"
+            success = action != 'failed_auth'
+        else:
+            action = random.choice(actions)
+            location = random.choice(locations[:3])
+            ip_address = f"192.168.{random.randint(1, 10)}.{random.randint(1, 255)}"
+            success = random.random() > 0.05
+        
+        timestamp = base_time + timedelta(minutes=i, seconds=random.randint(0, 60))
+        
+        log = AuditLogEntry(
+            timestamp=timestamp.isoformat(),
+            user_id=user_id,
+            user_email=f"{user_id}@company.com",
+            action=action,
+            resource=f"resource_{random.randint(1, 100)}",
+            ip_address=ip_address,
+            user_agent=random.choice(user_agents),
+            service=random.choice(services),
+            location=location,
+            success=success,
+            session_id=f"sess_{user_id}_{random.randint(1000, 9999)}"
         )
-        logs.append(
-            {
-                "timestamp": (base_time - timedelta(minutes=i * 2 + 1)).isoformat(),
-                "user_id": "user001",
-                "user_email": "john.doe@company.com",
-                "action": "VIEW_DOCUMENT",
-                "resource": f"doc_{i}",
-                "ip_address": "192.168.1.100",
-                "user_agent": "Mozilla/5.0 Chrome",
-                "service": "google-workspace",
-                "success": True,
-                "details": {},
-            }
-        )
-
-    # Suspicious user: credential stuffing + impossible travel
-    for i in range(8):
-        logs.append(
-            {
-                "timestamp": (base_time - timedelta(minutes=80 - i * 5)).isoformat(),
-                "user_id": "user002",
-                "user_email": "jane.smith@company.com",
-                "action": "LOGIN",
-                "resource": "workspace",
-                "ip_address": ["1.2.3.4", "5.6.7.8", "9.10.11.12", "13.14.15.16"][
-                    i % 4
-                ],
-                "user_agent": "Mozilla/5.0 Firefox",
-                "service": "google-workspace",
-                "success": i % 3 != 0,  # Some failures
-                "details": {},
-            }
-        )
-
-    # Failed logins from different IPs
-    for i in range(6):
-        logs.append(
-            {
-                "timestamp": (base_time - timedelta(minutes=40 + i)).isoformat(),
-                "user_id": "user002",
-                "user_email": "jane.smith@company.com",
-                "action": "LOGIN",
-                "resource": "workspace",
-                "ip_address": f"203.0.113.{100 + i}",
-                "user_agent": "Python-Requests/2.28",
-                "service": "google-workspace",
-                "success": False,
-                "details": {"error": "invalid_credentials"},
-            }
-        )
-
-    # Mass download activity
-    for i in range(75):
-        logs.append(
-            {
-                "timestamp": (base_time - timedelta(minutes=100 + i * 1)).isoformat(),
-                "user_id": "user003",
-                "user_email": "bob.wilson@company.com",
-                "action": "DOWNLOAD",
-                "resource": f"file_{i}.xlsx",
-                "ip_address": "10.0.0.50",
-                "user_agent": "Mozilla/5.0 Safari",
-                "service": "microsoft-365",
-                "success": True,
-                "details": {"file_size_mb": 5 + i % 10},
-            }
-        )
-
-    # Normal M365 activity
-    for i in range(20):
-        logs.append(
-            {
-                "timestamp": (base_time - timedelta(minutes=i * 3)).isoformat(),
-                "user_id": "user004",
-                "user_email": "alice.johnson@company.com",
-                "action": "VIEW_EMAIL",
-                "resource": f"email_{i}",
-                "ip_address": "192.168.1.101",
-                "user_agent": "Mozilla/5.0 Chrome",
-                "service": "microsoft-365",
-                "success": True,
-                "details": {},
-            }
-        )
-
-    # Privilege creep: accessing Salesforce when user normally uses Workspace
-    for i in range(5):
-        logs.append(
-            {
-                "timestamp": (base_time - timedelta(minutes=50 + i * 2)).isoformat(),
-                "user_id": "user001",
-                "user_email": "john.doe@company.com",
-                "action": "ACCESS_DASHBOARD",
-                "resource": "sales_dashboard",
-                "ip_address": "192.168.1.100",
-                "user_agent": "Mozilla/5.0 Chrome",
-                "service": "salesforce",
-                "success": True,
-                "details": {"dashboard_id": "dash_001"},
-            }
-        )
-
-    # GitHub suspicious activity
-    for i in range(10):
-        logs.append(
-            {
-                "timestamp": (base_time - timedelta(minutes=30 + i * 2)).isoformat(),
-                "user_id": "user005",
-                "user_email": "dev.hacker@company.com",
-                "action": "CLONE_REPO",
-                "resource": f"repo_{i}",
-                "ip_address": "203.0.113.50",
-                "user_agent": "git/2.40",
-                "service": "github",
-                "success": True,
-                "details": {"repo_size_mb": 100 + i * 50},
-            }
-        )
-
+        
+        logs.append(log)
+    
     return logs
 
 
 def main():
-    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="SaaS Breach Detection via Behavioral Analytics"
+        description='SaaS Breach Detection via Behavioral Analytics with SOAR Integration',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  %(prog)s --logs test_logs.json --severity high
+  %(prog)s --soar-endpoint http://soar.company.com:8000 --auto-revoke
+  %(prog)s --report-output detection_report.json --num-test-logs 1000
+        '''
     )
+    
     parser.add_argument(
-        "--log-file",
+        '--logs',
         type=str,
-        help="Path to JSON log file (one log per line)",
-        default=None,
+        help='Path to JSON file with audit logs'
     )
     parser.add_argument(
-        "--output-file",
+        '--num-test-logs',
+        type=int,
+        default=500,
+        help='Number of test logs to generate (default: 500)'
+    )
+    parser.add_argument(
+        '--severity',
         type=str,
-        help="Path to write JSON report",
-        default="breach_detection_report.json",
+        choices=['low', 'medium', 'high', 'critical'],
+        default='medium',
+        help='Minimum severity level to report (default: medium)'
     )
     parser.add_argument(
-        "--auto-revoke",
-        action="store_true",
-        help="Auto-revoke sessions on critical threats",
+        '--soar-endpoint',
+        type=str,
+        default='http://localhost:8000',
+        help='SOAR platform endpoint (default: http://localhost:8000)'
+    )
+    parser.add_argument(
+        '--auto-revoke',
+        action='store_true',
         default=True,
+        help='Automatically revoke sessions for critical anomalies'
     )
     parser.add_argument(
-        "--no-auto-revoke",
-        action="store_true",
-        help="Disable auto-revoke",
-        default=False,
+        '--no-auto-revoke',
+        dest='auto_revoke',
+        action='store_false',
+        help='Disable automatic session revocation'
     )
     parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Print alerts to stdout",
-        default=False,
+        '--report-output',
+        type=str,
+        help='Output file for detection report (JSON)'
     )
-
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Enable verbose output'
+    )
+    
     args = parser.parse_args()
-
-    # Determine auto-revoke setting
-    auto_revoke = args.auto_revoke and not args.no_auto_revoke
-
-    # Load logs
-    if args.log_file:
+    
+    print("[*] SaaS Breach Detection Engine Starting")
+    print(f"[*] SOAR Endpoint: {args.soar_endpoint}")
+    print(f"[*] Auto-Revoke Enabled: {args.auto_revoke}")
+    
+    if args.logs:
+        print(f"[*] Loading logs from {args.logs}")
         try:
-            logs_data = []
-            with open(args.log_file, "r") as f:
-                for line in f:
-                    if line.strip():
-                        logs_data.append(json.loads(line))
+            with open(args.logs, 'r') as f:
+                logs_data = json.load(f)
+                logs = [AuditLogEntry(**log) for log in logs_data]
         except FileNotFoundError:
-            print(f"Error: Log file '{args.log_file}' not found", file=sys.stderr)
-            sys.exit(1)
-        except json.JSONDecodeError as e:
-            print(f"Error: Invalid JSON in log file: {e}", file=sys.stderr)
+            print(f"[!] File not found: {args.logs}")
             sys.exit(1)
     else:
-        # Use sample data
-        logs_data = generate_sample_logs()
-
-    # Parse logs
-    logs = [AuditLogParser.parse_log(log_dict) for log_dict in logs_data]
-
-    # Initialize engine
-    engine = BehaviorAnalyticsEngine(auto_revoke_critical=auto_revoke)
-
-    # Ingest and analyze
-    engine.ingest_logs(logs)
-    results = engine.analyze_all_users()
-
-    # Generate report
-    report = engine.export_report()
-
-    # Print results if verbose
+        print(f"[*] Generating {args.num_test_logs} test audit logs")
+        logs = generate_test_logs(args.num_test_logs)
+    
+    engine = SaaSBreachDetectionEngine(
+        soar_endpoint=args.soar_endpoint,
+        auto_revoke=args.auto_revoke
+    )
+    
+    print("[*] Processing logs and analyzing behavior...")
+    anomalies, alerts = engine.process_logs(logs)
+    
+    severity_map = {
+        'low': SeverityLevel.LOW,
+        'medium': SeverityLevel.MEDIUM,
+        'high': SeverityLevel.HIGH,
+        'critical': SeverityLevel.CRITICAL
+    }
+    min_severity = severity_map[args.severity]
+    
+    filtered_anomalies = [a for a in anomalies if a.severity.value >= min_severity.value]
+    
+    print(f"\n[+] Analysis Complete")
+    print(f"[+] Total Anomalies Detected: {len(anomalies)}")
+    print(f"[+] Anomalies >= {args.severity.upper()}: {len(filtered_anomalies)}")
+    print(f"[+] Alerts Sent to SOAR: {len(alerts)}")
+    print(f"[+] Sessions Revoked: {len(engine.soar.revoked_sessions)}")
+    
     if args.verbose:
-        for user_id, scores in results.items():
-            for score in scores:
-                print(f"\n[{score.threat_level.name}] User: {score.user_email}")
-                print(f"  Score: {score.total_score:.2f}")
-                print(f"  Service: {score.service}")
-                if score.anomalies:
-                    print(f"  Anomalies:")
-                    for anomaly in score.anomalies:
-                        print(f"    - {anomaly}")
-
-    # Write report
-    with open(args.output_file, "w") as f:
-        json.dump(report, f, indent=2)
-
-    print(f"\n✓ Analysis complete. Report written to: {args.output_file}")
-    print(f"  Critical Alerts: {report['critical_alerts']}")
-    print(f"  High Alerts: {report['high_alerts']}")
-    print(f"  Sessions Revoked: {report['revoked_sessions']}")
+        print("\n[*] Detailed Anomalies:")
+        for anomaly in filtered_anomalies[:10]:
+            print(f"\n  User: {anomaly.user_id}")
+            print(f"  Score: {anomaly.score:.1f}/100")
+            print(f"  Severity: {anomaly.severity.name}")
+            print(f"  Indicators: {', '.join(anomaly.indicators)}")
+            print(f"  Action: {anomaly.recommended_action}")
+    
+    report = engine.generate_report()
+    print("\n[+] Detection Report:")
+    print(json.dumps(report, indent=2))
+    
+    if args.report_output:
+        with open(args.report_output, 'w') as f:
+            json.dump(report, f, indent=2)
+        print(f"\n[+] Report saved to {args.report_output}")
+    
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
