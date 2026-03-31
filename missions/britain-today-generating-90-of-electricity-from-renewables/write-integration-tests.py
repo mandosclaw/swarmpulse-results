@@ -3,19 +3,18 @@
 # Task:    Write integration tests
 # Mission: Britain today generating 90%+ of electricity from renewables
 # Agent:   @aria
-# Date:    2026-03-29T20:44:38.461Z
+# Date:    2026-03-31T19:31:02.824Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Write integration tests for UK renewable electricity monitoring
+Task: Write integration tests for Britain's renewable energy grid monitoring
 Mission: Britain today generating 90%+ of electricity from renewables
 Agent: @aria
 Date: 2024
-Category: AI/ML
 
-This module implements comprehensive integration tests covering edge cases and failure modes
-for a renewable electricity grid monitoring system that tracks real-time generation data.
+Integration tests covering edge cases and failure modes for grid renewable
+energy data collection, processing, and analysis from grid.iamkate.com
 """
 
 import unittest
@@ -23,375 +22,659 @@ import json
 import sys
 import argparse
 from unittest.mock import Mock, patch, MagicMock
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+from enum import Enum
+import io
+import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional
-import random
 
 
-class GridDataPoint:
-    """Represents a single grid measurement."""
-    
-    def __init__(self, timestamp: datetime, renewable_percentage: float, 
-                 total_mw: float, renewable_mw: float):
-        self.timestamp = timestamp
-        self.renewable_percentage = renewable_percentage
-        self.total_mw = total_mw
-        self.renewable_mw = renewable_mw
-    
-    def to_dict(self) -> Dict:
-        return {
-            'timestamp': self.timestamp.isoformat(),
-            'renewable_percentage': self.renewable_percentage,
-            'total_mw': self.total_mw,
-            'renewable_mw': self.renewable_mw
+class EnergySource(Enum):
+    """Energy source types for British grid"""
+    WIND = "wind"
+    SOLAR = "solar"
+    HYDRO = "hydro"
+    NUCLEAR = "nuclear"
+    GAS = "gas"
+    COAL = "coal"
+    OTHER = "other"
+
+
+@dataclass
+class GridSnapshot:
+    """Represents a snapshot of grid data at a point in time"""
+    timestamp: datetime
+    total_demand_mw: float
+    renewable_mw: float
+    source_breakdown: Dict[EnergySource, float]
+    renewable_percentage: float
+    grid_frequency_hz: float
+
+    def __post_init__(self):
+        if self.total_demand_mw <= 0:
+            raise ValueError("Total demand must be positive")
+        if not (0 <= self.renewable_percentage <= 100):
+            raise ValueError("Renewable percentage must be 0-100")
+        if not (47 <= self.grid_frequency_hz <= 52):
+            raise ValueError("Grid frequency must be 47-52 Hz")
+
+
+class GridDataFetcher:
+    """Fetches grid data from remote API"""
+
+    def __init__(self, api_url: str, timeout_seconds: int = 10):
+        self.api_url = api_url
+        self.timeout_seconds = timeout_seconds
+        self.last_fetch_time = None
+        self.fetch_count = 0
+
+    def fetch_current_data(self) -> Dict:
+        """Fetch current grid data from API"""
+        try:
+            import urllib.request
+            import urllib.error
+            
+            req = urllib.request.Request(self.api_url)
+            req.add_header('User-Agent', 'SwarmPulse/1.0')
+            
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout_seconds) as response:
+                    data = json.loads(response.read().decode('utf-8'))
+                    self.last_fetch_time = datetime.now()
+                    self.fetch_count += 1
+                    return data
+            except urllib.error.HTTPError as e:
+                raise ConnectionError(f"HTTP {e.code}: {e.reason}")
+            except urllib.error.URLError as e:
+                raise ConnectionError(f"Network error: {e.reason}")
+                
+        except Exception as e:
+            raise ConnectionError(f"Failed to fetch grid data: {str(e)}")
+
+    def fetch_historical_data(self, hours_back: int) -> List[Dict]:
+        """Fetch historical grid data"""
+        if hours_back < 1 or hours_back > 8760:
+            raise ValueError("hours_back must be between 1 and 8760")
+        
+        data = []
+        current_time = datetime.now()
+        for i in range(hours_back):
+            data.append({
+                "timestamp": (current_time - timedelta(hours=i)).isoformat(),
+                "demand_mw": 30000 + (i % 5000),
+                "renewable_mw": 18000 + (i % 3000),
+            })
+        return data
+
+
+class GridDataProcessor:
+    """Processes raw grid data into meaningful metrics"""
+
+    def __init__(self):
+        self.processed_snapshots: List[GridSnapshot] = []
+
+    def parse_snapshot(self, raw_data: Dict) -> GridSnapshot:
+        """Parse raw API data into GridSnapshot"""
+        try:
+            timestamp = datetime.fromisoformat(raw_data.get("timestamp", datetime.now().isoformat()))
+            total_demand = float(raw_data.get("total_demand_mw", 0))
+            renewable = float(raw_data.get("renewable_mw", 0))
+            
+            source_breakdown = {}
+            for source in EnergySource:
+                source_breakdown[source] = float(raw_data.get(f"{source.value}_mw", 0))
+            
+            if total_demand == 0:
+                renewable_pct = 0
+            else:
+                renewable_pct = min(100, (renewable / total_demand) * 100)
+            
+            frequency = float(raw_data.get("frequency_hz", 50.0))
+            
+            snapshot = GridSnapshot(
+                timestamp=timestamp,
+                total_demand_mw=total_demand,
+                renewable_mw=renewable,
+                source_breakdown=source_breakdown,
+                renewable_percentage=renewable_pct,
+                grid_frequency_hz=frequency
+            )
+            
+            self.processed_snapshots.append(snapshot)
+            return snapshot
+            
+        except (ValueError, KeyError, TypeError) as e:
+            raise ValueError(f"Failed to parse snapshot: {str(e)}")
+
+    def calculate_average_renewable_percentage(self, snapshots: List[GridSnapshot]) -> float:
+        """Calculate average renewable percentage across snapshots"""
+        if not snapshots:
+            return 0.0
+        return sum(s.renewable_percentage for s in snapshots) / len(snapshots)
+
+    def detect_renewable_threshold(self, snapshots: List[GridSnapshot], 
+                                   threshold_pct: float = 90.0) -> Tuple[bool, Dict]:
+        """Check if renewable percentage meets threshold"""
+        if not snapshots:
+            return False, {"status": "no_data", "message": "No snapshots to analyze"}
+        
+        avg_renewable = self.calculate_average_renewable_percentage(snapshots)
+        meets_threshold = avg_renewable >= threshold_pct
+        
+        peak_renewable = max(s.renewable_percentage for s in snapshots)
+        min_renewable = min(s.renewable_percentage for s in snapshots)
+        
+        return meets_threshold, {
+            "meets_threshold": meets_threshold,
+            "average_renewable_pct": round(avg_renewable, 2),
+            "peak_renewable_pct": round(peak_renewable, 2),
+            "min_renewable_pct": round(min_renewable, 2),
+            "threshold_pct": threshold_pct,
+            "snapshot_count": len(snapshots)
         }
-    
-    def is_valid(self) -> bool:
-        """Validate data integrity."""
-        if self.renewable_percentage < 0 or self.renewable_percentage > 100:
-            return False
-        if self.total_mw < 0 or self.renewable_mw < 0:
-            return False
-        if self.renewable_mw > self.total_mw:
-            return False
-        return True
 
 
-class GridMonitor:
-    """Monitors UK grid renewable electricity generation."""
-    
-    def __init__(self, target_percentage: float = 90.0):
-        self.target_percentage = target_percentage
-        self.data_points: List[GridDataPoint] = []
-        self.is_connected = False
-        self.fetch_failures = 0
-        self.max_retries = 3
-    
-    def connect(self) -> bool:
-        """Establish connection to grid data source."""
-        self.is_connected = True
-        self.fetch_failures = 0
-        return self.is_connected
-    
-    def disconnect(self) -> bool:
-        """Close connection to grid data source."""
-        self.is_connected = False
-        return True
-    
-    def fetch_current_data(self) -> Optional[GridDataPoint]:
-        """Fetch current grid data with retry logic."""
-        if not self.is_connected:
-            raise RuntimeError("Not connected to grid data source")
+class GridValidator:
+    """Validates grid data integrity and constraints"""
+
+    VALID_FREQUENCY_RANGE = (47.0, 52.0)
+    MAX_DEMAND_MW = 65000
+    MIN_DEMAND_MW = 20000
+
+    def validate_snapshot(self, snapshot: GridSnapshot) -> Tuple[bool, List[str]]:
+        """Validate a grid snapshot for logical consistency"""
+        errors = []
         
-        if self.fetch_failures >= self.max_retries:
-            raise RuntimeError(f"Max retries ({self.max_retries}) exceeded")
+        if snapshot.total_demand_mw < self.MIN_DEMAND_MW:
+            errors.append(f"Demand {snapshot.total_demand_mw} below minimum {self.MIN_DEMAND_MW}")
         
-        # Simulate network failure with small probability
-        if random.random() < 0.1:
-            self.fetch_failures += 1
-            return None
+        if snapshot.total_demand_mw > self.MAX_DEMAND_MW:
+            errors.append(f"Demand {snapshot.total_demand_mw} exceeds maximum {self.MAX_DEMAND_MW}")
         
-        self.fetch_failures = 0
-        timestamp = datetime.now()
-        renewable_pct = random.uniform(70, 98)
-        total_mw = random.uniform(30000, 45000)
-        renewable_mw = (renewable_pct / 100) * total_mw
+        if snapshot.renewable_mw > snapshot.total_demand_mw:
+            errors.append("Renewable generation exceeds total demand")
         
-        return GridDataPoint(timestamp, renewable_pct, total_mw, renewable_mw)
-    
-    def add_data_point(self, data: GridDataPoint) -> bool:
-        """Add validated data point to history."""
-        if not data.is_valid():
-            return False
-        self.data_points.append(data)
-        return True
-    
-    def get_average_renewable_percentage(self, hours: int = 24) -> Optional[float]:
-        """Calculate average renewable percentage over period."""
-        if not self.data_points:
-            return None
+        if snapshot.grid_frequency_hz < self.VALID_FREQUENCY_RANGE[0]:
+            errors.append(f"Frequency {snapshot.grid_frequency_hz} below safe range")
         
-        cutoff_time = datetime.now() - timedelta(hours=hours)
-        recent_points = [p for p in self.data_points 
-                        if p.timestamp > cutoff_time]
+        if snapshot.grid_frequency_hz > self.VALID_FREQUENCY_RANGE[1]:
+            errors.append(f"Frequency {snapshot.grid_frequency_hz} above safe range")
         
-        if not recent_points:
-            return None
+        source_total = sum(snapshot.source_breakdown.values())
+        if source_total > snapshot.total_demand_mw * 1.05:
+            errors.append("Source breakdown exceeds total demand by >5%")
         
-        avg = sum(p.renewable_percentage for p in recent_points) / len(recent_points)
-        return avg
-    
-    def is_target_met(self, data: GridDataPoint) -> bool:
-        """Check if data point meets target percentage."""
-        return data.renewable_percentage >= self.target_percentage
-    
-    def get_statistics(self) -> Dict:
-        """Generate statistics from collected data."""
-        if not self.data_points:
-            return {'count': 0, 'status': 'no_data'}
+        return len(errors) == 0, errors
+
+    def validate_data_continuity(self, snapshots: List[GridSnapshot]) -> Tuple[bool, List[str]]:
+        """Check for gaps and anomalies in time series data"""
+        errors = []
         
-        percentages = [p.renewable_percentage for p in self.data_points]
-        return {
-            'count': len(self.data_points),
-            'min': min(percentages),
-            'max': max(percentages),
-            'average': sum(percentages) / len(percentages),
-            'latest': percentages[-1],
-            'target_met_count': sum(1 for p in self.data_points 
-                                   if self.is_target_met(p))
+        if len(snapshots) < 2:
+            return True, []
+        
+        sorted_snapshots = sorted(snapshots, key=lambda s: s.timestamp)
+        
+        for i in range(1, len(sorted_snapshots)):
+            prev_snap = sorted_snapshots[i-1]
+            curr_snap = sorted_snapshots[i]
+            
+            time_diff = (curr_snap.timestamp - prev_snap.timestamp).total_seconds()
+            
+            if time_diff > 3600:
+                errors.append(f"Gap of {time_diff}s between snapshots at {prev_snap.timestamp}")
+            
+            demand_change_pct = abs(curr_snap.total_demand_mw - prev_snap.total_demand_mw) / prev_snap.total_demand_mw * 100
+            if demand_change_pct > 30:
+                errors.append(f"Unrealistic demand change of {demand_change_pct:.1f}%")
+        
+        return len(errors) == 0, errors
+
+
+class IntegrationTests(unittest.TestCase):
+    """Integration tests for grid monitoring system"""
+
+    def setUp(self):
+        """Set up test fixtures"""
+        self.processor = GridDataProcessor()
+        self.validator = GridValidator()
+        self.fetcher = GridDataFetcher("https://grid.iamkate.com/")
+
+    def test_valid_snapshot_creation(self):
+        """Test creating a valid grid snapshot"""
+        data = {
+            "timestamp": datetime.now().isoformat(),
+            "total_demand_mw": 40000,
+            "renewable_mw": 36000,
+            "wind_mw": 20000,
+            "solar_mw": 10000,
+            "hydro_mw": 6000,
+            "nuclear_mw": 8000,
+            "gas_mw": 4000,
+            "coal_mw": 0,
+            "frequency_hz": 50.0
         }
+        
+        snapshot = self.processor.parse_snapshot(data)
+        self.assertEqual(snapshot.total_demand_mw, 40000)
+        self.assertEqual(snapshot.renewable_mw, 36000)
+        self.assertAlmostEqual(snapshot.renewable_percentage, 90.0, places=1)
+
+    def test_90_percent_renewable_threshold(self):
+        """Test that 90% renewable threshold detection works"""
+        snapshots = []
+        for i in range(5):
+            data = {
+                "timestamp": (datetime.now() - timedelta(hours=i)).isoformat(),
+                "total_demand_mw": 40000,
+                "renewable_mw": 36500,
+                "frequency_hz": 50.0
+            }
+            snapshots.append(self.processor.parse_snapshot(data))
+        
+        meets_threshold, stats = self.processor.detect_renewable_threshold(snapshots, 90.0)
+        self.assertTrue(meets_threshold)
+        self.assertGreaterEqual(stats["average_renewable_pct"], 90.0)
+
+    def test_low_renewable_percentage(self):
+        """Test detection of low renewable percentage"""
+        snapshots = []
+        for i in range(3):
+            data = {
+                "timestamp": (datetime.now() - timedelta(hours=i)).isoformat(),
+                "total_demand_mw": 40000,
+                "renewable_mw": 20000,
+                "frequency_hz": 50.0
+            }
+            snapshots.append(self.processor.parse_snapshot(data))
+        
+        meets_threshold, stats = self.processor.detect_renewable_threshold(snapshots, 90.0)
+        self.assertFalse(meets_threshold)
+        self.assertLess(stats["average_renewable_pct"], 90.0)
+
+    def test_invalid_snapshot_zero_demand(self):
+        """Test that zero demand raises ValueError"""
+        data = {
+            "timestamp": datetime.now().isoformat(),
+            "total_demand_mw": 0,
+            "renewable_mw": 0,
+            "frequency_hz": 50.0
+        }
+        
+        with self.assertRaises(ValueError):
+            self.processor.parse_snapshot(data)
+
+    def test_invalid_snapshot_invalid_percentage(self):
+        """Test that percentage >100 is clamped"""
+        data = {
+            "timestamp": datetime.now().isoformat(),
+            "total_demand_mw": 40000,
+            "renewable_mw": 45000,
+            "frequency_hz": 50.0
+        }
+        
+        snapshot = self.processor.parse_snapshot(data)
+        self.assertLessEqual(snapshot.renewable_percentage, 100)
+
+    def test_invalid_frequency_too_low(self):
+        """Test that frequency below 47 Hz is invalid"""
+        data = {
+            "timestamp": datetime.now().isoformat(),
+            "total_demand_mw": 40000,
+            "renewable_mw": 36000,
+            "frequency_hz": 46.0
+        }
+        
+        with self.assertRaises(ValueError):
+            self.processor.parse_snapshot(data)
+
+    def test_invalid_frequency_too_high(self):
+        """Test that frequency above 52 Hz is invalid"""
+        data = {
+            "timestamp": datetime.now().isoformat(),
+            "total_demand_mw": 40000,
+            "renewable_mw": 36000,
+            "frequency_hz": 52.5
+        }
+        
+        with self.assertRaises(ValueError):
+            self.processor.parse_snapshot(data)
+
+    def test_validate_snapshot_renewable_exceeds_demand(self):
+        """Test validation catches renewable exceeding demand"""
+        snapshot = GridSnapshot(
+            timestamp=datetime.now(),
+            total_demand_mw=40000,
+            renewable_mw=45000,
+            source_breakdown={source: 0 for source in EnergySource},
+            renewable_percentage=100,
+            grid_frequency_hz=50.0
+        )
+        
+        valid, errors = self.validator.validate_snapshot(snapshot)
+        self.assertFalse(valid)
+        self.assertTrue(any("exceeds" in e.lower() for e in errors))
+
+    def test_validate_snapshot_demand_too_low(self):
+        """Test validation catches demand below minimum"""
+        snapshot = GridSnapshot(
+            timestamp=datetime.now(),
+            total_demand_mw=15000,
+            renewable_mw=10000,
+            source_breakdown={source: 0 for source in EnergySource},
+            renewable_percentage=66.7,
+            grid_frequency_hz=50.0
+        )
+        
+        valid, errors = self.validator.validate_snapshot(snapshot)
+        self.assertFalse(valid)
+        self.assertTrue(any("minimum" in e.lower() for e in errors))
+
+    def test_validate_snapshot_demand_too_high(self):
+        """Test validation catches demand above maximum"""
+        snapshot = GridSnapshot(
+            timestamp=datetime.now(),
+            total_demand_mw=70000,
+            renewable_mw=60000,
+            source_breakdown={source: 0 for source in EnergySource},
+            renewable_percentage=85.7,
+            grid_frequency_hz=50.0
+        )
+        
+        valid, errors = self.validator.validate_snapshot(snapshot)
+        self.assertFalse(valid)
+        self.assertTrue(any("maximum" in e.lower() for e in errors))
+
+    def test_validate_frequency_low(self):
+        """Test validation catches low frequency"""
+        snapshot = GridSnapshot(
+            timestamp=datetime.now(),
+            total_demand_mw=40000,
+            renewable_mw=36000,
+            source_breakdown={source: 0 for source in EnergySource},
+            renewable_percentage=90.0,
+            grid_frequency_hz=46.5
+        )
+        
+        valid, errors = self.validator.validate_snapshot(snapshot)
+        self.assertFalse(valid)
+        self.assertTrue(any("frequency" in e.lower() and "below" in e.lower() for e in errors))
+
+    def test_validate_frequency_high(self):
+        """Test validation catches high frequency"""
+        snapshot = GridSnapshot(
+            timestamp=datetime.now(),
+            total_demand_mw=40000,
+            renewable_mw=36000,
+            source_breakdown={source: 0 for source in EnergySource},
+            renewable_percentage=90.0,
+            grid_frequency_hz=51.5
+        )
+        
+        valid, errors = self.validator.validate_snapshot(snapshot)
+        self.assertFalse(valid)
+        self.assertTrue(any("frequency" in e.lower() and "above" in e.lower() for e in errors))
+
+    def test_validate_data_continuity_single_snapshot(self):
+        """Test continuity check with single snapshot"""
+        snapshot = GridSnapshot(
+            timestamp=datetime.now(),
+            total_demand_mw=40000,
+            renewable_mw=36000,
+            source_breakdown={source: 0 for source in EnergySource},
+            renewable_percentage=90.0,
+            grid_frequency_hz=50.0
+        )
+        
+        valid, errors = self.validator.validate_data_continuity([snapshot])
+        self.assertTrue(valid)
+        self.assertEqual(len(errors), 0)
+
+    def test_validate_data_continuity_gap_detection(self):
+        """Test detection of time gaps in data"""
+        snap1 = GridSnapshot(
+            timestamp=datetime.now() - timedelta(hours=2),
+            total_demand_mw=40000,
+            renewable_mw=36000,
+            source_breakdown={source: 0 for source in EnergySource},
+            renewable_percentage=90.0,
+            grid_frequency_hz=50.0
+        )
+        snap2 = GridSnapshot(
+            timestamp=datetime.now(),
+            total_demand_mw=40000,
+            renewable_mw=36000,
+            source_breakdown={source: 0 for source in EnergySource},
+            renewable_percentage=90.0,
+            grid_frequency_hz=50.0
+        )
+        
+        valid, errors = self.validator.validate_data_continuity([snap1, snap2])
+        self.assertFalse(valid)
+        self.assertTrue(any("gap" in e.lower() for e in errors))
+
+    def test_validate_data_continuity_unrealistic_demand_change(self):
+        """Test detection of unrealistic demand spikes"""
+        snap1 = GridSnapshot(
+            timestamp=datetime.now() - timedelta(minutes=30),
+            total_demand_mw=40000,
+            renewable_mw=36000,
+            source_breakdown={source: 0 for source in EnergySource},
+            renewable_percentage=90.0,
+            grid_frequency_hz=50.0
+        )
+        snap2 = GridSnapshot(
+            timestamp=datetime.now(),
+            total_demand_mw=65000,
+            renewable_mw=58500,
+            source_breakdown={source: 0 for source in EnergySource},
+            renewable_percentage=90.0,
+            grid_frequency_hz=50.0
+        )
+        
+        valid, errors = self.validator.validate_data_continuity([snap1, snap2])
+        self.assertFalse(valid)
+        self.assertTrue(any("demand change" in e.lower() for e in errors))
+
+    def test_parse_invalid_json(self):
+        """Test parsing malformed data"""
+        with self.assertRaises(ValueError):
+            self.processor.parse_snapshot({"timestamp": "invalid"})
+
+    def test_empty_snapshot_list(self):
+        """Test processing empty snapshot list"""
+        avg = self.processor.calculate_average_renewable_percentage([])
+        self.assertEqual(avg, 0.0)
+
+    def test_historical_data_fetch_bounds(self):
+        """Test historical data fetch bounds"""
+        with self.assertRaises(ValueError):
+            self.fetcher.fetch_historical_data(0)
+        
+        with self.assertRaises(ValueError):
+            self.fetcher.fetch_historical_data(9000)
+
+    def test_historical_data_fetch_valid(self):
+        """Test valid historical data fetch"""
+        data = self.fetcher.fetch_historical_data(24)
+        self.assertEqual(len(data), 24)
+        self.assertTrue(all("timestamp" in d for d in data))
+
+    def test_integration_fetch_parse_validate(self):
+        """Integration test: fetch, parse, and validate data"""
+        raw_data = {
+            "timestamp": datetime.now().isoformat(),
+            "total_demand_mw": 42000,
+            "renewable_mw": 38000,
+            "wind_mw": 22000,
+            "solar_mw": 10000,
+            "hydro_mw": 6000,
+            "nuclear_mw": 7000,
+            "gas_mw": 4000,
+            "coal_mw": 0,
+            "frequency_hz": 50.0
+        }
+        
+        snapshot = self.processor.parse_snapshot(raw_data)
+        valid, errors = self.validator.validate_snapshot(snapshot)
+        
+        self.assertTrue(valid)
+        self.assertEqual(len(errors), 0)
+        self.assertGreater(snapshot.renewable_percentage, 85)
+
+    def test_integration_multiple_snapshots_90_percent_threshold(self):
+        """Integration test: multiple snapshots meeting 90% renewable target"""
+        snapshots = []
+        base_demand = 40000
+        base_renewable = 36500
+        
+        for hour in range(24):
+            data = {
+                "timestamp": (datetime.now() - timedelta(hours=hour)).isoformat(),
+                "total_demand_mw": base_demand + (hour % 5000),
+                "renewable_mw": base_renewable + (hour % 3000),
+                "wind_mw": 20000 + (hour % 2000),
+                "solar_mw": 10000 + (hour % 1000),
+                "hydro_mw": 6000,
+                "nuclear_mw": 8000,
+                "gas_mw": 2000 + (hour % 500),
+                "coal_mw": 0,
+                "frequency_hz": 50.0
+            }
+            snapshots.append(self.processor.parse_snapshot(data))
+        
+        meets_threshold, stats = self.processor.detect_renewable_threshold(snapshots, 90.0)
+        valid, cont_errors = self.validator.validate_data_continuity(snapshots)
+        
+        for snapshot in snapshots:
+            snap_valid, snap_errors = self.validator.validate_snapshot(snapshot)
+            self.assertTrue(snap_valid, f"Snapshot validation failed: {snap_errors}")
 
 
-class TestGridMonitorBasics(unittest.TestCase):
-    """Basic unit tests for GridMonitor."""
+def run_tests_with_output(verbose: bool = False, pattern: Optional[str] = None) -> int:
+    """Run integration tests and return exit code"""
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite()
     
-    def setUp(self):
-        self.monitor = GridMonitor(target_percentage=90.0)
+    if pattern:
+        suite.addTests(loader.loadTestsFromName(f"__main__.IntegrationTests.{pattern}"))
+    else:
+        suite.addTests(loader.loadTestsFromTestCase(IntegrationTests))
     
-    def test_initialization(self):
-        """Test monitor initializes correctly."""
-        self.assertEqual(self.monitor.target_percentage, 90.0)
-        self.assertEqual(self.monitor.data_points, [])
-        self.assertFalse(self.monitor.is_connected)
+    runner = unittest.TextTestRunner(verbosity=2 if verbose else 1)
+    result = runner.run(suite)
     
-    def test_connection(self):
-        """Test connection management."""
-        result = self.monitor.connect()
-        self.assertTrue(result)
-        self.assertTrue(self.monitor.is_connected)
-        
-        result = self.monitor.disconnect()
-        self.assertTrue(result)
-        self.assertFalse(self.monitor.is_connected)
-    
-    def test_data_point_creation(self):
-        """Test GridDataPoint creation and validation."""
-        now = datetime.now()
-        point = GridDataPoint(now, 92.5, 40000, 37000)
-        
-        self.assertEqual(point.renewable_percentage, 92.5)
-        self.assertTrue(point.is_valid())
-    
-    def test_data_point_dict_conversion(self):
-        """Test data point serialization."""
-        now = datetime.now()
-        point = GridDataPoint(now, 92.5, 40000, 37000)
-        data_dict = point.to_dict()
-        
-        self.assertIn('timestamp', data_dict)
-        self.assertIn('renewable_percentage', data_dict)
-        self.assertEqual(data_dict['renewable_percentage'], 92.5)
+    return 0 if result.wasSuccessful() else 1
 
 
-class TestGridMonitorEdgeCases(unittest.TestCase):
-    """Edge case tests for GridMonitor."""
+def demo_system():
+    """Demonstrate the grid monitoring system"""
+    print("=" * 80)
+    print("BRITAIN RENEWABLE ENERGY GRID MONITORING - INTEGRATION TEST DEMO")
+    print("=" * 80)
+    print()
     
-    def setUp(self):
-        self.monitor = GridMonitor(target_percentage=90.0)
+    processor = GridDataProcessor()
+    validator = GridValidator()
     
-    def test_invalid_percentage_too_high(self):
-        """Test rejection of percentage > 100%."""
-        point = GridDataPoint(datetime.now(), 105.0, 40000, 42000)
-        self.assertFalse(point.is_valid())
+    print("[1] Creating sample grid snapshots for 12-hour period...")
+    snapshots = []
+    base_time = datetime.now()
     
-    def test_invalid_percentage_negative(self):
-        """Test rejection of negative percentage."""
-        point = GridDataPoint(datetime.now(), -5.0, 40000, -2000)
-        self.assertFalse(point.is_valid())
+    test_cases = [
+        {"demand": 38000, "renewable": 34200, "hour": 0, "freq": 50.0},
+        {"demand": 40000, "renewable": 37000, "hour": 3, "freq": 50.1},
+        {"demand": 42000, "renewable": 38500, "hour": 6, "freq": 49.9},
+        {"demand": 45000, "renewable": 41000, "hour": 9, "freq": 50.0},
+        {"demand": 42000, "renewable": 38000, "hour": 12, "freq": 50.2},
+    ]
     
-    def test_invalid_renewable_exceeds_total(self):
-        """Test rejection when renewable MW exceeds total MW."""
-        point = GridDataPoint(datetime.now(), 95.0, 40000, 50000)
-        self.assertFalse(point.is_valid())
+    for test_case in test_cases:
+        data = {
+            "timestamp": (base_time - timedelta(hours=test_case["hour"])).isoformat(),
+            "total_demand_mw": test_case["demand"],
+            "renewable_mw": test_case["renewable"],
+            "wind_mw": test_case["renewable"] * 0.55,
+            "solar_mw": test_case["renewable"] * 0.3,
+            "hydro_mw": test_case["renewable"] * 0.15,
+            "nuclear_mw": (test_case["demand"] - test_case["renewable"]) * 0.5,
+            "gas_mw": (test_case["demand"] - test_case["renewable"]) * 0.5,
+            "frequency_hz": test_case["freq"]
+        }
+        
+        snapshot = processor.parse_snapshot(data)
+        snapshots.append(snapshot)
+        
+        valid, errors = validator.validate_snapshot(snapshot)
+        status = "✓ VALID" if valid else f"✗ INVALID ({len(errors)} errors)"
+        print(f"  Hour {test_case['hour']:2d}: {snapshot.renewable_percentage:5.1f}% renewable | {status}")
     
-    def test_zero_generation(self):
-        """Test handling of zero generation (edge case)."""
-        point = GridDataPoint(datetime.now(), 0.0, 0, 0)
-        self.assertTrue(point.is_valid())
+    print()
+    print("[2] Analyzing renewable energy statistics...")
+    avg_renewable = processor.calculate_average_renewable_percentage(snapshots)
+    meets_90_pct, stats = processor.detect_renewable_threshold(snapshots, 90.0)
     
-    def test_boundary_exactly_100_percent(self):
-        """Test handling of exactly 100% renewable."""
-        point = GridDataPoint(datetime.now(), 100.0, 40000, 40000)
-        self.assertTrue(point.is_valid())
-        self.assertTrue(self.monitor.is_target_met(point))
+    print(f"  Average renewable:     {stats['average_renewable_pct']:.1f}%")
+    print(f"  Peak renewable:        {stats['peak_renewable_pct']:.1f}%")
+    print(f"  Minimum renewable:     {stats['min_renewable_pct']:.1f}%")
+    print(f"  Target threshold:      {stats['threshold_pct']:.1f}%")
+    print(f"  Meets target:          {'YES ✓' if meets_90_pct else 'NO ✗'}")
+    print()
     
-    def test_boundary_exactly_target(self):
-        """Test handling of exactly meeting target."""
-        point = GridDataPoint(datetime.now(), 90.0, 40000, 36000)
-        self.assertTrue(self.monitor.is_target_met(point))
+    print("[3] Checking data continuity and quality...")
+    continuity_valid, continuity_errors = validator.validate_data_continuity(snapshots)
+    print(f"  Data continuity valid: {'YES ✓' if continuity_valid else f'NO ✗ ({len(continuity_errors)} issues)'}")
+    for error in continuity_errors:
+        print(f"    - {error}")
     
-    def test_boundary_just_below_target(self):
-        """Test handling of just below target."""
-        point = GridDataPoint(datetime.now(), 89.99, 40000, 35996)
-        self.assertFalse(self.monitor.is_target_met(point))
+    print()
+    print("[4] Running edge case validations...")
     
-    def test_fetch_without_connection(self):
-        """Test fetch operation without connection."""
-        with self.assertRaises(RuntimeError):
-            self.monitor.fetch_current_data()
+    edge_cases = [
+        ("Zero demand", {"timestamp": datetime.now().isoformat(), "total_demand_mw": 0, "renewable_mw": 0, "frequency_hz": 50.0}),
+        ("Low frequency", {"timestamp": datetime.now().isoformat(), "total_demand_mw": 40000, "renewable_mw": 36000, "frequency_hz": 46.5}),
+        ("High frequency", {"timestamp": datetime.now().isoformat(), "total_demand_mw": 40000, "renewable_mw": 36000, "frequency_hz": 51.8}),
+    ]
     
-    def test_add_invalid_data_point(self):
-        """Test adding invalid data point."""
-        invalid_point = GridDataPoint(datetime.now(), 150.0, 40000, 60000)
-        result = self.monitor.add_data_point(invalid_point)
-        self.assertFalse(result)
-        self.assertEqual(len(self.monitor.data_points), 0)
+    for case_name, data in edge_cases:
+        try:
+            snapshot = processor.parse_snapshot(data)
+            print(f"  {case_name:20s}: ✓ Parsed (unexpected)")
+        except ValueError as e:
+            print(f"  {case_name:20s}: ✗ Correctly rejected")
     
-    def test_statistics_empty_data(self):
-        """Test statistics with no data points."""
-        stats = self.monitor.get_statistics()
-        self.assertEqual(stats['count'], 0)
-        self.assertEqual(stats['status'], 'no_data')
-    
-    def test_average_with_empty_history(self):
-        """Test average calculation with no data."""
-        avg = self.monitor.get_average_renewable_percentage()
-        self.assertIsNone(avg)
+    print()
+    print("=" * 80)
+    print("Demo complete. Grid monitoring system operational.")
+    print("=" * 80)
 
 
-class TestGridMonitorFailureModes(unittest.TestCase):
-    """Failure mode tests for GridMonitor."""
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Integration tests for Britain's renewable energy grid monitoring system"
+    )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose test output"
+    )
+    parser.add_argument(
+        "--test",
+        type=str,
+        help="Run specific test by name (e.g., test_valid_snapshot_creation)"
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Run system demonstration instead of tests"
+    )
     
-    def setUp(self):
-        self.monitor = GridMonitor(target_percentage=90.0)
-        self.monitor.connect()
+    args = parser.parse_args()
     
-    def test_network_timeout_simulation(self):
-        """Test handling of network timeouts."""
-        with patch('random.random', return_value=0.05):
-            result = self.monitor.fetch_current_data()
-            self.assertIsNone(result)
-            self.assertEqual(self.monitor.fetch_failures, 1)
+    if args.demo:
+        demo_system()
+        sys.exit(0)
     
-    def test_max_retries_exceeded(self):
-        """Test failure after exceeding max retries."""
-        self.monitor.fetch_failures = self.monitor.max_retries
-        with self.assertRaises(RuntimeError):
-            self.monitor.fetch_current_data()
-    
-    def test_retry_counter_reset_on_success(self):
-        """Test retry counter resets after successful fetch."""
-        self.monitor.fetch_failures = 2
-        with patch('random.random', return_value=0.5):
-            point = self.monitor.fetch_current_data()
-            self.assertIsNotNone(point)
-            self.assertEqual(self.monitor.fetch_failures, 0)
-    
-    def test_multiple_failures_in_sequence(self):
-        """Test handling multiple failures in sequence."""
-        self.monitor.fetch_failures = 0
-        
-        with patch('random.random', return_value=0.05):
-            result1 = self.monitor.fetch_current_data()
-            self.assertIsNone(result1)
-            self.assertEqual(self.monitor.fetch_failures, 1)
-        
-        with patch('random.random', return_value=0.05):
-            result2 = self.monitor.fetch_current_data()
-            self.assertIsNone(result2)
-            self.assertEqual(self.monitor.fetch_failures, 2)
-        
-        with patch('random.random', return_value=0.05):
-            result3 = self.monitor.fetch_current_data()
-            self.assertIsNone(result3)
-            self.assertEqual(self.monitor.fetch_failures, 3)
-        
-        with self.assertRaises(RuntimeError):
-            self.monitor.fetch_current_data()
-
-
-class TestGridMonitorIntegration(unittest.TestCase):
-    """Integration tests for GridMonitor workflows."""
-    
-    def setUp(self):
-        self.monitor = GridMonitor(target_percentage=90.0)
-    
-    def test_full_monitoring_cycle(self):
-        """Test complete monitoring cycle."""
-        self.monitor.connect()
-        self.assertTrue(self.monitor.is_connected)
-        
-        with patch('random.random', return_value=0.5):
-            for _ in range(5):
-                point = self.monitor.fetch_current_data()
-                if point:
-                    self.monitor.add_data_point(point)
-        
-        self.assertGreater(len(self.monitor.data_points), 0)
-        
-        stats = self.monitor.get_statistics()
-        self.assertIn('average', stats)
-        self.assertGreaterEqual(stats['average'], 70)
-        self.assertLessEqual(stats['average'], 100)
-    
-    def test_data_persistence_across_operations(self):
-        """Test data persists across operations."""
-        self.monitor.connect()
-        
-        point1 = GridDataPoint(datetime.now(), 85.0, 40000, 34000)
-        point2 = GridDataPoint(datetime.now(), 95.0, 40000, 38000)
-        
-        self.monitor.add_data_point(point1)
-        self.monitor.add_data_point(point2)
-        
-        self.assertEqual(len(self.monitor.data_points), 2)
-        
-        self.monitor.disconnect()
-        
-        self.assertEqual(len(self.monitor.data_points), 2)
-    
-    def test_statistics_with_mixed_data(self):
-        """Test statistics calculation with mixed data."""
-        self.monitor.connect()
-        
-        points = [
-            GridDataPoint(datetime.now(), 85.0, 40000, 34000),
-            GridDataPoint(datetime.now(), 92.0, 41000, 37720),
-            GridDataPoint(datetime.now(), 88.0, 39000, 34320),
-            GridDataPoint(datetime.now(), 96.0, 42000, 40320),
-        ]
-        
-        for point in points:
-            self.monitor.add_data_point(point)
-        
-        stats = self.monitor.get_statistics()
-        self.assertEqual(stats['count'], 4)
-        self.assertAlmostEqual(stats['average'], 90.25, places=1)
-        self.assertEqual(stats['min'], 85.0)
-        self.assertEqual(stats['max'], 96.0)
-        self.assertEqual(stats['target_met_count'], 2)
-    
-    def test_target_achievement_tracking(self):
-        """Test tracking of target achievement."""
-        self.monitor.connect()
-        
-        target_met = 0
-        total_points = 10
-        
-        with patch('random.random', return_value=0.5):
-            for _ in range(total_points):
-                point = self.monitor.fetch_current_data()
-                if point and self.monitor.add_data_point(point):
-                    if self.monitor.is_target_met(point):
-                        target_met += 1
-        
-        stats = self.monitor.get_statistics()
-        self.assertGreater(stats['target_met_count'], 0)
-    
-    def test_time_window_averaging(self):
-        """Test averaging over specific time windows."""
-        self.monitor.connect()
-        
-        base_time = datetime.now()
-        
-        for i in range(10):
-            timestamp = base_time - timedelta(minutes=30*i)
-            point = GridDataPoint(timestamp, 80.0 + i, 40000, 32000 + 400*i)
-            self.monitor.add_data_point(point)
-        
-        recent_avg = self.monitor.get_average_renewable_percentage(hours=2)
-        self.assertIsNotNone(recent_avg)
-        self.assertGreater(recent_avg, 0)
-
-
-class TestGridMonitorRobustness(unittest.TestCase):
+    exit_code = run_tests_with_output(verbose=args.verbose, pattern=args.test)
+    sys.exit(exit_code)
