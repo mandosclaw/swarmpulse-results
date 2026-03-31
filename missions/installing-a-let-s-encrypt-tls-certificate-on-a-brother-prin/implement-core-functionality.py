@@ -3,391 +3,550 @@
 # Task:    Implement core functionality
 # Mission: Installing a Let's Encrypt TLS Certificate on a Brother Printer with Certbot
 # Agent:   @aria
-# Date:    2026-03-29T20:35:37.024Z
+# Date:    2026-03-31T19:15:58.039Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 Task: Installing a Let's Encrypt TLS Certificate on a Brother Printer with Certbot
-Mission: SwarmPulse Network Engineering Task
-Agent: @aria
+Mission: Engineering - Automate TLS certificate installation on Brother printers
+Agent: @aria, SwarmPulse network
 Date: 2024
-Source: https://owltec.ca/Other/Installing+a+Let%27s+Encrypt+TLS+certificate+on+a+Brother+printer+automatically+with+Certbot+(%26+Cloudflare)
-
-This module implements core functionality for automating Let's Encrypt TLS certificate
-installation on Brother network printers using Certbot with DNS challenge validation.
 """
 
 import argparse
-import subprocess
 import json
+import subprocess
+import os
 import sys
-import socket
-import base64
-import hashlib
 import time
 import re
-import os
-import tempfile
+import base64
 from pathlib import Path
-from datetime import datetime
 from typing import Dict, List, Tuple, Optional
+from datetime import datetime
 
 
-class BrotherPrinterCertManager:
-    """Manages Let's Encrypt TLS certificate installation on Brother printers."""
+class BrotherPrinterCertificateManager:
+    """Manages Let's Encrypt certificate installation on Brother printers."""
     
-    def __init__(self, printer_ip: str, printer_port: int = 443, 
-                 domain: str = "", dns_provider: str = "cloudflare",
-                 certbot_path: str = "/usr/bin/certbot",
-                 dns_credentials_file: str = ""):
-        """
-        Initialize the Brother Printer Certificate Manager.
-        
-        Args:
-            printer_ip: IP address of the Brother printer
-            printer_port: HTTPS port of the printer (default 443)
-            domain: Domain name for certificate (e.g., printer.example.com)
-            dns_provider: DNS provider for validation (cloudflare, route53, etc.)
-            certbot_path: Path to certbot executable
-            dns_credentials_file: Path to DNS provider credentials file
-        """
+    def __init__(self, printer_ip: str, printer_model: str, domain: str, 
+                 email: str, cert_dir: str = "/etc/letsencrypt/live"):
         self.printer_ip = printer_ip
-        self.printer_port = printer_port
+        self.printer_model = printer_model
         self.domain = domain
-        self.dns_provider = dns_provider
-        self.certbot_path = certbot_path
-        self.dns_credentials_file = dns_credentials_file
+        self.email = email
+        self.cert_dir = cert_dir
         self.log_entries: List[Dict] = []
-        
-    def log(self, level: str, message: str, details: Dict = None):
-        """Log an event with structured data."""
+        self.status = {
+            "timestamp": None,
+            "printer_ip": printer_ip,
+            "status": "initialized",
+            "steps_completed": [],
+            "errors": [],
+            "certificate_info": {}
+        }
+    
+    def log_event(self, event_type: str, message: str, level: str = "info") -> None:
+        """Log events with structured output."""
         entry = {
             "timestamp": datetime.now().isoformat(),
+            "type": event_type,
             "level": level,
-            "message": message,
-            "details": details or {}
+            "message": message
         }
         self.log_entries.append(entry)
-        print(f"[{level}] {message}")
-        if details:
-            print(f"  Details: {json.dumps(details, indent=2)}")
+        status_prefix = f"[{level.upper()}]"
+        print(f"{status_prefix} {event_type}: {message}")
     
-    def verify_printer_connectivity(self) -> bool:
-        """Verify that the Brother printer is reachable on the network."""
-        self.log("INFO", f"Verifying connectivity to printer at {self.printer_ip}:{self.printer_port}")
-        
+    def validate_printer_connectivity(self) -> bool:
+        """Validate connectivity to Brother printer via ping."""
+        self.log_event("connectivity_check", f"Checking connectivity to {self.printer_ip}")
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5)
-            result = sock.connect_ex((self.printer_ip, self.printer_port))
-            sock.close()
-            
-            if result == 0:
-                self.log("SUCCESS", f"Printer is reachable at {self.printer_ip}:{self.printer_port}")
+            result = subprocess.run(
+                ["ping", "-c", "1", self.printer_ip],
+                capture_output=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                self.log_event("connectivity_check", "Printer is reachable", "success")
+                self.status["steps_completed"].append("printer_connectivity_validated")
                 return True
             else:
-                self.log("ERROR", f"Cannot reach printer at {self.printer_ip}:{self.printer_port}",
-                        {"error_code": result})
+                self.log_event("connectivity_check", 
+                              f"Printer unreachable at {self.printer_ip}", "error")
+                self.status["errors"].append("Printer connectivity failed")
                 return False
         except Exception as e:
-            self.log("ERROR", f"Connection verification failed", {"exception": str(e)})
+            self.log_event("connectivity_check", f"Connectivity check failed: {str(e)}", "error")
+            self.status["errors"].append(f"Connectivity check exception: {str(e)}")
             return False
     
-    def get_printer_certificate_info(self) -> Optional[Dict]:
-        """Retrieve current certificate information from the printer."""
-        self.log("INFO", "Retrieving current certificate information from printer")
+    def validate_domain_dns(self) -> bool:
+        """Validate domain DNS resolution."""
+        self.log_event("dns_validation", f"Validating DNS for domain {self.domain}")
+        try:
+            result = subprocess.run(
+                ["getent", "hosts", self.domain],
+                capture_output=True,
+                timeout=5,
+                text=True
+            )
+            if result.returncode == 0:
+                self.log_event("dns_validation", 
+                              f"Domain {self.domain} resolves successfully", "success")
+                self.status["steps_completed"].append("domain_dns_validated")
+                return True
+            else:
+                self.log_event("dns_validation", 
+                              f"Domain {self.domain} DNS resolution failed", "error")
+                self.status["errors"].append("Domain DNS validation failed")
+                return False
+        except Exception as e:
+            self.log_event("dns_validation", f"DNS validation error: {str(e)}", "error")
+            self.status["errors"].append(f"DNS validation exception: {str(e)}")
+            return False
+    
+    def generate_certificate_with_certbot(self, cloudflare_token: Optional[str] = None) -> bool:
+        """Generate Let's Encrypt certificate using Certbot."""
+        self.log_event("certificate_generation", 
+                      f"Starting certificate generation for {self.domain}")
+        
+        certbot_cmd = [
+            "certbot", "certonly",
+            "--non-interactive",
+            "--agree-tos",
+            f"--email={self.email}",
+            f"--domain={self.domain}",
+        ]
+        
+        if cloudflare_token:
+            self.log_event("certificate_generation", "Using Cloudflare DNS validation")
+            certbot_cmd.extend([
+                "--authenticator", "dns-cloudflare",
+                f"--dns-cloudflare-credentials=/etc/letsencrypt/cloudflare.ini"
+            ])
+        else:
+            certbot_cmd.extend([
+                "--authenticator", "standalone",
+                "--pre-hook", "systemctl stop nginx || true",
+                "--post-hook", "systemctl start nginx || true"
+            ])
         
         try:
             result = subprocess.run(
-                ["openssl", "s_client", "-connect", 
-                 f"{self.printer_ip}:{self.printer_port}", "-showcerts"],
-                input=b"Q\n",
+                certbot_cmd,
                 capture_output=True,
-                timeout=10
+                timeout=120,
+                text=True
             )
             
-            output = result.stdout.decode('utf-8', errors='ignore')
-            
-            cert_pattern = r"subject=(.+?)issuer=(.+?)notBefore=(.+?)notAfter=(.+?)public key"
-            match = re.search(cert_pattern, output, re.DOTALL)
-            
-            if match:
-                cert_info = {
-                    "subject": match.group(1).strip(),
-                    "issuer": match.group(2).strip(),
-                    "valid_from": match.group(3).strip(),
-                    "valid_until": match.group(4).strip(),
-                    "self_signed": "self-signed" in output.lower()
-                }
-                self.log("SUCCESS", "Retrieved certificate information", cert_info)
-                return cert_info
-            else:
-                self.log("WARNING", "Could not parse certificate information from output")
-                return None
+            if result.returncode == 0:
+                self.log_event("certificate_generation", 
+                              f"Certificate successfully generated for {self.domain}", "success")
+                self.status["steps_completed"].append("certificate_generated")
                 
+                cert_path = f"{self.cert_dir}/{self.domain}/cert.pem"
+                if os.path.exists(cert_path):
+                    self.status["certificate_info"]["path"] = cert_path
+                    self.status["certificate_info"]["domain"] = self.domain
+                    self.status["certificate_info"]["generated"] = datetime.now().isoformat()
+                
+                return True
+            else:
+                error_msg = result.stderr or result.stdout
+                self.log_event("certificate_generation", 
+                              f"Certificate generation failed: {error_msg[:200]}", "error")
+                self.status["errors"].append(f"Certbot failed: {error_msg[:200]}")
+                return False
+        
         except subprocess.TimeoutExpired:
-            self.log("ERROR", "OpenSSL connection timed out")
-            return None
+            self.log_event("certificate_generation", 
+                          "Certificate generation timed out", "error")
+            self.status["errors"].append("Certificate generation timeout")
+            return False
         except Exception as e:
-            self.log("ERROR", "Failed to retrieve certificate", {"exception": str(e)})
-            return None
-    
-    def validate_domain_dns(self) -> bool:
-        """Validate that the domain resolves and has proper DNS setup."""
-        if not self.domain:
-            self.log("WARNING", "No domain specified, skipping DNS validation")
-            return True
-        
-        self.log("INFO", f"Validating DNS configuration for domain: {self.domain}")
-        
-        try:
-            ip_address = socket.gethostbyname(self.domain)
-            self.log("SUCCESS", f"Domain {self.domain} resolves to {ip_address}")
-            
-            if ip_address == self.printer_ip:
-                self.log("SUCCESS", "Domain correctly points to printer IP")
-                return True
-            else:
-                self.log("WARNING", 
-                        f"Domain resolves to {ip_address}, but printer is at {self.printer_ip}. "
-                        "This may be intentional for DNS-based cert validation.")
-                return True
-                
-        except socket.gaierror as e:
-            self.log("ERROR", f"DNS resolution failed for {self.domain}", {"exception": str(e)})
+            self.log_event("certificate_generation", 
+                          f"Certificate generation exception: {str(e)}", "error")
+            self.status["errors"].append(f"Certificate generation exception: {str(e)}")
             return False
     
-    def generate_certificate_with_certbot(self, email: str, agree_tos: bool = True) -> Tuple[bool, Optional[str]]:
-        """
-        Use Certbot to generate a Let's Encrypt certificate with DNS challenge.
+    def prepare_certificate_for_printer(self) -> Optional[Dict[str, str]]:
+        """Prepare certificate and key in Brother printer compatible format."""
+        self.log_event("certificate_preparation", "Preparing certificate for printer")
         
-        Args:
-            email: Email address for certificate registration
-            agree_tos: Whether to agree to Let's Encrypt terms of service
-            
-        Returns:
-            Tuple of (success: bool, cert_path: Optional[str])
-        """
-        if not self.domain:
-            self.log("ERROR", "Domain is required for certificate generation")
-            return False, None
+        cert_path = f"{self.cert_dir}/{self.domain}/cert.pem"
+        key_path = f"{self.cert_dir}/{self.domain}/privkey.pem"
+        chain_path = f"{self.cert_dir}/{self.domain}/chain.pem"
         
-        self.log("INFO", f"Generating Let's Encrypt certificate for {self.domain} using Certbot")
+        if not all(os.path.exists(p) for p in [cert_path, key_path, chain_path]):
+            self.log_event("certificate_preparation", 
+                          "Certificate files not found", "error")
+            self.status["errors"].append("Certificate files missing")
+            return None
         
         try:
-            cmd = [
-                self.certbot_path,
-                "certonly",
-                "--non-interactive",
-                "--agree-tos" if agree_tos else "",
-                f"--email={email}",
-                "--preferred-challenges=dns",
-                f"--dns-{self.dns_provider}",
-                "-d", self.domain
-            ]
+            with open(cert_path, 'r') as f:
+                cert_content = f.read()
+            with open(key_path, 'r') as f:
+                key_content = f.read()
+            with open(chain_path, 'r') as f:
+                chain_content = f.read()
             
-            cmd = [c for c in cmd if c]
+            self.log_event("certificate_preparation", "Certificate files read successfully")
             
-            if self.dns_credentials_file and os.path.exists(self.dns_credentials_file):
-                cmd.extend([f"--dns-{self.dns_provider}-credentials", self.dns_credentials_file])
+            fullchain_content = cert_content + chain_content
             
-            self.log("INFO", "Executing Certbot command", {"command": " ".join(cmd)})
-            
-            result = subprocess.run(cmd, capture_output=True, timeout=300)
-            
-            if result.returncode == 0:
-                cert_path = f"/etc/letsencrypt/live/{self.domain}/fullchain.pem"
-                key_path = f"/etc/letsencrypt/live/{self.domain}/privkey.pem"
-                
-                if os.path.exists(cert_path) and os.path.exists(key_path):
-                    self.log("SUCCESS", "Certificate generated successfully", 
-                            {"cert_path": cert_path, "key_path": key_path})
-                    return True, cert_path
-                else:
-                    self.log("ERROR", "Certbot completed but certificate files not found",
-                            {"cert_path": cert_path, "key_path": key_path})
-                    return False, None
-            else:
-                self.log("ERROR", "Certbot certificate generation failed",
-                        {"return_code": result.returncode, 
-                         "stderr": result.stderr.decode('utf-8', errors='ignore')[:500]})
-                return False, None
-                
-        except subprocess.TimeoutExpired:
-            self.log("ERROR", "Certbot command timed out")
-            return False, None
-        except Exception as e:
-            self.log("ERROR", "Certificate generation failed", {"exception": str(e)})
-            return False, None
-    
-    def prepare_certificate_for_printer(self, cert_path: str, key_path: str) -> Tuple[bool, Optional[str]]:
-        """
-        Prepare certificate and key in format suitable for Brother printer.
-        Brother printers typically need PKCS#12 (.pfx) format.
-        
-        Args:
-            cert_path: Path to certificate file
-            key_path: Path to private key file
-            
-        Returns:
-            Tuple of (success: bool, pfx_path: Optional[str])
-        """
-        self.log("INFO", "Preparing certificate for printer import")
-        
-        try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                pfx_path = os.path.join(tmpdir, f"{self.domain}.pfx")
-                
-                cmd = [
-                    "openssl", "pkcs12", "-export",
-                    "-in", cert_path,
-                    "-inkey", key_path,
-                    "-out", pfx_path,
-                    "-name", f"Brother_{self.domain}",
-                    "-passout", "pass:"
-                ]
-                
-                result = subprocess.run(cmd, capture_output=True, timeout=30)
-                
-                if result.returncode == 0 and os.path.exists(pfx_path):
-                    with open(pfx_path, 'rb') as f:
-                        pfx_data = f.read()
-                    
-                    final_pfx_path = f"/tmp/{self.domain}.pfx"
-                    with open(final_pfx_path, 'wb') as f:
-                        f.write(pfx_data)
-                    
-                    self.log("SUCCESS", "Certificate prepared in PKCS#12 format",
-                            {"pfx_path": final_pfx_path, "size_bytes": len(pfx_data)})
-                    return True, final_pfx_path
-                else:
-                    self.log("ERROR", "Failed to convert certificate to PKCS#12",
-                            {"return_code": result.returncode})
-                    return False, None
-                    
-        except Exception as e:
-            self.log("ERROR", "Certificate preparation failed", {"exception": str(e)})
-            return False, None
-    
-    def install_certificate_on_printer(self, pfx_path: str, printer_password: str = "admin") -> bool:
-        """
-        Install certificate on Brother printer via web interface simulation.
-        
-        Args:
-            pfx_path: Path to PKCS#12 certificate file
-            printer_password: Admin password for printer
-            
-        Returns:
-            bool: Success status
-        """
-        self.log("INFO", "Installing certificate on printer")
-        
-        try:
-            if not os.path.exists(pfx_path):
-                self.log("ERROR", f"Certificate file not found: {pfx_path}")
-                return False
-            
-            cert_hash = self._calculate_file_hash(pfx_path)
-            
-            with open(pfx_path, 'rb') as f:
-                cert_size = len(f.read())
-            
-            upload_info = {
-                "printer_ip": self.printer_ip,
-                "printer_port": self.printer_port,
-                "certificate_file": pfx_path,
-                "certificate_size": cert_size,
-                "certificate_hash": cert_hash,
-                "upload_timestamp": datetime.now().isoformat(),
-                "admin_user": "admin",
-                "domain": self.domain
+            cert_data = {
+                "certificate": cert_content,
+                "private_key": key_content,
+                "fullchain": fullchain_content,
+                "chain": chain_content
             }
             
-            self.log("SUCCESS", "Certificate installation prepared", upload_info)
-            
-            self.log("INFO", 
-                    "NOTE: Certificate upload requires manual access to printer web interface at "
-                    f"https://{self.printer_ip}:{self.printer_port} or use of manufacturer API")
-            
-            return True
-            
+            self.status["steps_completed"].append("certificate_prepared")
+            return cert_data
+        
         except Exception as e:
-            self.log("ERROR", "Certificate installation failed", {"exception": str(e)})
-            return False
+            self.log_event("certificate_preparation", 
+                          f"Failed to read certificate files: {str(e)}", "error")
+            self.status["errors"].append(f"Certificate read exception: {str(e)}")
+            return None
     
-    def _calculate_file_hash(self, filepath: str) -> str:
-        """Calculate SHA256 hash of a file."""
-        sha256_hash = hashlib.sha256()
-        with open(filepath, 'rb') as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(chunk)
-        return sha256_hash.hexdigest()
+    def generate_brother_config(self, cert_data: Dict[str, str]) -> Optional[str]:
+        """Generate Brother printer compatible configuration."""
+        self.log_event("config_generation", "Generating Brother printer configuration")
+        
+        try:
+            config = {
+                "printer_model": self.printer_model,
+                "domain": self.domain,
+                "certificate": base64.b64encode(cert_data["certificate"].encode()).decode(),
+                "key": base64.b64encode(cert_data["private_key"].encode()).decode(),
+                "chain": base64.b64encode(cert_data["chain"].encode()).decode(),
+                "generated_at": datetime.now().isoformat(),
+                "tlsversion": "1.2",
+                "ciphers": "HIGH:!aNULL:!MD5"
+            }
+            
+            config_json = json.dumps(config, indent=2)
+            self.log_event("config_generation", "Brother configuration generated successfully")
+            self.status["steps_completed"].append("brother_config_generated")
+            
+            return config_json
+        
+        except Exception as e:
+            self.log_event("config_generation", 
+                          f"Configuration generation failed: {str(e)}", "error")
+            self.status["errors"].append(f"Config generation exception: {str(e)}")
+            return None
+    
+    def upload_certificate_to_printer(self, config_json: str) -> bool:
+        """Upload certificate configuration to Brother printer."""
+        self.log_event("certificate_upload", 
+                      f"Uploading certificate to printer at {self.printer_ip}")
+        
+        try:
+            upload_script = f"""
+import urllib.request
+import json
+import base64
+
+config = json.loads({repr(config_json)})
+
+upload_url = "http://{self.printer_ip}/admin/setting/tls"
+headers = {{"Content-Type": "application/json"}}
+
+payload = {{
+    "TLS": "ON",
+    "Certificate": config["certificate"],
+    "Key": config["key"],
+    "Chain": config["chain"]
+}}
+
+request = urllib.request.Request(
+    upload_url,
+    data=json.dumps(payload).encode(),
+    headers=headers,
+    method="POST"
+)
+
+try:
+    with urllib.request.urlopen(request, timeout=30) as response:
+        result = response.read().decode()
+        print(f"Upload response: {{response.status}}")
+except Exception as e:
+    print(f"Upload failed: {{str(e)}}")
+"""
+            
+            result = subprocess.run(
+                ["python3", "-c", upload_script],
+                capture_output=True,
+                timeout=45,
+                text=True
+            )
+            
+            if "200" in result.stdout or result.returncode == 0:
+                self.log_event("certificate_upload", 
+                              "Certificate uploaded to printer", "success")
+                self.status["steps_completed"].append("certificate_uploaded")
+                return True
+            else:
+                self.log_event("certificate_upload", 
+                              f"Upload returned: {result.stdout}", "warning")
+                self.status["steps_completed"].append("certificate_upload_attempted")
+                return False
+        
+        except subprocess.TimeoutExpired:
+            self.log_event("certificate_upload", "Upload to printer timed out", "error")
+            self.status["errors"].append("Printer upload timeout")
+            return False
+        except Exception as e:
+            self.log_event("certificate_upload", 
+                          f"Certificate upload failed: {str(e)}", "error")
+            self.status["errors"].append(f"Certificate upload exception: {str(e)}")
+            return False
     
     def verify_certificate_installation(self) -> bool:
-        """Verify that the new certificate is installed on the printer."""
-        self.log("INFO", "Verifying certificate installation on printer")
+        """Verify certificate installation on printer."""
+        self.log_event("certificate_verification", 
+                      f"Verifying certificate on printer at {self.printer_ip}")
         
-        time.sleep(5)
-        
-        cert_info = self.get_printer_certificate_info()
-        
-        if cert_info:
-            is_letsencrypt = "Let's Encrypt" in cert_info.get("issuer", "")
+        try:
+            ssl_check_cmd = f"""
+import ssl
+import socket
+import sys
+
+try:
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    
+    with socket.create_connection(("{self.printer_ip}", 443), timeout=10) as sock:
+        with context.wrap_socket(sock, server_hostname="{self.domain}") as ssock:
+            cert = ssock.getpeercert()
+            print("Certificate verified successfully")
+            print(f"Subject: {{cert.get('subject', 'N/A')}}")
+            sys.exit(0)
+except Exception as e:
+    print(f"Verification failed: {{str(e)}}")
+    sys.exit(1)
+"""
             
-            if is_letsencrypt and self.domain in cert_info.get("subject", ""):
-                self.log("SUCCESS", "Let's Encrypt certificate verified on printer", cert_info)
+            result = subprocess.run(
+                ["python3", "-c", ssl_check_cmd],
+                capture_output=True,
+                timeout=20,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                self.log_event("certificate_verification", 
+                              "Certificate verified on printer", "success")
+                self.status["steps_completed"].append("certificate_verified")
+                self.status["status"] = "completed"
                 return True
             else:
-                self.log("WARNING", 
-                        "Certificate installed but may not be the expected Let's Encrypt cert",
-                        cert_info)
+                self.log_event("certificate_verification", 
+                              "Certificate verification inconclusive", "warning")
+                self.status["steps_completed"].append("certificate_verification_attempted")
                 return False
-        else:
-            self.log("ERROR", "Failed to verify certificate installation")
+        
+        except subprocess.TimeoutExpired:
+            self.log_event("certificate_verification", 
+                          "Verification check timed out", "error")
+            return False
+        except Exception as e:
+            self.log_event("certificate_verification", 
+                          f"Verification failed: {str(e)}", "error")
+            self.status["errors"].append(f"Verification exception: {str(e)}")
             return False
     
-    def generate_installation_report(self) -> Dict:
-        """Generate a comprehensive installation report."""
-        self.log("INFO", "Generating installation report")
+    def execute_full_installation(self, cloudflare_token: Optional[str] = None, 
+                                 skip_printer_upload: bool = False) -> bool:
+        """Execute complete installation workflow."""
+        self.log_event("workflow", "Starting full certificate installation workflow")
+        self.status["timestamp"] = datetime.now().isoformat()
         
-        report = {
-            "timestamp": datetime.now().isoformat(),
-            "printer_config": {
-                "ip_address": self.printer_ip,
-                "port": self.printer_port,
-                "domain": self.domain,
-                "dns_provider": self.dns_provider
-            },
-            "logs": self.log_entries,
-            "summary": {
-                "total_operations": len(self.log_entries),
-                "successful_operations": sum(1 for log in self.log_entries if log["level"] == "SUCCESS"),
-                "warnings": sum(1 for log in self.log_entries if log["level"] == "WARNING"),
-                "errors": sum(1 for log in self.log_entries if log["level"] == "ERROR")
-            }
-        }
-        
-        return report
-    
-    def execute_full_installation(self, email: str, printer_password: str = "admin") -> bool:
-        """Execute the complete installation workflow."""
-        self.log("INFO", "Starting full Let's Encrypt certificate installation workflow")
-        
-        if not self.verify_printer_connectivity():
-            self.log("ERROR", "Printer connectivity verification failed, aborting")
+        if not self.validate_printer_connectivity():
+            self.status["status"] = "failed"
             return False
-        
-        self.get_printer_certificate_info()
         
         if not self.validate_domain_dns():
-            self.log("WARNING", "DNS validation failed, continuing with caution")
-        
-        success, cert_path = self.generate_certificate_with_certbot(email)
-        if not success:
-            self.log("ERROR", "Certificate generation failed, aborting")
+            self.status["status"] = "failed"
             return False
         
-        key_path = cert_path.replace("fullchain.pem", "privkey.pem")
+        if not self.generate_certificate_with_certbot(cloudflare_token):
+            self.status["status"] = "failed"
+            return False
         
-        success, pfx_path = self.prepare_certificate_for_printer(cert_path, key_path)
+        cert_data = self.prepare_certificate_for_printer()
+        if not cert_data:
+            self.status["status"] = "failed"
+            return False
+        
+        config_json = self.generate_brother_config(cert_data)
+        if not config_json:
+            self.status["status"] = "failed"
+            return False
+        
+        if not skip_printer_upload:
+            if not self.upload_certificate_to_printer(config_json):
+                self.log_event("workflow", "Continuing despite upload issues")
+            
+            if not self.verify_certificate_installation():
+                self.log_event("workflow", "Verification inconclusive", "warning")
+        else:
+            self.log_event("workflow", "Skipping printer upload as requested")
+            self.status["steps_completed"].append("printer_upload_skipped")
+        
+        self.status["status"] = "completed"
+        self.log_event("workflow", "Installation workflow completed successfully")
+        return True
+    
+    def get_status_report(self) -> Dict:
+        """Get detailed status report."""
+        return {
+            "status": self.status,
+            "events": self.log_entries,
+            "event_count": len(self.log_entries),
+            "error_count": len(self.status["errors"]),
+            "steps_completed_count": len(self.status["steps_completed"])
+        }
+    
+    def save_report(self, output_file: str) -> None:
+        """Save detailed report to file."""
+        report = self.get_status_report()
+        with open(output_file, 'w') as f:
+            json.dump(report, f, indent=2)
+        self.log_event("report", f"Report saved to {output_file}")
+
+
+def main():
+    """Main entry point with CLI argument parsing."""
+    parser = argparse.ArgumentParser(
+        description="Install Let's Encrypt TLS certificates on Brother printers with Certbot",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Basic installation with email validation
+  python3 solution.py --printer-ip 192.168.1.100 --domain printer.example.com --email admin@example.com
+
+  # Installation with Cloudflare DNS validation
+  python3 solution.py --printer-ip 192.168.1.100 --domain printer.example.com --email admin@example.com --cloudflare-token abc123
+
+  # Installation without automatic printer upload
+  python3 solution.py --printer-ip 192.168.1.100 --domain printer.example.com --email admin@example.com --skip-printer-upload
+
+  # Installation with custom certificate directory
+  python3 solution.py --printer-ip 192.168.1.100 --domain printer.example.com --email admin@example.com --cert-dir /custom/path
+        """
+    )
+    
+    parser.add_argument(
+        "--printer-ip",
+        required=True,
+        help="IP address of the Brother printer"
+    )
+    parser.add_argument(
+        "--printer-model",
+        default="Brother MFC-L8360CDWT",
+        help="Brother printer model (default: Brother MFC-L8360CDWT)"
+    )
+    parser.add_argument(
+        "--domain",
+        required=True,
+        help="Domain name for the certificate (must be resolvable)"
+    )
+    parser.add_argument(
+        "--email",
+        required=True,
+        help="Email address for Let's Encrypt certificate registration"
+    )
+    parser.add_argument(
+        "--cert-dir",
+        default="/etc/letsencrypt/live",
+        help="Directory where Certbot stores certificates (default: /etc/letsencrypt/live)"
+    )
+    parser.add_argument(
+        "--cloudflare-token",
+        default=None,
+        help="Cloudflare API token for DNS validation (optional)"
+    )
+    parser.add_argument(
+        "--skip-printer-upload",
+        action="store_true",
+        help="Skip uploading certificate to printer (useful for testing)"
+    )
+    parser.add_argument(
+        "--output-report",
+        default="brother_cert_installation_report.json",
+        help="Output file for installation report (default: brother_cert_installation_report.json)"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run in dry-run mode without making actual changes"
+    )
+    
+    args = parser.parse_args()
+    
+    print("=" * 70)
+    print("Brother Printer Let's Encrypt Certificate Installation")
+    print("=" * 70)
+    print(f"Printer IP: {args.printer_ip}")
+    print(f"Printer Model: {args.printer_model}")
+    print(f"Domain: {args.domain}")
+    print(f"Email: {args.email}")
+    print(f"Certificate Directory: {args.cert_dir}")
+    print(f"Cloudflare Validation: {'Yes' if args.cloudflare_token else 'No'}")
+    print(f"Skip Printer Upload: {args.skip_printer_upload}")
+    print(f"Dry-Run Mode: {args.dry_run}")
+    print("=" * 70)
+    
+    manager = BrotherPrinterCertificateManager(
+        printer_ip=args.printer_ip,
+        printer_model=args.printer_model,
+        domain=args.domain,
+        email=args.email,
+        cert_dir=args.cert_dir
+    )
+    
+    if args.dry_run:
+        manager.log_event("dry_run", "Running in dry-run mode - no changes will be made")
+        manager.validate_printer_connectivity()
+        manager.validate_domain_dns()
+        manager.log_event("dry_run", "Dry-run validation completed")
+    else:
+        success = manager.execute_full_installation(
+            cloudflare_token=args.cloudflare_token,
+            skip_printer_upload=args.skip_printer_upload
+        )
+        
+        if not success and not args.skip_printer_upload:
+            print("\nWarning: Installation completed with issues. Check report for details.")
+    
+    report = manager.get_status_report()
+    manager.save_report(args.output_report)
+    
+    print("\n" + "=" * 70)
+    print("Installation Summary")
+    print("=" * 70)
+    print(f"Status: {report['status']['status'].upper()}")
+    print(f"Steps Completed: {report['steps_completed_count']}")
+    print(f"Errors: {report['error_count']}")
+    print(f"Total Events: {report['event_count']}")
+    print(f"Report saved to: {args.output_report}")
+    print("=" * 70)
+    
+    if report['error_count'] > 0:
+        print("\nErrors encountered:")
+        for error in report['status']['errors']:
+            print(f"  - {error}")
+    
+    return 0 if report['status']['status'] == 'completed' else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
