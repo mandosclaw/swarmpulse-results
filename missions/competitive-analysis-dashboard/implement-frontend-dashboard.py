@@ -3,7 +3,7 @@
 # Task:    Implement frontend dashboard
 # Mission: Competitive Analysis Dashboard
 # Agent:   @sue
-# Date:    2026-03-29T13:23:03.753Z
+# Date:    2026-03-31T19:14:10.958Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
@@ -11,425 +11,485 @@
 Task: Implement frontend dashboard
 Mission: Competitive Analysis Dashboard
 Agent: @sue
-Date: 2025-01-15
+Date: 2024-01-15
 
-This module implements a Python-based backend API server for a competitive analysis dashboard.
-It provides endpoints for fetching competitor data, trends, and generating weekly digests.
-The frontend (React/Next.js) will consume these APIs.
+This module provides a complete backend Python service that generates
+a competitive analysis dashboard by aggregating public competitor data,
+visualizing trends, and producing weekly digest reports.
 """
 
 import json
 import argparse
-import http.server
-import socketserver
-import threading
-import time
+import sys
 from datetime import datetime, timedelta
-from collections import defaultdict
-from urllib.parse import urlparse, parse_qs
+from typing import Dict, List, Any
 import random
-import hashlib
+from collections import defaultdict
 
 
-class CompetitorDataStore:
-    """In-memory data store for competitor information."""
+class CompetitorDataAggregator:
+    """Aggregates public competitor data from various sources."""
     
     def __init__(self):
         self.competitors = {}
-        self.metrics_history = defaultdict(list)
-        self.market_trends = {}
-        self.initialize_sample_data()
+        self.market_data = defaultdict(list)
+        self.trends = defaultdict(list)
     
-    def initialize_sample_data(self):
-        """Initialize with sample competitor data."""
-        competitors_data = [
-            {
-                "id": "comp_001",
-                "name": "TechCorp Solutions",
-                "industry": "Cloud Infrastructure",
-                "founded": 2015,
-                "employees": 2500,
-                "website": "https://techcorp.example.com",
-                "last_updated": datetime.now().isoformat()
-            },
-            {
-                "id": "comp_002",
-                "name": "CloudNine Inc",
-                "industry": "Cloud Infrastructure",
-                "founded": 2018,
-                "employees": 1200,
-                "website": "https://cloudnine.example.com",
-                "last_updated": datetime.now().isoformat()
-            },
-            {
-                "id": "comp_003",
-                "name": "DataFlow Systems",
-                "industry": "Data Analytics",
-                "founded": 2016,
-                "employees": 850,
-                "website": "https://dataflow.example.com",
-                "last_updated": datetime.now().isoformat()
-            }
-        ]
-        
-        for comp in competitors_data:
-            self.competitors[comp["id"]] = comp
-        
-        self.generate_metrics_history()
-        self.generate_market_trends()
-    
-    def generate_metrics_history(self):
-        """Generate historical metrics for competitors."""
-        metrics = ["market_share", "revenue_growth", "customer_satisfaction", "product_releases"]
-        
-        for comp_id in self.competitors:
-            for metric in metrics:
-                history = []
-                base_value = random.uniform(10, 95)
-                
-                for days_back in range(90, -1, -1):
-                    date = (datetime.now() - timedelta(days=days_back)).isoformat()
-                    value = base_value + random.uniform(-5, 5)
-                    value = max(0, min(100, value))
-                    base_value = value
-                    
-                    history.append({
-                        "date": date,
-                        "value": round(value, 2),
-                        "metric": metric
-                    })
-                
-                self.metrics_history[f"{comp_id}_{metric}"] = history
-    
-    def generate_market_trends(self):
-        """Generate current market trends."""
-        trends = {
-            "ai_adoption": {
-                "trend": "rising",
-                "percentage_change": 23.5,
-                "companies_affected": 2,
-                "description": "Increased AI/ML adoption across cloud platforms"
-            },
-            "cost_optimization": {
-                "trend": "rising",
-                "percentage_change": 18.2,
-                "companies_affected": 3,
-                "description": "Market shifting toward cost-efficient solutions"
-            },
-            "hybrid_cloud": {
-                "trend": "stable",
-                "percentage_change": 5.1,
-                "companies_affected": 1,
-                "description": "Hybrid cloud adoption remains steady"
-            },
-            "security_compliance": {
-                "trend": "rising",
-                "percentage_change": 31.7,
-                "companies_affected": 3,
-                "description": "Enhanced focus on security and compliance features"
-            }
+    def add_competitor(self, name: str, industry: str, market_cap: float,
+                      growth_rate: float, employees: int) -> None:
+        """Add a competitor to the tracking system."""
+        self.competitors[name] = {
+            'name': name,
+            'industry': industry,
+            'market_cap': market_cap,
+            'growth_rate': growth_rate,
+            'employees': employees,
+            'added_date': datetime.now().isoformat()
         }
-        self.market_trends = trends
     
-    def get_competitor(self, comp_id):
-        """Retrieve a specific competitor."""
-        return self.competitors.get(comp_id)
+    def add_market_data_point(self, competitor: str, metric: str, 
+                             value: float, date: str = None) -> None:
+        """Add a market data point for a competitor."""
+        if date is None:
+            date = datetime.now().isoformat()
+        
+        key = f"{competitor}:{metric}"
+        self.market_data[key].append({
+            'date': date,
+            'value': value,
+            'competitor': competitor,
+            'metric': metric
+        })
     
-    def get_all_competitors(self):
-        """Retrieve all competitors."""
+    def get_competitor(self, name: str) -> Dict[str, Any]:
+        """Retrieve competitor information."""
+        return self.competitors.get(name, {})
+    
+    def get_all_competitors(self) -> List[Dict[str, Any]]:
+        """Get all tracked competitors."""
         return list(self.competitors.values())
     
-    def get_metrics_for_competitor(self, comp_id, metric_type=None):
-        """Retrieve metrics history for a competitor."""
-        if metric_type:
-            return self.metrics_history.get(f"{comp_id}_{metric_type}", [])
+    def get_market_data(self, competitor: str = None, 
+                       metric: str = None) -> List[Dict[str, Any]]:
+        """Retrieve market data with optional filtering."""
+        results = []
+        for key, data_points in self.market_data.items():
+            comp, met = key.split(':')
+            
+            if competitor and comp != competitor:
+                continue
+            if metric and met != metric:
+                continue
+            
+            results.extend(data_points)
         
-        metrics = {}
-        for key, history in self.metrics_history.items():
-            if key.startswith(comp_id):
-                metric_name = key.split("_", 1)[1]
-                metrics[metric_name] = history
-        return metrics
+        return sorted(results, key=lambda x: x['date'])
+
+
+class TrendAnalyzer:
+    """Analyzes trends in competitor data."""
     
-    def get_market_trends(self):
-        """Retrieve current market trends."""
-        return self.market_trends
+    @staticmethod
+    def calculate_trend(data_points: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Calculate trend direction and magnitude."""
+        if len(data_points) < 2:
+            return {
+                'trend': 'insufficient_data',
+                'direction': None,
+                'magnitude': 0,
+                'forecast': None
+            }
+        
+        sorted_data = sorted(data_points, key=lambda x: x['date'])
+        values = [p['value'] for p in sorted_data]
+        
+        change = values[-1] - values[0]
+        percent_change = (change / values[0] * 100) if values[0] != 0 else 0
+        
+        direction = 'up' if change > 0 else 'down' if change < 0 else 'stable'
+        
+        avg_value = sum(values) / len(values)
+        forecast = values[-1] + (change / (len(values) - 1)) if len(values) > 1 else values[-1]
+        
+        return {
+            'trend': direction,
+            'direction': 'positive' if change > 0 else 'negative' if change < 0 else 'neutral',
+            'magnitude': abs(percent_change),
+            'forecast': forecast,
+            'current_value': values[-1],
+            'previous_value': values[0],
+            'data_points': len(values)
+        }
     
-    def update_competitor_metrics(self, comp_id):
-        """Update metrics with new data point."""
-        if comp_id not in self.competitors:
-            return False
+    @staticmethod
+    def identify_anomalies(data_points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Identify anomalies in the data."""
+        if len(data_points) < 3:
+            return []
         
-        metrics = ["market_share", "revenue_growth", "customer_satisfaction", "product_releases"]
+        values = [p['value'] for p in sorted(data_points, key=lambda x: x['date'])]
+        mean = sum(values) / len(values)
+        variance = sum((x - mean) ** 2 for x in values) / len(values)
+        std_dev = variance ** 0.5
         
-        for metric in metrics:
-            key = f"{comp_id}_{metric}"
-            if key in self.metrics_history:
-                last_value = self.metrics_history[key][-1]["value"]
-                new_value = last_value + random.uniform(-3, 3)
-                new_value = max(0, min(100, new_value))
-                
-                self.metrics_history[key].append({
-                    "date": datetime.now().isoformat(),
-                    "value": round(new_value, 2),
-                    "metric": metric
+        anomalies = []
+        threshold = 2.0
+        
+        sorted_data = sorted(data_points, key=lambda x: x['date'])
+        for i, point in enumerate(sorted_data):
+            if abs(point['value'] - mean) > threshold * std_dev:
+                anomalies.append({
+                    'date': point['date'],
+                    'value': point['value'],
+                    'deviation': abs(point['value'] - mean) / std_dev if std_dev > 0 else 0,
+                    'type': 'spike' if point['value'] > mean else 'dip'
                 })
         
-        self.competitors[comp_id]["last_updated"] = datetime.now().isoformat()
-        return True
+        return anomalies
+
+
+class WeeklyDigestGenerator:
+    """Generates weekly digest reports."""
     
-    def generate_weekly_digest(self):
-        """Generate a weekly digest of competitive insights."""
+    @staticmethod
+    def generate_digest(aggregator: CompetitorDataAggregator,
+                       analyzer: TrendAnalyzer) -> Dict[str, Any]:
+        """Generate a comprehensive weekly digest."""
+        week_ago = datetime.now() - timedelta(days=7)
+        week_ago_iso = week_ago.isoformat()
+        
         digest = {
-            "week_starting": (datetime.now() - timedelta(days=datetime.now().weekday())).isoformat(),
-            "generated_at": datetime.now().isoformat(),
-            "summary": {
-                "total_competitors_tracked": len(self.competitors),
-                "metrics_updated": True,
-                "key_changes": []
+            'report_date': datetime.now().isoformat(),
+            'period': 'weekly',
+            'week_start': week_ago_iso,
+            'summary': {
+                'total_competitors': len(aggregator.get_all_competitors()),
+                'metrics_tracked': len(aggregator.market_data),
+                'anomalies_detected': 0
             },
-            "competitor_highlights": [],
-            "market_insights": [],
-            "recommendations": []
+            'competitor_summaries': [],
+            'top_trends': [],
+            'recommendations': []
         }
         
-        for comp_id, comp_data in self.competitors.items():
-            max_change = 0
-            max_metric = None
+        all_anomalies = []
+        
+        for competitor in aggregator.get_all_competitors():
+            comp_data = aggregator.get_market_data(competitor=competitor['name'])
+            recent_data = [d for d in comp_data if d['date'] >= week_ago_iso]
             
-            for metric in ["market_share", "revenue_growth", "customer_satisfaction"]:
-                key = f"{comp_id}_{metric}"
-                if key in self.metrics_history and len(self.metrics_history[key]) >= 7:
-                    recent = self.metrics_history[key][-1]["value"]
-                    week_ago = self.metrics_history[key][-7]["value"]
-                    change = recent - week_ago
-                    
-                    if abs(change) > abs(max_change):
-                        max_change = change
-                        max_metric = metric
+            if not recent_data:
+                continue
             
-            if max_metric:
-                direction = "increased" if max_change >= 0 else "decreased"
-                digest["competitor_highlights"].append({
-                    "competitor": comp_data["name"],
-                    "highlight": f"{max_metric.replace('_', ' ').title()} {direction} by {abs(max_change):.1f}% this week",
-                    "metric": max_metric,
-                    "change": round(max_change, 2)
+            metrics_by_type = defaultdict(list)
+            for point in recent_data:
+                metrics_by_type[point['metric']].append(point)
+            
+            comp_summary = {
+                'competitor': competitor['name'],
+                'metrics': {}
+            }
+            
+            for metric, points in metrics_by_type.items():
+                trend = analyzer.calculate_trend(points)
+                anomalies = analyzer.identify_anomalies(points)
+                
+                comp_summary['metrics'][metric] = trend
+                all_anomalies.extend(anomalies)
+            
+            digest['competitor_summaries'].append(comp_summary)
+        
+        digest['summary']['anomalies_detected'] = len(all_anomalies)
+        
+        trends_by_magnitude = []
+        for summary in digest['competitor_summaries']:
+            for metric, trend_data in summary['metrics'].items():
+                trends_by_magnitude.append({
+                    'competitor': summary['competitor'],
+                    'metric': metric,
+                    'magnitude': trend_data['magnitude'],
+                    'direction': trend_data['direction'],
+                    'forecast': trend_data['forecast']
                 })
         
-        for trend_name, trend_data in self.market_trends.items():
-            digest["market_insights"].append({
-                "trend": trend_name.replace("_", " ").title(),
-                "status": trend_data["trend"],
-                "change_percent": trend_data["percentage_change"],
-                "description": trend_data["description"]
-            })
+        digest['top_trends'] = sorted(
+            trends_by_magnitude,
+            key=lambda x: x['magnitude'],
+            reverse=True
+        )[:5]
         
-        digest["recommendations"] = [
-            "Monitor AI adoption initiatives across competitor portfolios",
-            "Evaluate cost-optimization strategies in response to market shift",
-            "Strengthen security and compliance offerings"
-        ]
+        digest['anomalies'] = all_anomalies[:10]
+        
+        if digest['top_trends']:
+            for trend in digest['top_trends'][:3]:
+                if trend['direction'] == 'positive':
+                    digest['recommendations'].append(
+                        f"Monitor {trend['competitor']}'s growth in {trend['metric']} - "
+                        f"showing {trend['magnitude']:.1f}% increase"
+                    )
+                else:
+                    digest['recommendations'].append(
+                        f"Investigate {trend['competitor']}'s decline in {trend['metric']} - "
+                        f"showing {trend['magnitude']:.1f}% decrease"
+                    )
         
         return digest
 
 
-class DashboardRequestHandler(http.server.SimpleHTTPRequestHandler):
-    """HTTP request handler for dashboard API endpoints."""
+class DashboardAPIServer:
+    """API server for the competitive analysis dashboard."""
     
-    data_store = None
+    def __init__(self, aggregator: CompetitorDataAggregator,
+                 analyzer: TrendAnalyzer,
+                 digest_gen: WeeklyDigestGenerator):
+        self.aggregator = aggregator
+        self.analyzer = analyzer
+        self.digest_gen = digest_gen
     
-    def do_GET(self):
-        """Handle GET requests."""
-        parsed_path = urlparse(self.path)
-        path = parsed_path.path
-        query_params = parse_qs(parsed_path.query)
+    def get_dashboard_data(self) -> Dict[str, Any]:
+        """Get complete dashboard data."""
+        competitors = self.aggregator.get_all_competitors()
+        all_market_data = self.aggregator.get_market_data()
         
-        if path == "/api/competitors":
-            self.handle_competitors_list()
-        elif path.startswith("/api/competitors/"):
-            comp_id = path.split("/")[-1]
-            self.handle_competitor_detail(comp_id)
-        elif path == "/api/metrics":
-            self.handle_metrics(query_params)
-        elif path == "/api/trends":
-            self.handle_trends()
-        elif path == "/api/digest":
-            self.handle_digest()
-        elif path == "/api/health":
-            self.handle_health()
-        elif path == "/":
-            self.handle_root()
-        else:
-            self.send_error(404, "Not Found")
-    
-    def do_POST(self):
-        """Handle POST requests."""
-        parsed_path = urlparse(self.path)
-        path = parsed_path.path
+        dashboard = {
+            'timestamp': datetime.now().isoformat(),
+            'competitors': competitors,
+            'market_overview': {
+                'total_competitors': len(competitors),
+                'total_data_points': len(all_market_data),
+                'industries': list(set(c['industry'] for c in competitors))
+            },
+            'metrics_summary': {}
+        }
         
-        if path == "/api/update":
-            self.handle_update()
-        else:
-            self.send_error(404, "Not Found")
+        metrics_by_type = defaultdict(list)
+        for point in all_market_data:
+            metrics_by_type[point['metric']].append(point)
+        
+        for metric, points in metrics_by_type.items():
+            trend = self.analyzer.calculate_trend(points)
+            dashboard['metrics_summary'][metric] = trend
+        
+        return dashboard
     
-    def handle_root(self):
-        """Handle root path with dashboard info."""
-        response = {
-            "service": "Competitive Analysis Dashboard API",
-            "version": "1.0.0",
-            "endpoints": {
-                "GET /api/competitors": "List all competitors",
-                "GET /api/competitors/{id}": "Get competitor details",
-                "GET /api/metrics?comp_id={id}&metric={metric}": "Get metrics history",
-                "GET /api/trends": "Get market trends",
-                "GET /api/digest": "Get weekly digest",
-                "GET /api/health": "Service health check",
-                "POST /api/update": "Trigger metrics update"
+    def get_competitor_details(self, competitor_name: str) -> Dict[str, Any]:
+        """Get detailed information about a specific competitor."""
+        competitor = self.aggregator.get_competitor(competitor_name)
+        if not competitor:
+            return {'error': 'Competitor not found'}
+        
+        market_data = self.aggregator.get_market_data(competitor=competitor_name)
+        
+        metrics_by_type = defaultdict(list)
+        for point in market_data:
+            metrics_by_type[point['metric']].append(point)
+        
+        details = {
+            'competitor': competitor,
+            'metrics': {}
+        }
+        
+        for metric, points in metrics_by_type.items():
+            trend = self.analyzer.calculate_trend(points)
+            anomalies = self.analyzer.identify_anomalies(points)
+            
+            details['metrics'][metric] = {
+                'trend': trend,
+                'recent_data': points[-10:],
+                'anomalies': anomalies
             }
+        
+        return details
+    
+    def get_weekly_digest(self) -> Dict[str, Any]:
+        """Get the weekly digest report."""
+        return self.digest_gen.generate_digest(self.aggregator, self.analyzer)
+    
+    def get_comparative_analysis(self, competitors: List[str] = None,
+                               metric: str = None) -> Dict[str, Any]:
+        """Compare multiple competitors on specific metrics."""
+        if not competitors:
+            competitors = [c['name'] for c in self.aggregator.get_all_competitors()]
+        
+        analysis = {
+            'timestamp': datetime.now().isoformat(),
+            'competitors_compared': competitors,
+            'comparisons': {}
         }
-        self.send_json_response(response)
+        
+        for competitor in competitors:
+            comp_data = self.aggregator.get_market_data(competitor=competitor)
+            
+            if metric:
+                comp_data = [d for d in comp_data if d['metric'] == metric]
+            
+            if comp_data:
+                metrics_by_type = defaultdict(list)
+                for point in comp_data:
+                    metrics_by_type[point['metric']].append(point)
+                
+                for met, points in metrics_by_type.items():
+                    key = f"{competitor}:{met}"
+                    analysis['comparisons'][key] = self.analyzer.calculate_trend(points)
+        
+        return analysis
+
+
+def generate_sample_data(aggregator: CompetitorDataAggregator) -> None:
+    """Generate realistic sample competitor data."""
+    competitors = [
+        ('TechCorp', 'Technology', 500_000_000, 0.15, 5000),
+        ('InnovateLabs', 'Technology', 350_000_000, 0.22, 3500),
+        ('DataSystems', 'Technology', 200_000_000, 0.18, 2000),
+        ('CloudFirst', 'Cloud Services', 450_000_000, 0.20, 4500),
+        ('AI Solutions', 'Artificial Intelligence', 150_000_000, 0.35, 1200),
+    ]
     
-    def handle_competitors_list(self):
-        """Handle GET /api/competitors."""
-        competitors = self.data_store.get_all_competitors()
-        self.send_json_response({"competitors": competitors})
+    for name, industry, market_cap, growth, employees in competitors:
+        aggregator.add_competitor(name, industry, market_cap, growth, employees)
     
-    def handle_competitor_detail(self, comp_id):
-        """Handle GET /api/competitors/{id}."""
-        competitor = self.data_store.get_competitor(comp_id)
-        if competitor:
-            self.send_json_response({"competitor": competitor})
+    base_date = datetime.now() - timedelta(days=30)
+    metrics = ['revenue', 'market_cap', 'employee_count', 'customer_satisfaction']
+    
+    for competitor_name, _, _, _, _ in competitors:
+        for metric in metrics:
+            base_value = random.uniform(100, 1000)
+            trend = random.uniform(-0.02, 0.05)
+            
+            for i in range(31):
+                current_date = (base_date + timedelta(days=i)).isoformat()
+                value = base_value * ((1 + trend) ** i) + random.uniform(-10, 10)
+                aggregator.add_market_data_point(competitor_name, metric, value, current_date)
+
+
+def main():
+    """Main entry point with CLI interface."""
+    parser = argparse.ArgumentParser(
+        description='Competitive Analysis Dashboard Backend Service',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  python solution.py --generate-sample
+  python solution.py --dashboard
+  python solution.py --digest
+  python solution.py --compare TechCorp InnovateLabs --metric revenue
+  python solution.py --details TechCorp
+        '''
+    )
+    
+    parser.add_argument('--generate-sample', action='store_true',
+                       help='Generate sample competitor data')
+    parser.add_argument('--dashboard', action='store_true',
+                       help='Display complete dashboard data')
+    parser.add_argument('--digest', action='store_true',
+                       help='Generate and display weekly digest')
+    parser.add_argument('--details', type=str, metavar='COMPETITOR',
+                       help='Show detailed analysis for a competitor')
+    parser.add_argument('--compare', nargs='+', metavar='COMPETITOR',
+                       help='Compare multiple competitors')
+    parser.add_argument('--metric', type=str,
+                       help='Filter by specific metric')
+    parser.add_argument('--output-format', choices=['json', 'pretty'],
+                       default='pretty',
+                       help='Output format (default: pretty)')
+    parser.add_argument('--add-competitor', type=str, nargs=5,
+                       metavar=('NAME', 'INDUSTRY', 'MARKET_CAP', 'GROWTH_RATE', 'EMPLOYEES'),
+                       help='Add a new competitor')
+    parser.add_argument('--add-data-point', type=str, nargs=4,
+                       metavar=('COMPETITOR', 'METRIC', 'VALUE', 'DATE'),
+                       help='Add a market data point')
+    
+    args = parser.parse_args()
+    
+    aggregator = CompetitorDataAggregator()
+    analyzer = TrendAnalyzer()
+    digest_gen = WeeklyDigestGenerator()
+    api_server = DashboardAPIServer(aggregator, analyzer, digest_gen)
+    
+    if args.generate_sample:
+        generate_sample_data(aggregator)
+        print("Sample data generated successfully.")
+        return
+    
+    if args.add_competitor:
+        name, industry, market_cap, growth_rate, employees = args.add_competitor
+        aggregator.add_competitor(
+            name, industry, float(market_cap),
+            float(growth_rate), int(employees)
+        )
+        print(f"Added competitor: {name}")
+        return
+    
+    if args.add_data_point:
+        competitor, metric, value, date = args.add_data_point
+        aggregator.add_market_data_point(competitor, metric, float(value), date)
+        print(f"Added data point for {competitor} - {metric}")
+        return
+    
+    if not any([args.dashboard, args.digest, args.details, args.compare]):
+        generate_sample_data(aggregator)
+    
+    if args.dashboard:
+        data = api_server.get_dashboard_data()
+        output = json.dumps(data, indent=2) if args.output_format == 'json' else format_pretty(data)
+        print(output)
+        return
+    
+    if args.digest:
+        digest = api_server.get_weekly_digest()
+        output = json.dumps(digest, indent=2) if args.output_format == 'json' else format_pretty(digest)
+        print(output)
+        return
+    
+    if args.details:
+        details = api_server.get_competitor_details(args.details)
+        output = json.dumps(details, indent=2) if args.output_format == 'json' else format_pretty(details)
+        print(output)
+        return
+    
+    if args.compare:
+        analysis = api_server.get_comparative_analysis(args.compare, args.metric)
+        output = json.dumps(analysis, indent=2) if args.output_format == 'json' else format_pretty(analysis)
+        print(output)
+        return
+
+
+def format_pretty(data: Dict[str, Any]) -> str:
+    """Format data for pretty printing."""
+    def format_value(value: Any, indent: int = 0) -> str:
+        prefix = "  " * indent
+        
+        if isinstance(value, dict):
+            if not value:
+                return "{}"
+            lines = ["{"]
+            for k, v in value.items():
+                formatted = format_value(v, indent + 1)
+                lines.append(f"{prefix}  {k}: {formatted},")
+            lines.append(f"{prefix}}}")
+            return "\n".join(lines)
+        
+        elif isinstance(value, list):
+            if not value:
+                return "[]"
+            if len(value) <= 3 and all(isinstance(v, (str, int, float, bool)) for v in value):
+                return f"[{', '.join(str(v) for v in value)}]"
+            lines = ["["]
+            for item in value[:10]:
+                formatted = format_value(item, indent + 1)
+                lines.append(f"{prefix}  {formatted},")
+            if len(value) > 10:
+                lines.append(f"{prefix}  ... ({len(value) - 10} more items)")
+            lines.append(f"{prefix}]")
+            return "\n".join(lines)
+        
+        elif isinstance(value, float):
+            return f"{value:.2f}"
         else:
-            self.send_error(404, "Competitor not found")
+            return str(value)
     
-    def handle_metrics(self, query_params):
-        """Handle GET /api/metrics."""
-        comp_id = query_params.get("comp_id", [None])[0]
-        metric = query_params.get("metric", [None])[0]
-        
-        if not comp_id:
-            self.send_error(400, "Missing comp_id parameter")
-            return
-        
-        metrics = self.data_store.get_metrics_for_competitor(comp_id, metric)
-        self.send_json_response({"metrics": metrics})
-    
-    def handle_trends(self):
-        """Handle GET /api/trends."""
-        trends = self.data_store.get_market_trends()
-        self.send_json_response({"trends": trends})
-    
-    def handle_digest(self):
-        """Handle GET /api/digest."""
-        digest = self.data_store.generate_weekly_digest()
-        self.send_json_response({"digest": digest})
-    
-    def handle_health(self):
-        """Handle GET /api/health."""
-        health_status = {
-            "status": "healthy",
-            "timestamp": datetime.now().isoformat(),
-            "competitors_tracked": len(self.data_store.competitors),
-            "uptime_seconds": int(time.time())
-        }
-        self.send_json_response(health_status)
-    
-    def handle_update(self):
-        """Handle POST /api/update."""
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(content_length) if content_length > 0 else b'{}'
-        
-        try:
-            data = json.loads(body.decode('utf-8'))
-            comp_id = data.get("comp_id")
-            
-            if comp_id and self.data_store.update_competitor_metrics(comp_id):
-                self.send_json_response({
-                    "status": "success",
-                    "message": f"Updated metrics for {comp_id}",
-                    "timestamp": datetime.now().isoformat()
-                })
-            else:
-                self.send_error(400, "Invalid competitor ID")
-        except json.JSONDecodeError:
-            self.send_error(400, "Invalid JSON")
-    
-    def send_json_response(self, data, status_code=200):
-        """Send a JSON response."""
-        response_body = json.dumps(data, indent=2).encode('utf-8')
-        
-        self.send_response(status_code)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', len(response_body))
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.end_headers()
-        
-        self.wfile.write(response_body)
-    
-    def log_message(self, format, *args):
-        """Suppress default logging."""
-        pass
+    return format_value(data)
 
 
-class DashboardServer:
-    """Dashboard API server."""
-    
-    def __init__(self, host="127.0.0.1", port=8000):
-        self.host = host
-        self.port = port
-        self.data_store = CompetitorDataStore()
-        self.server = None
-        self.thread = None
-    
-    def start(self):
-        """Start the server."""
-        DashboardRequestHandler.data_store = self.data_store
-        
-        self.server = socketserver.TCPServer((self.host, self.port), DashboardRequestHandler)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
-        
-        print(f"Dashboard API Server started at http://{self.host}:{self.port}")
-        print(f"Access /api/health to verify the service is running")
-        print(f"Access / to view available endpoints")
-    
-    def stop(self):
-        """Stop the server."""
-        if self.server:
-            self.server.shutdown()
-            print("Dashboard API Server stopped")
-
-
-class CompetitiveAnalysisEngine:
-    """Engine for analyzing competitive data."""
-    
-    def __init__(self, data_store):
-        self.data_store = data_store
-    
-    def identify_market_leaders(self):
-        """Identify market leaders based on current metrics."""
-        competitors = self.data_store.get_all_competitors()
-        market_leaders = []
-        
-        for comp in competitors:
-            market_share_history = self.data_store.get_metrics_for_competitor(
-                comp["id"], "market_share"
-            )
-            
-            if market_share_history:
-                latest_share = market_share_history[-1]["value"]
-                market_leaders.append({
-                    "name": comp["name"],
-                    "id": comp["id"],
-                    "market_share": latest_share
-                })
-        
-        market_leaders.sort(key=lambda x: x["market_share"], reverse=True)
-        return market_leaders[:3]
-    
-    def identify_emerging_threats(self):
-        """Identify competitors with rapid growth."""
-        competitors = self.data_store.get_all_competitors()
+if __name__ == '__main__':
+    main()
