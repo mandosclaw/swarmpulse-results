@@ -3,7 +3,7 @@
 # Task:    Typosquatting detector
 # Mission: OSS Supply Chain Compromise Monitor
 # Agent:   @sue
-# Date:    2026-03-31T18:36:42.614Z
+# Date:    2026-03-31T19:14:08.003Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
@@ -12,564 +12,476 @@ TASK: Typosquatting detector
 MISSION: OSS Supply Chain Compromise Monitor
 AGENT: @sue
 DATE: 2024
-
-Fuzzy-match new package names against top-10k to catch typosquats within 60s of publish.
-Detects common typosquatting patterns: character transposition, substitution, homoglyphs, 
-insertion, deletion, and common misspellings.
+DESCRIPTION: Check installed packages against known typosquatted names using
+Levenshtein distance, flagging suspicious packages.
 """
 
 import argparse
 import json
+import subprocess
 import sys
-import time
-import difflib
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Set, Tuple
-from datetime import datetime
-import hashlib
+from typing import Dict, List, Set, Tuple
+from pathlib import Path
 
 
 @dataclass
-class TyposquatMatch:
-    """Represents a potential typosquatting detection."""
-    suspicious_package: str
-    similar_package: str
-    similarity_score: float
-    detected_pattern: str
-    risk_level: str
+class TyposquattingAlert:
+    """Alert for detected typosquatting."""
+    package_name: str
+    suspicious_match: str
+    levenshtein_distance: int
+    similarity_ratio: float
+    risk_score: float
+    alert_type: str
     timestamp: str
-    detection_method: str
 
 
-class TyposquattingDetector:
-    """Detects typosquatting attempts via fuzzy matching and pattern analysis."""
-
-    # Common character substitutions (visual/keyboard similarity)
-    HOMOGLYPH_MAP = {
-        'l': ['1', 'I'],
-        '1': ['l', 'I'],
-        'I': ['l', '1'],
-        'o': ['0'],
-        '0': ['o'],
-        's': ['5', '$'],
-        'S': ['5', '$'],
-        'a': ['4', '@'],
-        'e': ['3'],
-        'b': ['8'],
-        'g': ['9', 'q'],
-    }
-
-    # Common typos/misspellings for popular packages
-    COMMON_TYPOS = {
-        'django': ['dajngo', 'djnago', 'django-admin'],
-        'flask': ['falsk', 'flaks', 'flask'],
-        'numpy': ['nunpy', 'numpy-', 'numpyy'],
-        'pandas': ['panda', 'panadas', 'pandas-'],
-        'requests': ['request', 'reqests', 'requets'],
-        'pytorch': ['pytorch-', 'pytorxh'],
-        'tensorflow': ['tensorflw', 'tensor-flow'],
-        'scipy': ['scypy', 'scipy-'],
-        'scikit-learn': ['scikit-learn-', 'sklearn'],
-        'matplotlib': ['matplotlib-', 'matplotllib'],
-    }
-
-    # Common typosquatting patterns
-    TYPO_PATTERNS = {
-        'transposition': r'(.)(.)\2\1',  # Adjacent char swap
-        'homoglyph': r'[l1I0o5s3]',       # Visual similarity
-        'insertion': r'(.)\1{2,}',         # Repeated chars
-        'hyphen_variation': r'-',
-        'underscore_variation': r'_',
-    }
-
-    def __init__(self, top_packages: List[str], similarity_threshold: float = 0.75):
-        """
-        Initialize detector with known popular packages.
+def levenshtein_distance(s1: str, s2: str) -> int:
+    """
+    Calculate Levenshtein distance between two strings.
+    
+    Args:
+        s1: First string
+        s2: Second string
         
-        Args:
-            top_packages: List of known legitimate package names
-            similarity_threshold: Minimum similarity score to flag (0.0-1.0)
-        """
-        self.top_packages = {pkg.lower() for pkg in top_packages}
-        self.similarity_threshold = similarity_threshold
-        self.detections: List[TyposquatMatch] = []
+    Returns:
+        Integer distance between strings
+    """
+    if len(s1) < len(s2):
+        return levenshtein_distance(s2, s1)
+    
+    if len(s2) == 0:
+        return len(s1)
+    
+    previous_row = range(len(s2) + 1)
+    
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    
+    return previous_row[-1]
 
-    def _calculate_similarity(self, name1: str, name2: str) -> float:
-        """Calculate similarity using SequenceMatcher."""
-        return difflib.SequenceMatcher(
-            None, 
-            name1.lower(), 
-            name2.lower()
-        ).ratio()
 
-    def _check_homoglyph_substitution(self, suspicious: str, legitimate: str) -> bool:
-        """Check if suspicious name is legitimate with homoglyph substitutions."""
-        if len(suspicious) != len(legitimate):
-            return False
-
-        for s_char, l_char in zip(suspicious.lower(), legitimate.lower()):
-            if s_char == l_char:
-                continue
-            # Check if s_char is homoglyph of l_char
-            if l_char in self.HOMOGLYPH_MAP:
-                if s_char not in self.HOMOGLYPH_MAP[l_char]:
-                    return False
-            else:
-                return False
-        return True
-
-    def _check_transposition(self, suspicious: str, legitimate: str) -> bool:
-        """Check if suspicious is legitimate with adjacent characters swapped."""
-        sus_lower = suspicious.lower()
-        leg_lower = legitimate.lower()
-
-        if len(sus_lower) != len(leg_lower):
-            return False
-
-        # Try swapping each adjacent pair
-        for i in range(len(sus_lower) - 1):
-            swapped = sus_lower[:i] + sus_lower[i+1] + sus_lower[i] + sus_lower[i+2:]
-            if swapped == leg_lower:
-                return True
-        return False
-
-    def _check_insertion_deletion(self, suspicious: str, legitimate: str) -> bool:
-        """Check for single character insertion/deletion."""
-        sus_lower = suspicious.lower()
-        leg_lower = legitimate.lower()
-
-        # Check deletion (legitimate has extra char)
-        for i in range(len(leg_lower)):
-            if sus_lower == leg_lower[:i] + leg_lower[i+1:]:
-                return True
-
-        # Check insertion (suspicious has extra char)
-        for i in range(len(sus_lower)):
-            if sus_lower[:i] + sus_lower[i+1:] == leg_lower:
-                return True
-
-        return False
-
-    def _check_separator_variation(self, suspicious: str, legitimate: str) -> bool:
-        """Check if difference is only in hyphens/underscores."""
-        sus_normalized = suspicious.lower().replace('_', '').replace('-', '')
-        leg_normalized = legitimate.lower().replace('_', '').replace('-', '')
-        return sus_normalized == leg_normalized and suspicious != legitimate
-
-    def _check_common_typo(self, suspicious: str) -> Tuple[bool, str]:
-        """Check against known common typos."""
-        sus_lower = suspicious.lower()
-        for legitimate, typos in self.COMMON_TYPOS.items():
-            if sus_lower in [t.lower() for t in typos]:
-                return True, legitimate
-        return False, ""
-
-    def detect(self, package_name: str) -> List[TyposquatMatch]:
-        """
-        Detect if package_name is a typosquat of known packages.
+def calculate_similarity_ratio(s1: str, s2: str) -> float:
+    """
+    Calculate similarity ratio (0.0 to 1.0) between two strings.
+    
+    Args:
+        s1: First string
+        s2: Second string
         
-        Args:
-            package_name: New package name to check
+    Returns:
+        Similarity ratio
+    """
+    max_len = max(len(s1), len(s2))
+    if max_len == 0:
+        return 1.0
+    
+    distance = levenshtein_distance(s1, s2)
+    return 1.0 - (distance / max_len)
+
+
+def get_installed_packages() -> Dict[str, str]:
+    """
+    Get list of installed packages with their versions.
+    
+    Returns:
+        Dictionary of package names to versions
+    """
+    try:
+        result = subprocess.run(
+            ["pip", "list", "--format=json"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode == 0:
+            packages = json.loads(result.stdout)
+            return {pkg["name"]: pkg["version"] for pkg in packages}
+    except (subprocess.SubprocessError, json.JSONDecodeError, FileNotFoundError):
+        pass
+    
+    return {}
+
+
+def load_known_packages(package_list_file: str = None) -> Set[str]:
+    """
+    Load set of known legitimate package names.
+    
+    Args:
+        package_list_file: Optional path to file with known package names
+        
+    Returns:
+        Set of known package names
+    """
+    known_packages = {
+        "requests", "numpy", "pandas", "django", "flask", "pytest",
+        "sqlalchemy", "pillow", "scipy", "matplotlib", "pytorch",
+        "tensorflow", "keras", "scikit-learn", "boto3", "cryptography",
+        "pyyaml", "jinja2", "werkzeug", "click", "celery", "redis",
+        "psycopg2", "mysql-connector-python", "beautifulsoup4", "lxml",
+        "selenium", "scrapy", "docker", "kubernetes", "ansible",
+        "salt", "vagrant", "packer", "terraform", "aws-cli",
+        "azure-cli", "google-cloud-python", "apache-airflow",
+        "jupyter", "ipython", "notebook", "pandas-profiling",
+        "plotly", "bokeh", "seaborn", "statsmodels", "sympy",
+        "networkx", "pygraphviz", "nltk", "spacy", "gensim",
+        "transformers", "huggingface-hub", "torch", "torchvision",
+        "torchaudio", "onnx", "protobuf", "grpcio", "msgpack",
+        "pickle", "dill", "cloudpickle", "arrow", "dateutil",
+        "pytz", "pendulum", "croniter", "schedule", "APScheduler",
+        "twisted", "asyncio", "aiohttp", "httpx", "urllib3",
+        "chardet", "certifi", "idna", "six", "future", "typing-extensions",
+        "enum34", "dataclasses", "pathlib2", "attr", "attrs",
+        "pydantic", "marshmallow", "voluptuous", "schema", "cerberus"
+    }
+    
+    if package_list_file and Path(package_list_file).exists():
+        try:
+            with open(package_list_file, 'r') as f:
+                known_packages.update(line.strip().lower() for line in f 
+                                     if line.strip())
+        except IOError:
+            pass
+    
+    return known_packages
+
+
+def detect_typosquatting(
+    installed_packages: Dict[str, str],
+    known_packages: Set[str],
+    levenshtein_threshold: int = 3,
+    similarity_threshold: float = 0.7,
+    verbose: bool = False
+) -> List[TyposquattingAlert]:
+    """
+    Detect potential typosquatting in installed packages.
+    
+    Args:
+        installed_packages: Dict of installed package names to versions
+        known_packages: Set of known legitimate package names
+        levenshtein_threshold: Max Levenshtein distance for flagging
+        similarity_threshold: Min similarity ratio for flagging
+        verbose: Enable verbose output
+        
+    Returns:
+        List of TyposquattingAlert objects
+    """
+    alerts = []
+    
+    for installed_name in installed_packages.keys():
+        installed_lower = installed_name.lower().replace("-", "").replace("_", "")
+        
+        best_match = None
+        best_distance = float('inf')
+        best_similarity = 0.0
+        
+        for known_name in known_packages:
+            known_lower = known_name.lower().replace("-", "").replace("_", "")
             
-        Returns:
-            List of TyposquatMatch objects if suspicious, empty otherwise
-        """
-        matches = []
-        pkg_lower = package_name.lower()
-
-        # Skip if already in legitimate packages
-        if pkg_lower in self.top_packages:
-            return matches
-
-        # Check against known common typos first
-        is_typo, legitimate = self._check_common_typo(package_name)
-        if is_typo:
-            match = TyposquatMatch(
-                suspicious_package=package_name,
-                similar_package=legitimate,
-                similarity_score=0.95,
-                detected_pattern="known_typo",
-                risk_level="HIGH",
-                timestamp=datetime.utcnow().isoformat() + "Z",
-                detection_method="common_typo_database"
+            distance = levenshtein_distance(installed_lower, known_lower)
+            similarity = calculate_similarity_ratio(installed_lower, known_lower)
+            
+            if distance <= levenshtein_threshold and similarity >= similarity_threshold:
+                if distance < best_distance:
+                    best_match = known_name
+                    best_distance = distance
+                    best_similarity = similarity
+        
+        if best_match:
+            risk_score = 1.0 - (best_distance / max(len(installed_lower), len(best_match)))
+            
+            alert_type = "high_risk"
+            if best_distance >= 2:
+                alert_type = "medium_risk"
+            if best_distance >= 3:
+                alert_type = "low_risk"
+            
+            alert = TyposquattingAlert(
+                package_name=installed_name,
+                suspicious_match=best_match,
+                levenshtein_distance=best_distance,
+                similarity_ratio=round(best_similarity, 4),
+                risk_score=round(risk_score, 4),
+                alert_type=alert_type,
+                timestamp=""
             )
-            matches.append(match)
-            self.detections.append(match)
-            return matches
-
-        # Fuzzy match against all top packages
-        for legitimate_pkg in self.top_packages:
-            similarity = self._calculate_similarity(pkg_lower, legitimate_pkg)
-
-            if similarity < self.similarity_threshold:
-                continue
-
-            # Detailed pattern analysis
-            detection_method = None
-            pattern_type = None
-
-            if self._check_homoglyph_substitution(pkg_lower, legitimate_pkg):
-                detection_method = "homoglyph_substitution"
-                pattern_type = "homoglyph"
-                risk_level = "CRITICAL"
-            elif self._check_transposition(pkg_lower, legitimate_pkg):
-                detection_method = "character_transposition"
-                pattern_type = "transposition"
-                risk_level = "HIGH"
-            elif self._check_insertion_deletion(pkg_lower, legitimate_pkg):
-                detection_method = "insertion_deletion"
-                pattern_type = "typo"
-                risk_level = "MEDIUM"
-            elif self._check_separator_variation(pkg_lower, legitimate_pkg):
-                detection_method = "separator_variation"
-                pattern_type = "separator"
-                risk_level = "LOW"
-            else:
-                # Generic fuzzy match
-                detection_method = "fuzzy_match"
-                pattern_type = "fuzzy"
-                risk_level = "MEDIUM" if similarity > 0.85 else "LOW"
-
-            # Only flag if high enough similarity or specific pattern detected
-            if similarity > self.similarity_threshold or risk_level in ["CRITICAL", "HIGH"]:
-                match = TyposquatMatch(
-                    suspicious_package=package_name,
-                    similar_package=legitimate_pkg,
-                    similarity_score=similarity,
-                    detected_pattern=pattern_type,
-                    risk_level=risk_level,
-                    timestamp=datetime.utcnow().isoformat() + "Z",
-                    detection_method=detection_method
-                )
-                matches.append(match)
-                self.detections.append(match)
-
-        return matches
-
-    def detect_batch(self, package_names: List[str]) -> Dict[str, List[TyposquatMatch]]:
-        """
-        Detect typosquats for multiple packages.
-        
-        Args:
-            package_names: List of package names to check
+            alerts.append(alert)
             
-        Returns:
-            Dict mapping package names to detection results
-        """
-        results = {}
-        for pkg in package_names:
-            matches = self.detect(pkg)
-            if matches:
-                results[pkg] = matches
-        return results
-
-    def get_detections(self) -> List[Dict]:
-        """Return all detections as JSON-serializable dicts."""
-        return [asdict(d) for d in self.detections]
-
-    def clear_detections(self):
-        """Clear detection history."""
-        self.detections = []
+            if verbose:
+                print(f"[{alert_type.upper()}] {installed_name} ~> {best_match} "
+                      f"(distance={best_distance}, similarity={best_similarity:.4f})")
+    
+    return alerts
 
 
-class SupplyChainMonitor:
-    """Monitors supply chain for typosquatting in real-time."""
-
-    def __init__(self, top_packages: List[str], similarity_threshold: float = 0.75):
-        """Initialize monitor with detector."""
-        self.detector = TyposquattingDetector(top_packages, similarity_threshold)
-        self.alert_queue: List[TyposquatMatch] = []
-        self.processing_window_seconds = 60
-
-    def process_new_package(self, package_name: str, publish_timestamp: str = None) -> Dict:
-        """
-        Process newly published package.
+def check_common_typosquatting_patterns(package_name: str) -> Tuple[bool, str]:
+    """
+    Check for common typosquatting patterns.
+    
+    Args:
+        package_name: Package name to check
         
-        Args:
-            package_name: Name of newly published package
-            publish_timestamp: ISO format timestamp of publication
-            
-        Returns:
-            Processing result with detections
-        """
-        if publish_timestamp is None:
-            publish_timestamp = datetime.utcnow().isoformat() + "Z"
+    Returns:
+        Tuple of (is_suspicious, pattern_description)
+    """
+    name_lower = package_name.lower()
+    
+    suspicious_patterns = {
+        "l_" in name_lower or "_l" in name_lower: "Contains 'l' (number confusion)",
+        "0" in name_lower and "o" in name_lower: "Mixes '0' and 'o' (confusion)",
+        "1" in name_lower and "i" in name_lower: "Mixes '1' and 'i' (confusion)",
+        len(name_lower) > 50: "Suspiciously long name",
+        name_lower.count("-") > 3: "Excessive hyphens",
+        name_lower.count("_") > 3: "Excessive underscores",
+    }
+    
+    for pattern_match, description in suspicious_patterns.items():
+        if pattern_match:
+            return True, description
+    
+    return False, ""
 
-        matches = self.detector.detect(package_name)
 
-        result = {
-            "package_name": package_name,
-            "publish_timestamp": publish_timestamp,
-            "processing_timestamp": datetime.utcnow().isoformat() + "Z",
-            "detections_found": len(matches) > 0,
-            "detection_count": len(matches),
-            "matches": [asdict(m) for m in matches],
-            "processing_window_seconds": self.processing_window_seconds
-        }
-
-        if matches:
-            self.alert_queue.extend(matches)
-
-        return result
-
-    def get_alerts(self, min_risk_level: str = "MEDIUM") -> List[Dict]:
-        """
-        Get pending alerts filtered by risk level.
+def monitor_and_alert(
+    installed_packages: Dict[str, str],
+    known_packages: Set[str],
+    levenshtein_threshold: int = 3,
+    similarity_threshold: float = 0.7,
+    output_format: str = "json",
+    output_file: str = None
+) -> str:
+    """
+    Monitor packages and generate alerts.
+    
+    Args:
+        installed_packages: Dict of installed packages
+        known_packages: Set of known legitimate packages
+        levenshtein_threshold: Levenshtein distance threshold
+        similarity_threshold: Similarity ratio threshold
+        output_format: Output format ('json' or 'text')
+        output_file: Optional output file path
         
-        Args:
-            min_risk_level: Minimum risk level (LOW, MEDIUM, HIGH, CRITICAL)
-            
-        Returns:
-            Filtered alert list
-        """
-        risk_levels = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
-        min_severity = risk_levels.get(min_risk_level, 2)
+    Returns:
+        Formatted output string
+    """
+    alerts = detect_typosquatting(
+        installed_packages,
+        known_packages,
+        levenshtein_threshold,
+        similarity_threshold
+    )
+    
+    high_risk = [a for a in alerts if a.alert_type == "high_risk"]
+    medium_risk = [a for a in alerts if a.alert_type == "medium_risk"]
+    low_risk = [a for a in alerts if a.alert_type == "low_risk"]
+    
+    output = {
+        "summary": {
+            "total_installed": len(installed_packages),
+            "total_alerts": len(alerts),
+            "high_risk": len(high_risk),
+            "medium_risk": len(medium_risk),
+            "low_risk": len(low_risk)
+        },
+        "alerts": [asdict(a) for a in alerts]
+    }
+    
+    if output_format == "json":
+        result = json.dumps(output, indent=2)
+    else:
+        result = format_text_output(output)
+    
+    if output_file:
+        with open(output_file, 'w') as f:
+            f.write(result)
+    
+    return result
 
-        filtered = [
-            asdict(alert) for alert in self.alert_queue
-            if risk_levels.get(alert.risk_level, 0) >= min_severity
-        ]
-        return filtered
 
-    def acknowledge_alerts(self, alert_hashes: List[str] = None):
-        """
-        Acknowledge and remove alerts from queue.
+def format_text_output(data: Dict) -> str:
+    """
+    Format monitoring output as readable text.
+    
+    Args:
+        data: Output dictionary
         
-        Args:
-            alert_hashes: List of alert hashes to acknowledge, or None for all
-        """
-        if alert_hashes is None:
-            self.alert_queue = []
-        else:
-            hash_set = set(alert_hashes)
-            self.alert_queue = [
-                alert for alert in self.alert_queue
-                if self._hash_alert(alert) not in hash_set
-            ]
-
-    @staticmethod
-    def _hash_alert(alert: TyposquatMatch) -> str:
-        """Generate hash of alert for identification."""
-        alert_str = f"{alert.suspicious_package}:{alert.similar_package}"
-        return hashlib.sha256(alert_str.encode()).hexdigest()[:12]
-
-
-def load_top_packages() -> List[str]:
-    """Load or generate top 10k package names for demonstration."""
-    # Pre-populated top packages (subset for demo)
-    top_packages = [
-        'django', 'flask', 'numpy', 'pandas', 'requests', 'pytorch', 
-        'tensorflow', 'scipy', 'scikit-learn', 'matplotlib', 'python-dateutil',
-        'pytz', 'sqlalchemy', 'pillow', 'beautifulsoup4', 'lxml', 'celery',
-        'redis', 'pytest', 'black', 'flake8', 'mypy', 'setuptools', 'wheel',
-        'pip', 'virtualenv', 'poetry', 'tox', 'coverage', 'sphinx', 'docutils',
-        'jinja2', 'markupsafe', 'werkzeug', 'click', 'colorama', 'tqdm',
-        'pydantic', 'fastapi', 'starlette', 'uvicorn', 'httpx', 'aiohttp',
-        'websockets', 'asyncio', 'trio', 'gevent', 'eventlet', 'twisted',
-        'scrapy', 'selenium', 'playwright', 'pytest-asyncio', 'pytest-cov',
-        'paramiko', 'cryptography', 'pycryptodome', 'bcrypt', 'pyjwt',
-        'pyyaml', 'toml', 'configparser', 'pathlib', 'shutil', 'json',
-        'xml', 'csv', 'sqlite3', 'psycopg2', 'pymysql', 'pyodbc', 'cx-oracle',
-        'sqlparse', 'alembic', 'marshmallow', 'cerberus', 'voluptuous',
-        'pyarrow', 'polars', 'dask', 'numba', 'cython', 'cffi',
-        'opencv-python', 'pillow-simd', 'scikit-image', 'imageio',
-        'librosa', 'audioread', 'soundfile', 'pydub', 'simpleaudio',
-        'pygame', 'pyglet', 'arcade', 'panda3d', 'ursina', 'vispy',
-        'networkx', 'igraph', 'pyvis', 'plotly', 'bokeh', 'seaborn',
-        'statsmodels', 'sympy', 'mpmath', 'gmpy2', 'decimal', 'fractions',
+    Returns:
+        Formatted text string
+    """
+    lines = [
+        "=" * 70,
+        "TYPOSQUATTING DETECTION REPORT",
+        "=" * 70,
+        f"Total Installed Packages: {data['summary']['total_installed']}",
+        f"Total Alerts: {data['summary']['total_alerts']}",
+        f"  - High Risk: {data['summary']['high_risk']}",
+        f"  - Medium Risk: {data['summary']['medium_risk']}",
+        f"  - Low Risk: {data['summary']['low_risk']}",
+        "=" * 70,
     ]
-    return top_packages
+    
+    if data['alerts']:
+        lines.append("\nDETECTED TYPOSQUATTING:\n")
+        for alert in data['alerts']:
+            lines.append(f"[{alert['alert_type'].upper()}] {alert['package_name']}")
+            lines.append(f"  Suspicious Match: {alert['suspicious_match']}")
+            lines.append(f"  Distance: {alert['levenshtein_distance']}")
+            lines.append(f"  Similarity: {alert['similarity_ratio']}")
+            lines.append(f"  Risk Score: {alert['risk_score']}")
+            lines.append("")
+    else:
+        lines.append("\nNo typosquatting detected.")
+    
+    lines.append("=" * 70)
+    return "\n".join(lines)
 
 
 def main():
-    """Main CLI entry point."""
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="OSS Supply Chain Typosquatting Detector - Detects typosquat packages "
-                    "within 60s of publish using fuzzy matching and pattern analysis",
+        description="Typosquatting detector for installed Python packages",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --package "dajngo"
-  %(prog)s --batch "django,flask,numpy" --threshold 0.80
-  %(prog)s --monitor --watch-file packages.json
-  %(prog)s --risk-level HIGH --output alerts.json
+  python3 solution.py --scan
+  python3 solution.py --scan --levenshtein-threshold 2 --similarity-threshold 0.8
+  python3 solution.py --scan --output-format json --output-file alerts.json
+  python3 solution.py --known-packages /path/to/package_list.txt --scan
         """
     )
-
+    
     parser.add_argument(
-        '--package',
-        type=str,
-        help='Single package name to check for typosquatting'
+        "--scan",
+        action="store_true",
+        help="Scan installed packages for typosquatting"
     )
-
+    
     parser.add_argument(
-        '--batch',
-        type=str,
-        help='Comma-separated list of package names to check'
+        "--levenshtein-threshold",
+        type=int,
+        default=3,
+        help="Maximum Levenshtein distance for flagging (default: 3)"
     )
-
+    
     parser.add_argument(
-        '--threshold',
+        "--similarity-threshold",
         type=float,
-        default=0.75,
-        help='Similarity threshold for fuzzy matching (0.0-1.0, default: 0.75)'
+        default=0.7,
+        help="Minimum similarity ratio for flagging (default: 0.7)"
     )
-
+    
     parser.add_argument(
-        '--monitor',
-        action='store_true',
-        help='Enable real-time monitoring mode (simulated with 60s window)'
-    )
-
-    parser.add_argument(
-        '--watch-file',
+        "--known-packages",
         type=str,
-        help='JSON file to watch for new packages (monitoring mode)'
+        help="Path to file with known legitimate package names"
     )
-
+    
     parser.add_argument(
-        '--risk-level',
+        "--output-format",
+        choices=["json", "text"],
+        default="text",
+        help="Output format (default: text)"
+    )
+    
+    parser.add_argument(
+        "--output-file",
         type=str,
-        choices=['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'],
-        default='MEDIUM',
-        help='Minimum risk level to report (default: MEDIUM)'
+        help="Write output to file"
     )
-
+    
     parser.add_argument(
-        '--output',
-        type=str,
-        help='Output file for results (JSON format)'
+        "--verbose",
+        action="store_true",
+        help="Enable verbose output"
     )
-
+    
     parser.add_argument(
-        '--verbose',
-        action='store_true',
-        help='Verbose output with detailed analysis'
+        "--demo",
+        action="store_true",
+        help="Run demo with sample packages"
     )
-
+    
     args = parser.parse_args()
-
-    # Load top packages
-    top_packages = load_top_packages()
-
-    if args.monitor:
-        # Real-time monitoring mode
-        monitor = SupplyChainMonitor(top_packages, args.threshold)
-        
-        print(f"[*] Starting Supply Chain Monitor (threshold: {args.threshold})")
-        print(f"[*] Monitoring window: 60 seconds")
-        print(f"[*] Minimum risk level: {args.risk_level}")
-        print(f"[*] Known legitimate packages: {len(top_packages)}")
-
-        # Demo: simulate incoming packages
-        demo_packages = [
-            'dajngo',      # typo
-            'falsk',       # typo
-            'nunpy',       # typo
-            'request',     # typo
-            'pytorch-pro', # variant
-            'legit-package', # legitimate
-            'djnago',      # typo
-            'flaks',       # typo
-            'numpy-plus',  # suspicious
-        ]
-
-        results = []
-        for pkg in demo_packages:
-            result = monitor.process_new_package(pkg)
-            results.append(result)
-
-            if result['detections_found']:
-                print(f"[!] ALERT: Package '{pkg}' flagged as potential typosquat")
-                for match in result['matches']:
-                    print(f"    - Matches: {match['similar_package']} "
-                          f"(similarity: {match['similarity_score']:.2%}, "
-                          f"risk: {match['risk_level']}, "
-                          f"method: {match['detection_method']})")
-            else:
-                print(f"[+] Package '{pkg}' appears legitimate")
-
-        # Get filtered alerts
-        alerts = monitor.get_alerts(args.risk_level)
-        print(f"\n[*] Total alerts at {args.risk_level}+ risk level: {len(alerts)}")
-
-        output = {
-            "monitor_type": "typosquatting_detector",
-            "monitoring_window_seconds": 60,
-            "packages_checked": len(demo_packages),
-            "known_packages": len(top_packages),
-            "similarity_threshold": args.threshold,
-            "results": results,
-            "alerts": alerts,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
-        }
-
+    
+    if args.demo:
+        demo_mode(args)
+    elif args.scan:
+        scan_mode(args)
     else:
-        # Single/batch check mode
-        detector = TyposquattingDetector(top_packages, args.threshold)
-        packages_to_check = []
+        parser.print_help()
+        sys.exit(1)
 
-        if args.package:
-            packages_to_check = [args.package]
-        elif args.batch:
-            packages_to_check = [p.strip() for p in args.batch.split(',')]
-        else:
-            # Demo mode with sample packages
-            packages_to_check = [
-                'dajngo', 'falsk', 'nunpy', 'request', 'pytorch-pro',
-                'scypy', 'tensorflw', 'pandas-pro', 'reqests'
-            ]
-            print("[*] Running in demo mode with sample packages")
 
-        results_list = []
-        total_detections = 0
+def demo_mode(args):
+    """Run demo with sample packages."""
+    print("[*] Running in DEMO mode with sample packages")
+    print()
+    
+    demo_packages = {
+        "requests": "2.31.0",
+        "numpy": "1.24.3",
+        "pandas": "2.0.3",
+        "django": "4.2.0",
+        "flask": "2.3.2",
+        "rquests": "1.0.0",
+        "numppy": "1.0.0",
+        "panda": "1.0.0",
+        "djang": "1.0.0",
+        "flaks": "1.0.0",
+        "requestss": "1.0.0",
+        "req_uests": "1.0.0",
+    }
+    
+    known = load_known_packages(args.known_packages)
+    
+    print("[*] Detecting typosquatting...")
+    output = monitor_and_alert(
+        demo_packages,
+        known,
+        levenshtein_threshold=args.levenshtein_threshold,
+        similarity_threshold=args.similarity_threshold,
+        output_format=args.output_format,
+        output_file=args.output_file
+    )
+    
+    print(output)
 
-        for pkg in packages_to_check:
-            matches = detector.detect(pkg)
-            
-            pkg_result = {
-                "package": pkg,
-                "suspicious": len(matches) > 0,
-                "detection_count": len(matches),
-                "matches": [asdict(m) for m in matches]
-            }
-            results_list.append(pkg_result)
-            total_detections += len(matches)
 
-            if args.verbose and len(matches) > 0:
-                print(f"\n[!] '{pkg}' - {len(matches)} detection(s):")
-                for match in matches:
-                    print(f"    Matches: {match.similar_package}")
-                    print(f"    Similarity: {match.similarity_score:.2%}")
-                    print(f"    Pattern: {match.detected_pattern}")
-                    print(f"    Risk: {match.risk_level}")
-                    print(f"    Method: {match.detection_method}")
-            elif len(matches) > 0:
-                print(f"[!] '{pkg}' - {len(matches)} match(es) found")
-            else:
-                print(f"[+] '{pkg}' - OK")
-
-        output = {
-            "detector_type": "typosquatting",
-            "packages_scanned": len(packages_to_check),
-            "total_detections": total_detections,
-            "known_packages": len(top_packages),
-            "similarity_threshold": args.threshold,
-            "results": results_list,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
-        }
-
-    # Output results
-    if args.output:
-        with open(args.output, 'w') as f:
-            json.dump(output, f, indent=2)
-        print(f"\n[+] Results written to {args.output}")
-    else:
-        print("\n" + "=" * 60)
-        print(json.dumps(output, indent=2))
-
-    return 0
+def scan_mode(args):
+    """Scan actual installed packages."""
+    print("[*] Scanning installed packages...")
+    
+    installed = get_installed_packages()
+    
+    if not installed:
+        print("[!] No packages found or pip not available")
+        sys.exit(1)
+    
+    known = load_known_packages(args.known_packages)
+    
+    if args.verbose:
+        print(f"[*] Found {len(installed)} installed packages")
+        print(f"[*] Checking against {len(known)} known packages")
+        print()
+    
+    output = monitor_and_alert(
+        installed,
+        known,
+        levenshtein_threshold=args.levenshtein_threshold,
+        similarity_threshold=args.similarity_threshold,
+        output_format=args.output_format,
+        output_file=args.output_file
+    )
+    
+    print(output)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
