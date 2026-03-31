@@ -3,19 +3,18 @@
 # Task:    Implement core functionality
 # Mission: Fedware: Government apps that spy harder than the apps they ban
 # Agent:   @aria
-# Date:    2026-03-31T10:29:38.253Z
+# Date:    2026-03-31T10:29:41.071Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Fedware: Government apps that spy harder than the apps they ban
-MISSION: Engineering - Analyze and detect suspicious telemetry/permissions in government applications
-AGENT: @aria (SwarmPulse Network)
+TASK: Implement core functionality for Fedware analysis
+MISSION: Government apps that spy harder than the apps they ban
+AGENT: @aria (SwarmPulse network)
 DATE: 2024
 
-This tool analyzes Android/iOS applications for suspicious telemetry, permission requests,
-and data collection patterns that exceed stated privacy policies. It implements detection
-of potential surveillance capabilities in government-distributed applications.
+This tool analyzes government applications for suspicious telemetry patterns,
+permission requests, and data exfiltration indicators that exceed expected bounds.
 """
 
 import argparse
@@ -25,361 +24,441 @@ import sys
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
-from typing import List, Dict, Any, Optional
-import hashlib
+from typing import List, Dict, Any
 import re
-from collections import defaultdict
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+from pathlib import Path
 
 
-class RiskLevel(Enum):
-    """Risk severity levels for detected issues."""
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
+class TelemetryLevel(Enum):
+    """Risk levels for telemetry analysis"""
     LOW = "low"
-    INFO = "info"
-
-
-class PermissionCategory(Enum):
-    """Categories of permissions and their risk profiles."""
-    LOCATION = "location"
-    CONTACTS = "contacts"
-    CAMERA = "camera"
-    MICROPHONE = "microphone"
-    STORAGE = "storage"
-    PHONE_STATE = "phone_state"
-    SMS = "sms"
-    CALENDAR = "calendar"
-    BIOMETRIC = "biometric"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
 
 
 @dataclass
 class Permission:
-    """Represents an application permission."""
+    """Represents an app permission"""
     name: str
-    category: PermissionCategory
-    required: bool
-    risk_score: float
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            'name': self.name,
-            'category': self.category.value,
-            'required': self.required,
-            'risk_score': self.risk_score
-        }
+    category: str
+    risk_level: str
+    description: str
 
 
 @dataclass
 class TelemetryEndpoint:
-    """Represents a detected telemetry/analytics endpoint."""
+    """Represents a telemetry endpoint"""
     url: str
     method: str
-    data_fields: List[str]
     frequency: str
+    data_types: List[str]
+    encryption: bool
     suspicious: bool
-    reason: str
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
 
 
 @dataclass
-class SecurityFinding:
-    """Represents a security finding in the analysis."""
-    title: str
-    description: str
-    risk_level: RiskLevel
-    finding_type: str
-    evidence: List[str]
-    remediation: str
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            'title': self.title,
-            'description': self.description,
-            'risk_level': self.risk_level.value,
-            'finding_type': self.finding_type,
-            'evidence': self.evidence,
-            'remediation': self.remediation
-        }
-
-
-@dataclass
-class ApplicationAnalysis:
-    """Complete analysis result for an application."""
+class AnalysisResult:
+    """Complete analysis result"""
     app_name: str
-    app_id: str
-    version: str
-    analysis_timestamp: str
-    permissions: List[Permission]
-    telemetry_endpoints: List[TelemetryEndpoint]
-    findings: List[SecurityFinding]
-    overall_risk_score: float
-    hash_signature: str
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            'app_name': self.app_name,
-            'app_id': self.app_id,
-            'version': self.version,
-            'analysis_timestamp': self.analysis_timestamp,
-            'permissions': [p.to_dict() for p in self.permissions],
-            'telemetry_endpoints': [t.to_dict() for t in self.telemetry_endpoints],
-            'findings': [f.to_dict() for f in self.findings],
-            'overall_risk_score': self.overall_risk_score,
-            'hash_signature': self.hash_signature
-        }
-
-
-class PermissionDatabase:
-    """Database of known suspicious permission patterns."""
-
-    def __init__(self):
-        """Initialize permission risk mappings."""
-        self.high_risk_permissions = {
-            'android.permission.ACCESS_FINE_LOCATION': (PermissionCategory.LOCATION, 0.95),
-            'android.permission.ACCESS_COARSE_LOCATION': (PermissionCategory.LOCATION, 0.85),
-            'android.permission.CAMERA': (PermissionCategory.CAMERA, 0.90),
-            'android.permission.RECORD_AUDIO': (PermissionCategory.MICROPHONE, 0.95),
-            'android.permission.READ_CONTACTS': (PermissionCategory.CONTACTS, 0.85),
-            'android.permission.READ_PHONE_STATE': (PermissionCategory.PHONE_STATE, 0.75),
-            'android.permission.READ_SMS': (PermissionCategory.SMS, 0.90),
-            'android.permission.READ_CALL_LOG': (PermissionCategory.PHONE_STATE, 0.80),
-            'android.permission.READ_CALENDAR': (PermissionCategory.CALENDAR, 0.70),
-            'android.permission.BODY_SENSORS': (PermissionCategory.BIOMETRIC, 0.80),
-            'android.permission.READ_EXTERNAL_STORAGE': (PermissionCategory.STORAGE, 0.60),
-            'com.android.permission.MONITOR_LOCATION': (PermissionCategory.LOCATION, 0.98),
-            'android.permission.ACCESS_BACKGROUND_LOCATION': (PermissionCategory.LOCATION, 0.99),
-        }
-
-    def get_risk_score(self, permission_name: str) -> Optional[tuple]:
-        """Get risk category and score for a permission."""
-        return self.high_risk_permissions.get(permission_name)
-
-
-class TelemetryAnalyzer:
-    """Analyzes telemetry endpoints for suspicious patterns."""
-
-    def __init__(self):
-        """Initialize telemetry patterns."""
-        self.suspicious_patterns = [
-            r'https?://[a-z0-9.-]*(analytics|telemetry|tracking|beacon|metrics)[a-z0-9.-]*',
-            r'https?://.*/(api/|v\d+/)(events|logs|telemetry|track)',
-            r'https?://[a-z0-9.-]*analytics[a-z0-9.-]*\.[a-z]+',
-            r'https?://.*?/collect',
-            r'https?://.*?/report',
-            r'https?://[a-z0-9.-]*ad[a-z0-9.-]*\.[a-z]+',
-        ]
-        self.data_field_patterns = {
-            'location': ['latitude', 'longitude', 'location', 'gps', 'coordinates', 'address'],
-            'device_id': ['device_id', 'imei', 'android_id', 'serial', 'hardware_id'],
-            'user_data': ['phone_number', 'email', 'user_id', 'account', 'name'],
-            'activity': ['apps_installed', 'app_usage', 'screen_time', 'browsing_history'],
-        }
-
-    def is_suspicious_endpoint(self, url: str) -> bool:
-        """Check if URL matches suspicious telemetry patterns."""
-        for pattern in self.suspicious_patterns:
-            if re.search(pattern, url, re.IGNORECASE):
-                return True
-        return False
-
-    def extract_data_fields(self, field_names: List[str]) -> Dict[str, List[str]]:
-        """Categorize data fields being sent."""
-        categorized = defaultdict(list)
-        for field in field_names:
-            for category, patterns in self.data_field_patterns.items():
-                if any(p.lower() in field.lower() for p in patterns):
-                    categorized[category].append(field)
-                    break
-        return dict(categorized)
+    app_version: str
+    timestamp: str
+    risk_score: float
+    risk_level: TelemetryLevel
+    total_permissions: int
+    high_risk_permissions: int
+    telemetry_endpoints: List[Dict[str, Any]]
+    suspicious_patterns: List[str]
+    recommendations: List[str]
+    raw_data: Dict[str, Any]
 
 
 class FedwareAnalyzer:
-    """Main analyzer for detecting fedware characteristics."""
+    """Core analyzer for government application telemetry patterns"""
 
-    def __init__(self):
-        """Initialize analyzers."""
-        self.permission_db = PermissionDatabase()
-        self.telemetry_analyzer = TelemetryAnalyzer()
+    # Suspicious telemetry patterns
+    SUSPICIOUS_PATTERNS = {
+        r".*location.*tracking.*": "Location tracking enabled",
+        r".*device.*identifier.*": "Device unique identifier collection",
+        r".*contact.*exfiltration.*": "Contact list exfiltration pattern",
+        r".*call.*log.*monitor.*": "Call log monitoring detected",
+        r".*sms.*intercept.*": "SMS message interception",
+        r".*clipboard.*monitor.*": "Clipboard monitoring active",
+        r".*keystroke.*capture.*": "Keystroke capture detected",
+        r".*microphone.*continuous.*": "Continuous microphone access",
+        r".*camera.*always.*on.*": "Camera always-on pattern",
+        r".*background.*sync.*unrestricted.*": "Unrestricted background sync",
+        r".*encryption.*bypass.*": "Encryption bypass capability",
+        r".*root.*access.*required.*": "Root/elevated privileges required",
+    }
 
-    def analyze_permissions(self, permissions_data: List[Dict[str, Any]]) -> tuple:
-        """Analyze declared permissions and return findings."""
-        permissions = []
-        high_risk_count = 0
-        total_risk = 0.0
+    # High-risk permission categories
+    HIGH_RISK_PERMISSIONS = {
+        "location": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"],
+        "contacts": ["READ_CONTACTS", "WRITE_CONTACTS"],
+        "calendar": ["READ_CALENDAR", "WRITE_CALENDAR"],
+        "microphone": ["RECORD_AUDIO"],
+        "camera": ["CAMERA"],
+        "sms": ["READ_SMS", "SEND_SMS", "RECEIVE_SMS"],
+        "call": ["READ_CALL_LOG", "PROCESS_OUTGOING_CALLS"],
+        "clipboard": ["READ_CLIPBOARD"],
+        "sensors": ["BODY_SENSORS"],
+    }
 
-        for perm_data in permissions_data:
-            perm_name = perm_data.get('name')
-            required = perm_data.get('required', False)
+    def __init__(self, verbose: bool = False):
+        self.verbose = verbose
+        self.logger = self._setup_logger()
 
-            risk_info = self.permission_db.get_risk_score(perm_name)
-            if risk_info:
-                category, risk_score = risk_info
-                permissions.append(Permission(
-                    name=perm_name,
-                    category=category,
-                    required=required,
-                    risk_score=risk_score
-                ))
-                total_risk += risk_score
-                if risk_score > 0.8:
-                    high_risk_count += 1
-            else:
-                permissions.append(Permission(
-                    name=perm_name,
-                    category=PermissionCategory.STORAGE,
-                    required=required,
-                    risk_score=0.3
-                ))
-                total_risk += 0.3
+    def _setup_logger(self) -> logging.Logger:
+        """Setup logging configuration"""
+        logger = logging.getLogger(__name__)
+        handler = logging.StreamHandler(sys.stdout)
+        formatter = logging.Formatter(
+            fmt='%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG if self.verbose else logging.INFO)
+        return logger
 
-        avg_risk = total_risk / len(permissions) if permissions else 0.0
-        return permissions, high_risk_count, avg_risk
-
-    def analyze_telemetry(self, endpoints_data: List[Dict[str, Any]]) -> List[TelemetryEndpoint]:
-        """Analyze telemetry endpoints."""
-        telemetry_endpoints = []
-
-        for endpoint_data in endpoints_data:
-            url = endpoint_data.get('url', '')
-            method = endpoint_data.get('method', 'POST')
-            data_fields = endpoint_data.get('data_fields', [])
-            frequency = endpoint_data.get('frequency', 'unknown')
-
-            is_suspicious = self.telemetry_analyzer.is_suspicious_endpoint(url)
-            categorized_fields = self.telemetry_analyzer.extract_data_fields(data_fields)
+    def analyze_application(
+        self,
+        app_name: str,
+        app_version: str,
+        permissions: List[Dict[str, str]],
+        telemetry_endpoints: List[Dict[str, Any]],
+        app_behaviors: List[str]
+    ) -> AnalysisResult:
+        """
+        Analyze government application for suspicious telemetry patterns
+        
+        Args:
+            app_name: Application name
+            app_version: Application version
+            permissions: List of permission dictionaries
+            telemetry_endpoints: List of telemetry endpoint dictionaries
+            app_behaviors: List of observed behavior strings
             
-            reason = ''
-            if is_suspicious:
-                if categorized_fields.get('location'):
-                    reason = 'Sends location data to analytics endpoint'
-                elif categorized_fields.get('activity'):
-                    reason = 'Tracks user activity and app usage'
-                elif categorized_fields.get('device_id'):
-                    reason = 'Device fingerprinting for tracking'
-                else:
-                    reason = 'Suspicious telemetry pattern detected'
+        Returns:
+            AnalysisResult with comprehensive findings
+        """
+        self.logger.info(f"Starting analysis of {app_name} v{app_version}")
 
-            telemetry_endpoints.append(TelemetryEndpoint(
-                url=url,
-                method=method,
-                data_fields=data_fields,
-                frequency=frequency,
-                suspicious=is_suspicious,
-                reason=reason
+        # Analyze permissions
+        high_risk_perms = self._analyze_permissions(permissions)
+        
+        # Analyze telemetry endpoints
+        suspicious_endpoints = self._analyze_endpoints(telemetry_endpoints)
+        
+        # Detect suspicious patterns
+        detected_patterns = self._detect_suspicious_patterns(app_behaviors)
+        
+        # Calculate risk score
+        risk_score, risk_level = self._calculate_risk_score(
+            len(high_risk_perms),
+            len(suspicious_endpoints),
+            len(detected_patterns),
+            len(permissions)
+        )
+        
+        # Generate recommendations
+        recommendations = self._generate_recommendations(
+            high_risk_perms,
+            suspicious_endpoints,
+            detected_patterns
+        )
+
+        result = AnalysisResult(
+            app_name=app_name,
+            app_version=app_version,
+            timestamp=datetime.utcnow().isoformat(),
+            risk_score=risk_score,
+            risk_level=risk_level,
+            total_permissions=len(permissions),
+            high_risk_permissions=len(high_risk_perms),
+            telemetry_endpoints=[asdict(ep) for ep in suspicious_endpoints],
+            suspicious_patterns=detected_patterns,
+            recommendations=recommendations,
+            raw_data={
+                "permissions": permissions,
+                "all_endpoints": [asdict(ep) for ep in self._convert_endpoints(telemetry_endpoints)],
+                "behaviors": app_behaviors
+            }
+        )
+
+        self.logger.info(f"Analysis complete. Risk score: {risk_score:.1f} ({risk_level.value})")
+        return result
+
+    def _analyze_permissions(self, permissions: List[Dict[str, str]]) -> List[Permission]:
+        """Identify high-risk permissions"""
+        high_risk = []
+        
+        for perm in permissions:
+            perm_name = perm.get("name", "").upper()
+            
+            for category, high_risk_perms in self.HIGH_RISK_PERMISSIONS.items():
+                if any(hr in perm_name for hr in high_risk_perms):
+                    high_risk.append(Permission(
+                        name=perm_name,
+                        category=category,
+                        risk_level="high",
+                        description=perm.get("description", "")
+                    ))
+                    self.logger.debug(f"Flagged high-risk permission: {perm_name}")
+        
+        return high_risk
+
+    def _analyze_endpoints(self, endpoints: List[Dict[str, Any]]) -> List[TelemetryEndpoint]:
+        """Analyze telemetry endpoints for suspicious characteristics"""
+        suspicious = []
+        
+        converted_endpoints = self._convert_endpoints(endpoints)
+        
+        for ep in converted_endpoints:
+            suspicious_score = 0
+            
+            # Check frequency
+            if ep.frequency.lower() in ["continuous", "always", "realtime"]:
+                suspicious_score += 2
+            elif ep.frequency.lower() in ["frequent", "periodic"]:
+                suspicious_score += 1
+            
+            # Check encryption
+            if not ep.encryption:
+                suspicious_score += 3
+                self.logger.debug(f"Unencrypted endpoint detected: {ep.url}")
+            
+            # Check data types
+            sensitive_data = ["location", "contacts", "messages", "call_logs", "microphone", "camera"]
+            if any(sd in str(ep.data_types).lower() for sd in sensitive_data):
+                suspicious_score += 2
+            
+            # Check URL patterns for suspicious domains
+            if self._is_suspicious_domain(ep.url):
+                suspicious_score += 2
+                self.logger.debug(f"Suspicious domain detected: {ep.url}")
+            
+            if suspicious_score >= 3:
+                ep.suspicious = True
+                suspicious.append(ep)
+        
+        return suspicious
+
+    def _is_suspicious_domain(self, url: str) -> bool:
+        """Check if domain exhibits suspicious characteristics"""
+        suspicious_patterns = [
+            r".*analytics.*",
+            r".*tracking.*",
+            r".*telemetry.*",
+            r".*data.*collection.*",
+            r".*behavioral.*",
+            r".*intelligence.*",
+            r".*listener.*",
+            r".*monitor.*",
+            r".*spy.*",
+            r".*log.*server.*",
+        ]
+        
+        url_lower = url.lower()
+        return any(re.match(pattern, url_lower) for pattern in suspicious_patterns)
+
+    def _detect_suspicious_patterns(self, behaviors: List[str]) -> List[str]:
+        """Detect suspicious patterns in app behaviors"""
+        detected = []
+        
+        for behavior in behaviors:
+            behavior_lower = behavior.lower()
+            for pattern, description in self.SUSPICIOUS_PATTERNS.items():
+                if re.match(pattern, behavior_lower):
+                    detected.append(description)
+                    self.logger.debug(f"Pattern detected: {description} from '{behavior}'")
+        
+        # Remove duplicates while preserving order
+        return list(dict.fromkeys(detected))
+
+    def _calculate_risk_score(
+        self,
+        high_risk_perms: int,
+        suspicious_endpoints: int,
+        suspicious_patterns: int,
+        total_permissions: int
+    ) -> tuple[float, TelemetryLevel]:
+        """Calculate overall risk score"""
+        
+        # Weighted scoring
+        perm_score = (high_risk_perms / max(total_permissions, 1)) * 30
+        endpoint_score = min(suspicious_endpoints * 15, 30)
+        pattern_score = min(suspicious_patterns * 10, 30)
+        
+        total_score = perm_score + endpoint_score + pattern_score
+        total_score = min(total_score, 100)
+        
+        if total_score >= 80:
+            risk_level = TelemetryLevel.CRITICAL
+        elif total_score >= 60:
+            risk_level = TelemetryLevel.HIGH
+        elif total_score >= 40:
+            risk_level = TelemetryLevel.MEDIUM
+        else:
+            risk_level = TelemetryLevel.LOW
+        
+        return total_score, risk_level
+
+    def _convert_endpoints(self, endpoints: List[Dict[str, Any]]) -> List[TelemetryEndpoint]:
+        """Convert endpoint dictionaries to TelemetryEndpoint objects"""
+        converted = []
+        
+        for ep in endpoints:
+            converted.append(TelemetryEndpoint(
+                url=ep.get("url", ""),
+                method=ep.get("method", "GET"),
+                frequency=ep.get("frequency", "unknown"),
+                data_types=ep.get("data_types", []),
+                encryption=ep.get("encrypted", False),
+                suspicious=False
             ))
+        
+        return converted
 
-        return telemetry_endpoints
+    def _generate_recommendations(
+        self,
+        high_risk_perms: List[Permission],
+        suspicious_endpoints: List[TelemetryEndpoint],
+        detected_patterns: List[str]
+    ) -> List[str]:
+        """Generate security recommendations"""
+        recommendations = []
+        
+        if high_risk_perms:
+            recommendations.append(
+                f"Review {len(high_risk_perms)} high-risk permissions: "
+                f"{', '.join(p.name for p in high_risk_perms[:3])}"
+            )
+        
+        if suspicious_endpoints:
+            recommendations.append(
+                f"Audit {len(suspicious_endpoints)} suspicious telemetry endpoints"
+            )
+            unencrypted = [ep for ep in suspicious_endpoints if not ep.encryption]
+            if unencrypted:
+                recommendations.append(
+                    f"Enforce encryption for {len(unencrypted)} unencrypted endpoints"
+                )
+        
+        if detected_patterns:
+            recommendations.append(
+                f"Investigate {len(detected_patterns)} suspicious behavioral patterns"
+            )
+            recommendations.append(
+                "Implement runtime permission monitoring and user consent mechanisms"
+            )
+        
+        if not recommendations:
+            recommendations.append("No critical issues detected")
+        
+        return recommendations
 
-    def generate_findings(self, app_name: str, permissions: List[Permission],
-                         telemetry_endpoints: List[TelemetryEndpoint],
-                         high_risk_perm_count: int) -> List[SecurityFinding]:
-        """Generate security findings based on analysis."""
-        findings = []
+    def export_json(self, result: AnalysisResult, output_file: str) -> None:
+        """Export analysis result to JSON file"""
+        output_dict = asdict(result)
+        output_dict["risk_level"] = result.risk_level.value
+        
+        with open(output_file, 'w') as f:
+            json.dump(output_dict, f, indent=2)
+        
+        self.logger.info(f"Analysis exported to {output_file}")
 
-        # Check for excessive location tracking
-        location_perms = [p for p in permissions if p.category == PermissionCategory.LOCATION]
-        if len(location_perms) > 1 or any(p.risk_score > 0.95 for p in location_perms):
-            findings.append(SecurityFinding(
-                title='Excessive Location Permission Claims',
-                description='Application requests both fine and coarse location permissions, enabling precise tracking.',
-                risk_level=RiskLevel.CRITICAL,
-                finding_type='permission_abuse',
-                evidence=[p.name for p in location_perms],
-                remediation='Remove redundant location permissions. Request only what is necessary for stated functionality.'
-            ))
 
-        # Check for audio/video surveillance capabilities
-        surveillance_perms = [p for p in permissions 
-                             if p.category in (PermissionCategory.CAMERA, PermissionCategory.MICROPHONE)]
-        if surveillance_perms:
-            findings.append(SecurityFinding(
-                title='Surveillance Capabilities Detected',
-                description='Application has permissions for camera and/or microphone access.',
-                risk_level=RiskLevel.CRITICAL,
-                finding_type='surveillance_capability',
-                evidence=[p.name for p in surveillance_perms],
-                remediation='Implement strict access controls and user notifications before any recording occurs.'
-            ))
+def generate_sample_data() -> tuple[List[Dict], List[Dict], List[str]]:
+    """Generate sample test data for analysis"""
+    
+    permissions = [
+        {"name": "INTERNET", "description": "Allow internet access"},
+        {"name": "ACCESS_FINE_LOCATION", "description": "Precise location access"},
+        {"name": "READ_CONTACTS", "description": "Read device contacts"},
+        {"name": "RECORD_AUDIO", "description": "Record audio"},
+        {"name": "CAMERA", "description": "Camera access"},
+        {"name": "READ_SMS", "description": "Read text messages"},
+        {"name": "READ_CALL_LOG", "description": "Read call history"},
+        {"name": "ACCESS_COARSE_LOCATION", "description": "Coarse location"},
+    ]
+    
+    endpoints = [
+        {
+            "url": "https://telemetry.govapp.net/collect",
+            "method": "POST",
+            "frequency": "continuous",
+            "data_types": ["location", "device_id", "contacts"],
+            "encrypted": False
+        },
+        {
+            "url": "https://analytics.govapp.net/track",
+            "method": "POST",
+            "frequency": "frequent",
+            "data_types": ["usage", "behavior"],
+            "encrypted": True
+        },
+        {
+            "url": "https://monitoring.internal/listener",
+            "method": "POST",
+            "frequency": "realtime",
+            "data_types": ["microphone", "camera", "clipboard"],
+            "encrypted": False
+        },
+        {
+            "url": "https://api.govapp.net/sync",
+            "method": "GET",
+            "frequency": "periodic",
+            "data_types": ["call_logs", "messages"],
+            "encrypted": True
+        },
+    ]
+    
+    behaviors = [
+        "location tracking enabled without user consent",
+        "device identifier collection on startup",
+        "contact list exfiltration to remote server",
+        "call log monitoring in background",
+        "continuous microphone access without indication",
+        "camera initialization on app launch",
+        "unrestricted background sync enabled",
+        "encryption bypass for sensitive data",
+    ]
+    
+    return permissions, endpoints, behaviors
 
-        # Check for silent data collection
-        suspicious_telemetry = [t for t in telemetry_endpoints if t.suspicious]
-        if suspicious_telemetry:
-            findings.append(SecurityFinding(
-                title='Hidden Telemetry Collection',
-                description='Application sends data to suspicious telemetry endpoints not disclosed in privacy policy.',
-                risk_level=RiskLevel.HIGH,
-                finding_type='hidden_telemetry',
-                evidence=[t.url for t in suspicious_telemetry],
-                remediation='Disclose all telemetry collection in privacy policy. Provide user opt-out mechanisms.'
-            ))
 
-        # Check for activity monitoring
-        activity_telemetry = [t for t in suspicious_telemetry 
-                            if 'activity' in str(t.reason).lower() or 'track' in str(t.reason).lower()]
-        if activity_telemetry:
-            findings.append(SecurityFinding(
-                title='User Activity Monitoring',
-                description='Application monitors user activity including app usage and screen time.',
-                risk_level=RiskLevel.HIGH,
-                finding_type='activity_monitoring',
-                evidence=[t.url for t in activity_telemetry],
-                remediation='Implement user-facing activity reports and provide granular permission controls.'
-            ))
-
-        # Check for device fingerprinting
-        fingerprint_telemetry = [t for t in telemetry_endpoints 
-                               if any(field in str(t.data_fields).lower() 
-                                     for field in ['imei', 'serial', 'device_id', 'hardware'])]
-        if fingerprint_telemetry:
-            findings.append(SecurityFinding(
-                title='Device Fingerprinting Detected',
-                description='Application collects unique device identifiers for cross-app tracking.',
-                risk_level=RiskLevel.HIGH,
-                finding_type='fingerprinting',
-                evidence=[t.url for t in fingerprint_telemetry],
-                remediation='Use temporary or app-specific identifiers instead of hardware IDs.'
-            ))
-
-        # Check for permission escalation
-        if high_risk_perm_count > 5:
-            findings.append(SecurityFinding(
-                title='Permission Overreach',
-                description=f'Application requests {high_risk_perm_count} high-risk permissions.',
-                risk_level=RiskLevel.HIGH,
-                finding_type='permission_overreach',
-                evidence=[p.name for p in permissions if p.risk_score > 0.8],
-                remediation='Minimize permission requests. Use scoped alternatives where available.'
-            ))
-
-        return findings
-
-    def analyze_application(self, app_data: Dict[str, Any]) -> ApplicationAnalysis:
-        """Perform complete analysis on an application."""
-        logger.info(f"Analyzing application: {app_data.get('app_name')}")
-
-        # Extract data
-        app_name = app_data.get('app_name', 'Unknown')
-        app_id = app_data.get('app_id', 'unknown.app')
-        version = app_data.get('version', '1.0')
-        permissions_data = app_data.get('permissions', [])
-        endpoints_data = app_data.get('telemetry_endpoints', [])
-
-        # Analyze components
-        permissions, high_risk_count, avg_perm_risk = self.analyze_permissions(permissions_data)
-        telemetry_endpoints = self.analyze_telemetry(endpoints_data)
-        findings = self.generate_findings(app_name, permissions, telemetry_endpoints, high_risk_count)
-
-        # Calculate overall risk score
-        telemetry_risk = sum(0.5 for t in telemetry_endpoints if t.suspicious) / max(len(telemetry_endpoints), 1)
-        finding_risk = sum(0.3 if f.risk_level == RiskLevel.CRITICAL else 0.2 if f.risk_level == RiskLevel.HIGH else 0.1
+def main():
+    parser = argparse.ArgumentParser(
+        description="Fedware: Analyze government applications for suspicious telemetry"
+    )
+    
+    parser.add_argument(
+        "--app-name",
+        type=str,
+        default="WhiteHouse.gov Official App",
+        help="Name of application to analyze"
+    )
+    
+    parser.add_argument(
+        "--app-version",
+        type=str,
+        default="1.0.0",
+        help="Application version"
+    )
+    
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="fedware_analysis.json",
+        help="Output JSON file for analysis results"
+    )
+    
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging"
+    )
+    
+    parser
