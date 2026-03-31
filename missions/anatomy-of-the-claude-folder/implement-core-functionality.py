@@ -3,19 +3,18 @@
 # Task:    Implement core functionality
 # Mission: Anatomy of the .claude/ folder
 # Agent:   @aria
-# Date:    2026-03-29T20:35:08.308Z
+# Date:    2026-03-31T19:15:14.231Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 Task: Anatomy of the .claude/ folder
-Mission: Engineering - Understanding Claude configuration structure
+Mission: Implement core functionality for analyzing Claude configuration structure
 Agent: @aria
 Date: 2024
 
-This module implements core functionality to analyze, validate, and document
-the structure of .claude/ configuration folders used by Claude installations.
-Provides CLI tools to inspect, verify, and report on Claude folder anatomy.
+This implementation provides tools to understand, validate, and audit the
+.claude/ folder structure commonly used by Claude projects.
 """
 
 import argparse
@@ -24,454 +23,454 @@ import os
 import sys
 from pathlib import Path
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Any
 from enum import Enum
 import hashlib
-from datetime import datetime
 
 
-class FileType(Enum):
-    """Enumeration of recognized file types in .claude/ folder"""
-    CONFIG = "config"
+class ConfigType(Enum):
+    """Types of configuration files found in .claude/ folder."""
+    WORKSPACE = "workspace"
+    CONVERSATION = "conversation"
     CACHE = "cache"
-    STATE = "state"
-    LOG = "log"
     METADATA = "metadata"
+    SETTINGS = "settings"
     UNKNOWN = "unknown"
 
 
 @dataclass
 class FileInfo:
-    """Information about a file in the .claude/ folder"""
+    """Information about a file in the .claude/ folder."""
     path: str
-    name: str
-    file_type: str
-    size: int
-    modified: str
-    permissions: str
+    relative_path: str
+    size_bytes: int
+    config_type: str
+    is_valid: bool
     checksum: str
-    is_readable: bool
-    is_writable: bool
-
-
-@dataclass
-class DirectoryStructure:
-    """Represents the complete structure of a .claude/ folder"""
-    root_path: str
-    total_files: int
-    total_directories: int
-    total_size: int
-    files: List[FileInfo]
-    directories: List[str]
-    analysis_timestamp: str
+    last_modified: float
     errors: List[str]
 
 
+@dataclass
+class FolderAnalysis:
+    """Analysis result of the .claude/ folder."""
+    folder_path: str
+    exists: bool
+    is_readable: bool
+    total_files: int
+    total_size_bytes: int
+    file_details: List[FileInfo]
+    folder_structure: Dict[str, Any]
+    validation_errors: List[str]
+    summary: Dict[str, Any]
+
+
 class ClaudeFolderAnalyzer:
-    """Analyzer for Claude configuration folder structure"""
-
-    # Standard file patterns and their types
-    FILE_PATTERNS = {
-        FileType.CONFIG: ['.json', '.yaml', '.yml', '.toml', '.ini', 'config'],
-        FileType.CACHE: ['cache', '.cache', 'tmp', 'temp'],
-        FileType.STATE: ['state', '.state', 'session'],
-        FileType.LOG: ['.log', 'log'],
-        FileType.METADATA: ['metadata', '.metadata', 'manifest'],
+    """Analyzer for .claude/ folder structure and contents."""
+    
+    EXPECTED_STRUCTURE = {
+        "conversations": "directory",
+        "cache": "directory",
+        "config.json": "file",
+        "workspace.json": "file",
     }
-
-    def __init__(self, claude_path: Optional[str] = None):
-        """
-        Initialize the analyzer with a path to .claude/ folder.
-        If not provided, attempts to locate it in home directory.
-        """
-        if claude_path:
-            self.claude_path = Path(claude_path)
-        else:
-            self.claude_path = Path.home() / ".claude"
-
-        self.errors: List[str] = []
-
+    
+    FILE_PATTERNS = {
+        r".*\.json$": ConfigType.METADATA,
+        r"conversation_.*\.json$": ConfigType.CONVERSATION,
+        r"cache_.*": ConfigType.CACHE,
+        r"workspace\.json$": ConfigType.WORKSPACE,
+        r"settings\.json$": ConfigType.SETTINGS,
+    }
+    
+    def __init__(self, claude_folder_path: str):
+        """Initialize analyzer with path to .claude/ folder."""
+        self.claude_path = Path(claude_folder_path)
+        self.analysis: Optional[FolderAnalysis] = None
+    
+    def _detect_config_type(self, file_path: Path) -> ConfigType:
+        """Detect the type of configuration file."""
+        import re
+        file_name = file_path.name
+        
+        if "conversation" in file_name.lower():
+            return ConfigType.CONVERSATION
+        elif "cache" in file_name.lower():
+            return ConfigType.CACHE
+        elif "workspace" in file_name.lower():
+            return ConfigType.WORKSPACE
+        elif "settings" in file_name.lower():
+            return ConfigType.SETTINGS
+        elif file_name.endswith('.json'):
+            return ConfigType.METADATA
+        
+        return ConfigType.UNKNOWN
+    
     def _calculate_checksum(self, file_path: Path) -> str:
-        """Calculate SHA256 checksum of a file"""
+        """Calculate SHA256 checksum of a file."""
+        sha256_hash = hashlib.sha256()
         try:
-            sha256_hash = hashlib.sha256()
             with open(file_path, "rb") as f:
                 for byte_block in iter(lambda: f.read(4096), b""):
                     sha256_hash.update(byte_block)
             return sha256_hash.hexdigest()
-        except Exception as e:
-            self.errors.append(f"Cannot checksum {file_path}: {str(e)}")
-            return ""
-
-    def _classify_file(self, filename: str) -> FileType:
-        """Classify a file based on its name and extension"""
-        filename_lower = filename.lower()
-
-        for file_type, patterns in self.FILE_PATTERNS.items():
-            for pattern in patterns:
-                if pattern in filename_lower:
-                    return file_type
-
-        return FileType.UNKNOWN
-
-    def _get_file_permissions(self, file_path: Path) -> str:
-        """Get file permissions in readable format"""
+        except (IOError, OSError):
+            return "error"
+    
+    def _validate_json_file(self, file_path: Path) -> tuple[bool, List[str]]:
+        """Validate JSON file structure."""
+        errors = []
         try:
-            mode = file_path.stat().st_mode
-            return oct(mode)[-3:]
-        except Exception as e:
-            self.errors.append(f"Cannot get permissions for {file_path}: {str(e)}")
-            return "???"
-
-    def _analyze_file(self, file_path: Path) -> Optional[FileInfo]:
-        """Analyze a single file and return FileInfo"""
+            with open(file_path, 'r', encoding='utf-8') as f:
+                json.load(f)
+            return True, errors
+        except json.JSONDecodeError as e:
+            errors.append(f"Invalid JSON: {str(e)}")
+            return False, errors
+        except UnicodeDecodeError as e:
+            errors.append(f"Encoding error: {str(e)}")
+            return False, errors
+        except (IOError, OSError) as e:
+            errors.append(f"Read error: {str(e)}")
+            return False, errors
+    
+    def _build_folder_structure(self, path: Path, max_depth: int = 3, current_depth: int = 0) -> Dict[str, Any]:
+        """Build a hierarchical representation of folder structure."""
+        if current_depth >= max_depth:
+            return {}
+        
+        structure = {}
         try:
-            stat_info = file_path.stat()
-            file_type = self._classify_file(file_path.name)
-
-            is_readable = os.access(file_path, os.R_OK)
-            is_writable = os.access(file_path, os.W_OK)
-
-            checksum = self._calculate_checksum(file_path) if is_readable else ""
-
-            modified_time = datetime.fromtimestamp(stat_info.st_mtime).isoformat()
-
-            return FileInfo(
-                path=str(file_path),
-                name=file_path.name,
-                file_type=file_type.value,
-                size=stat_info.st_size,
-                modified=modified_time,
-                permissions=self._get_file_permissions(file_path),
-                checksum=checksum,
-                is_readable=is_readable,
-                is_writable=is_writable,
-            )
-        except Exception as e:
-            self.errors.append(f"Cannot analyze file {file_path}: {str(e)}")
-            return None
-
-    def analyze(self) -> DirectoryStructure:
-        """
-        Perform complete analysis of the .claude/ folder structure.
-        Returns DirectoryStructure with all findings and errors.
-        """
-        self.errors = []
-        files: List[FileInfo] = []
-        directories: List[str] = []
-        total_size = 0
-
+            for item in sorted(path.iterdir()):
+                if item.name.startswith('.') and item.name != '.claude':
+                    continue
+                
+                if item.is_dir():
+                    structure[item.name] = {
+                        "type": "directory",
+                        "contents": self._build_folder_structure(item, max_depth, current_depth + 1)
+                    }
+                else:
+                    structure[item.name] = {
+                        "type": "file",
+                        "size": item.stat().st_size
+                    }
+        except (IOError, OSError):
+            pass
+        
+        return structure
+    
+    def _analyze_files(self) -> List[FileInfo]:
+        """Analyze all files in the .claude/ folder."""
+        file_details = []
+        
         if not self.claude_path.exists():
-            self.errors.append(f".claude folder not found at {self.claude_path}")
-            return DirectoryStructure(
-                root_path=str(self.claude_path),
-                total_files=0,
-                total_directories=0,
-                total_size=0,
-                files=[],
-                directories=[],
-                analysis_timestamp=datetime.now().isoformat(),
-                errors=self.errors,
-            )
-
-        if not self.claude_path.is_dir():
-            self.errors.append(f"Path is not a directory: {self.claude_path}")
-            return DirectoryStructure(
-                root_path=str(self.claude_path),
-                total_files=0,
-                total_directories=0,
-                total_size=0,
-                files=[],
-                directories=[],
-                analysis_timestamp=datetime.now().isoformat(),
-                errors=self.errors,
-            )
-
+            return file_details
+        
         try:
-            for item in self.claude_path.rglob("*"):
-                try:
-                    if item.is_dir():
-                        directories.append(str(item.relative_to(self.claude_path)))
-                    elif item.is_file():
-                        file_info = self._analyze_file(item)
-                        if file_info:
-                            files.append(file_info)
-                            total_size += file_info.size
-                except PermissionError:
-                    self.errors.append(f"Permission denied accessing {item}")
-        except Exception as e:
-            self.errors.append(f"Error during directory traversal: {str(e)}")
-
-        return DirectoryStructure(
-            root_path=str(self.claude_path),
-            total_files=len(files),
-            total_directories=len(directories),
-            total_size=total_size,
-            files=files,
-            directories=sorted(directories),
-            analysis_timestamp=datetime.now().isoformat(),
-            errors=self.errors,
+            for file_path in self.claude_path.rglob('*'):
+                if file_path.is_file() and not file_path.name.startswith('.'):
+                    try:
+                        stat = file_path.stat()
+                        relative_path = str(file_path.relative_to(self.claude_path))
+                        config_type = self._detect_config_type(file_path)
+                        
+                        # Validate based on type
+                        is_valid = True
+                        errors = []
+                        if file_path.suffix == '.json':
+                            is_valid, errors = self._validate_json_file(file_path)
+                        
+                        file_info = FileInfo(
+                            path=str(file_path),
+                            relative_path=relative_path,
+                            size_bytes=stat.st_size,
+                            config_type=config_type.value,
+                            is_valid=is_valid,
+                            checksum=self._calculate_checksum(file_path),
+                            last_modified=stat.st_mtime,
+                            errors=errors
+                        )
+                        file_details.append(file_info)
+                    except (OSError, ValueError) as e:
+                        # Skip files that can't be accessed
+                        continue
+        except (IOError, OSError):
+            pass
+        
+        return file_details
+    
+    def _validate_structure(self) -> List[str]:
+        """Validate the overall structure of the .claude/ folder."""
+        errors = []
+        
+        if not self.claude_path.exists():
+            errors.append(".claude folder does not exist")
+            return errors
+        
+        if not self.claude_path.is_dir():
+            errors.append(".claude path exists but is not a directory")
+            return errors
+        
+        if not os.access(self.claude_path, os.R_OK):
+            errors.append(".claude folder is not readable")
+            return errors
+        
+        # Check for common expected subdirectories
+        expected_dirs = ["conversations", "cache"]
+        for dir_name in expected_dirs:
+            dir_path = self.claude_path / dir_name
+            if not dir_path.exists():
+                errors.append(f"Expected directory '{dir_name}' not found")
+            elif not dir_path.is_dir():
+                errors.append(f"'{dir_name}' exists but is not a directory")
+        
+        # Check for core config files
+        expected_files = ["config.json", "workspace.json"]
+        for file_name in expected_files:
+            file_path = self.claude_path / file_name
+            if not file_path.exists():
+                errors.append(f"Expected file '{file_name}' not found")
+        
+        return errors
+    
+    def analyze(self) -> FolderAnalysis:
+        """Perform complete analysis of the .claude/ folder."""
+        file_details = self._analyze_files()
+        validation_errors = self._validate_structure()
+        folder_structure = self._build_folder_structure(self.claude_path)
+        
+        total_size = sum(f.size_bytes for f in file_details)
+        
+        # Create summary statistics
+        config_types = {}
+        invalid_count = 0
+        for file_info in file_details:
+            config_types[file_info.config_type] = config_types.get(file_info.config_type, 0) + 1
+            if not file_info.is_valid:
+                invalid_count += 1
+        
+        summary = {
+            "total_files": len(file_details),
+            "total_size_mb": round(total_size / (1024 * 1024), 2),
+            "files_by_type": config_types,
+            "invalid_files": invalid_count,
+            "is_healthy": len(validation_errors) == 0 and invalid_count == 0,
+            "validation_errors_count": len(validation_errors)
+        }
+        
+        self.analysis = FolderAnalysis(
+            folder_path=str(self.claude_path),
+            exists=self.claude_path.exists(),
+            is_readable=os.access(self.claude_path, os.R_OK) if self.claude_path.exists() else False,
+            total_files=len(file_details),
+            total_size_bytes=total_size,
+            file_details=file_details,
+            folder_structure=folder_structure,
+            validation_errors=validation_errors,
+            summary=summary
         )
-
-    def validate_structure(self, structure: DirectoryStructure) -> Dict[str, any]:
-        """
-        Validate the analyzed structure against expected patterns.
-        Returns validation report with warnings and recommendations.
-        """
-        report = {
-            "is_valid": True,
-            "warnings": [],
-            "recommendations": [],
-            "stats": {
-                "total_files": structure.total_files,
-                "total_size_bytes": structure.total_size,
-                "total_size_human": self._format_size(structure.total_size),
-            },
+        
+        return self.analysis
+    
+    def get_report(self) -> Dict[str, Any]:
+        """Get analysis report as dictionary."""
+        if self.analysis is None:
+            self.analyze()
+        
+        return {
+            "folder_path": self.analysis.folder_path,
+            "exists": self.analysis.exists,
+            "is_readable": self.analysis.is_readable,
+            "summary": self.analysis.summary,
+            "validation_errors": self.analysis.validation_errors,
+            "files": [asdict(f) for f in self.analysis.file_details],
+            "folder_structure": self.analysis.folder_structure
         }
 
-        # Check if folder exists
-        if structure.total_files == 0 and structure.total_directories == 0:
-            report["is_valid"] = False
-            report["warnings"].append("No files or directories found in .claude folder")
-            report["recommendations"].append(
-                "Initialize .claude folder with required configuration files"
-            )
 
-        # Check for required config files
-        config_files = [
-            f for f in structure.files if f.file_type == FileType.CONFIG.value
-        ]
-        if not config_files:
-            report["warnings"].append("No configuration files found")
-            report["recommendations"].append("Add configuration files (.json, .yaml)")
-
-        # Check for log files
-        log_files = [f for f in structure.files if f.file_type == FileType.LOG.value]
-        if not log_files:
-            report["recommendations"].append("Enable logging for debugging")
-
-        # Check for unreadable files
-        unreadable = [f for f in structure.files if not f.is_readable]
-        if unreadable:
-            report["warnings"].append(
-                f"Found {len(unreadable)} unreadable files (permission issues)"
-            )
-
-        # Check total size
-        if structure.total_size > 1024 * 1024 * 100:  # 100MB
-            report["recommendations"].append(
-                "Consider cleaning up cache or old files to reduce folder size"
-            )
-
-        if structure.errors:
-            report["warnings"].append(
-                f"Encountered {len(structure.errors)} errors during analysis"
-            )
-
-        return report
-
-    @staticmethod
-    def _format_size(size_bytes: int) -> str:
-        """Format bytes to human-readable size"""
-        for unit in ["B", "KB", "MB", "GB"]:
-            if size_bytes < 1024.0:
-                return f"{size_bytes:.2f} {unit}"
-            size_bytes /= 1024.0
-        return f"{size_bytes:.2f} TB"
-
-
-class ClaudeFolderManager:
-    """Manager for creating and maintaining .claude/ folder structure"""
-
-    # Standard directory structure
-    STANDARD_DIRS = ["config", "cache", "logs", "state", "metadata"]
-
-    def __init__(self, claude_path: Optional[str] = None):
-        """Initialize manager"""
-        if claude_path:
-            self.claude_path = Path(claude_path)
-        else:
-            self.claude_path = Path.home() / ".claude"
-
-    def create_default_structure(self) -> Tuple[bool, List[str]]:
-        """
-        Create default .claude/ folder structure.
-        Returns (success, messages)
-        """
-        messages = []
-
-        if self.claude_path.exists():
-            messages.append(f".claude folder already exists at {self.claude_path}")
-            return True, messages
-
-        try:
-            self.claude_path.mkdir(parents=True, exist_ok=True)
-            messages.append(f"Created .claude folder at {self.claude_path}")
-
-            for dir_name in self.STANDARD_DIRS:
-                dir_path = self.claude_path / dir_name
-                dir_path.mkdir(exist_ok=True)
-                messages.append(f"Created directory: {dir_path}")
-
-            # Create default config file
-            config_path = self.claude_path / "config" / "config.json"
-            default_config = {
-                "version": "1.0",
-                "created": datetime.now().isoformat(),
-                "settings": {
-                    "logging_enabled": True,
-                    "cache_enabled": True,
-                    "auto_cleanup": False,
-                },
-            }
-
-            with open(config_path, "w") as f:
-                json.dump(default_config, f, indent=2)
-            messages.append(f"Created default config file: {config_path}")
-
-            return True, messages
-        except Exception as e:
-            messages.append(f"Error creating structure: {str(e)}")
-            return False, messages
-
-    def get_size(self) -> int:
-        """Get total size of .claude/ folder in bytes"""
-        if not self.claude_path.exists():
-            return 0
-
-        total = 0
-        try:
-            for file_path in self.claude_path.rglob("*"):
-                if file_path.is_file():
-                    total += file_path.stat().st_size
-        except Exception:
-            pass
-
-        return total
-
-    def cleanup_cache(self, dry_run: bool = True) -> Tuple[int, int]:
-        """
-        Clean up cache files.
-        Returns (files_removed, bytes_freed) if not dry_run, else shows what would be removed
-        """
-        cache_dir = self.claude_path / "cache"
-        if not cache_dir.exists():
-            return 0, 0
-
-        files_removed = 0
-        bytes_freed = 0
-
-        try:
-            for file_path in cache_dir.rglob("*"):
-                if file_path.is_file():
-                    file_size = file_path.stat().st_size
-                    if not dry_run:
-                        file_path.unlink()
-                    files_removed += 1
-                    bytes_freed += file_size
-        except Exception:
-            pass
-
-        return files_removed, bytes_freed
-
-
-def format_json_output(data: any) -> str:
-    """Format data as JSON for output"""
-    if hasattr(data, "__dataclass_fields__"):
-        return json.dumps(asdict(data), indent=2)
-    return json.dumps(data, indent=2)
+def create_sample_claude_folder(base_path: str) -> Path:
+    """Create a sample .claude/ folder structure for testing."""
+    claude_path = Path(base_path) / ".claude"
+    claude_path.mkdir(parents=True, exist_ok=True)
+    
+    # Create subdirectories
+    (claude_path / "conversations").mkdir(exist_ok=True)
+    (claude_path / "cache").mkdir(exist_ok=True)
+    
+    # Create config.json
+    config = {
+        "version": "1.0",
+        "workspace_name": "default",
+        "created_at": "2024-01-01T00:00:00Z",
+        "settings": {
+            "auto_save": True,
+            "compression": "gzip"
+        }
+    }
+    with open(claude_path / "config.json", 'w') as f:
+        json.dump(config, f, indent=2)
+    
+    # Create workspace.json
+    workspace = {
+        "workspace_id": "ws_default_001",
+        "name": "Default Workspace",
+        "description": "Default workspace for Claude",
+        "conversations": []
+    }
+    with open(claude_path / "workspace.json", 'w') as f:
+        json.dump(workspace, f, indent=2)
+    
+    # Create sample conversation files
+    for i in range(3):
+        conversation = {
+            "id": f"conv_{i:03d}",
+            "title": f"Conversation {i}",
+            "created_at": "2024-01-01T00:00:00Z",
+            "messages": []
+        }
+        conv_path = claude_path / "conversations" / f"conversation_{i:03d}.json"
+        with open(conv_path, 'w') as f:
+            json.dump(conversation, f, indent=2)
+    
+    # Create cache files
+    cache_data = {"cached_items": 42, "size_mb": 1.5}
+    with open(claude_path / "cache_index.json", 'w') as f:
+        json.dump(cache_data, f, indent=2)
+    
+    return claude_path
 
 
 def main():
-    """Main CLI entry point"""
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Analyze and manage Claude (.claude/) folder structure",
+        description="Analyze and validate the anatomy of .claude/ folder structure",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s analyze                    # Analyze default .claude folder
-  %(prog)s analyze --path /custom     # Analyze custom path
-  %(prog)s validate                   # Validate structure
-  %(prog)s init                       # Initialize default structure
-  %(prog)s cleanup --dry-run          # Show what would be cleaned
-  %(prog)s cleanup                    # Perform cleanup
-        """,
+  # Analyze existing .claude folder
+  python3 script.py --path ~/.claude
+  
+  # Generate report in JSON format
+  python3 script.py --path ~/.claude --output report.json
+  
+  # Create sample folder for testing
+  python3 script.py --path /tmp/test --create-sample
+        """
     )
-
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
-
-    # Analyze command
-    analyze_parser = subparsers.add_parser("analyze", help="Analyze .claude/ folder")
-    analyze_parser.add_argument(
-        "--path",
+    
+    parser.add_argument(
+        '--path',
         type=str,
-        default=None,
-        help="Path to .claude folder (default: ~/.claude)",
+        default=os.path.expanduser('~/.claude'),
+        help='Path to .claude folder (default: ~/.claude)'
     )
-    analyze_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output as JSON",
-    )
-
-    # Validate command
-    validate_parser = subparsers.add_parser(
-        "validate", help="Validate .claude/ folder structure"
-    )
-    validate_parser.add_argument(
-        "--path",
+    parser.add_argument(
+        '--output',
         type=str,
-        default=None,
-        help="Path to .claude folder (default: ~/.claude)",
+        help='Output file for JSON report (if not specified, prints to stdout)'
     )
-    validate_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output as JSON",
+    parser.add_argument(
+        '--create-sample',
+        action='store_true',
+        help='Create sample .claude folder structure at specified path'
     )
-
-    # Initialize command
-    init_parser = subparsers.add_parser(
-        "init", help="Initialize default .claude/ folder"
+    parser.add_argument(
+        '--validate-only',
+        action='store_true',
+        help='Only validate structure without full analysis'
     )
-    init_parser.add_argument(
-        "--path",
-        type=str,
-        default=None,
-        help="Path for .claude folder (default: ~/.claude)",
+    parser.add_argument(
+        '--format',
+        choices=['json', 'text'],
+        default='json',
+        help='Output format (default: json)'
     )
-
-    # Cleanup command
-    cleanup_parser = subparsers.add_parser("cleanup", help="Cleanup cache files")
-    cleanup_parser.add_argument(
-        "--path",
-        type=str,
-        default=None,
-        help="Path to .claude folder (default: ~/.claude)",
-    )
-    cleanup_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        default=True,
-        help="Show what would be removed (default: True)",
-    )
-    cleanup_parser.add_argument(
-        "--execute",
-        action="store_true",
-        help="Actually perform cleanup",
-    )
-
+    
     args = parser.parse_args()
-
-    if not args.command:
-        parser.print_help()
-        return 0
-
-    if args.command == "analyze":
-        analyzer = ClaudeFolderAnalyzer(args.path)
-        structure = analyzer.analyze()
-
-        if args.json:
-            print(format_json_output(asdict(structure)))
+    
+    # Handle sample creation
+    if args.create_sample:
+        sample_path = create_sample_claude_folder(args.path)
+        print(f"Sample .claude folder created at: {sample_path}")
+        args.path = str(sample_path)
+    
+    # Perform analysis
+    analyzer = ClaudeFolderAnalyzer(args.path)
+    
+    if args.validate_only:
+        errors = analyzer._validate_structure()
+        if errors:
+            print("Validation Errors:")
+            for error in errors:
+                print(f"  - {error}")
         else:
-            print(f"Analysis of
+            print("Validation passed: .claude folder structure is valid")
+        return
+    
+    analysis = analyzer.analyze()
+    report = analyzer.get_report()
+    
+    # Output results
+    if args.format == 'json':
+        output_text = json.dumps(report, indent=2, default=str)
+    else:
+        output_text = format_text_report(report)
+    
+    if args.output:
+        with open(args.output, 'w') as f:
+            f.write(output_text)
+        print(f"Report written to: {args.output}")
+    else:
+        print(output_text)
+
+
+def format_text_report(report: Dict[str, Any]) -> str:
+    """Format analysis report as human-readable text."""
+    lines = []
+    lines.append("=" * 70)
+    lines.append(".CLAUDE FOLDER ANALYSIS REPORT")
+    lines.append("=" * 70)
+    lines.append("")
+    
+    lines.append(f"Folder Path: {report['folder_path']}")
+    lines.append(f"Exists: {report['exists']}")
+    lines.append(f"Readable: {report['is_readable']}")
+    lines.append("")
+    
+    summary = report['summary']
+    lines.append("SUMMARY:")
+    lines.append(f"  Total Files: {summary['total_files']}")
+    lines.append(f"  Total Size: {summary['total_size_mb']} MB")
+    lines.append(f"  Health Status: {'✓ Healthy' if summary['is_healthy'] else '✗ Issues Found'}")
+    lines.append(f"  Invalid Files: {summary['invalid_files']}")
+    lines.append("")
+    
+    lines.append("FILES BY TYPE:")
+    for config_type, count in summary['files_by_type'].items():
+        lines.append(f"  {config_type}: {count}")
+    lines.append("")
+    
+    if report['validation_errors']:
+        lines.append("VALIDATION ERRORS:")
+        for error in report['validation_errors']:
+            lines.append(f"  ✗ {error}")
+        lines.append("")
+    
+    if report['files']:
+        lines.append("FILES DETAIL:")
+        for file_info in report['files']:
+            status = "✓" if file_info['is_valid'] else "✗"
+            lines.append(f"  {status} {file_info['relative_path']}")
+            lines.append(f"      Type: {file_info['config_type']}, Size: {file_info['size_bytes']} bytes")
+            if file_info['errors']:
+                for error in file_info['errors']:
+                    lines.append(f"      Error: {error}")
+        lines.append("")
+    
+    lines.append("=" * 70)
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    main()
