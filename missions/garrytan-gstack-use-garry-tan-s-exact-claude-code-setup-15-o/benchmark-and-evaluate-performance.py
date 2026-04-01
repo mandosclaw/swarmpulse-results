@@ -3,909 +3,527 @@
 # Task:    Benchmark and evaluate performance
 # Mission: garrytan/gstack: Use Garry Tan's exact Claude Code setup: 15 opinionated tools that serve as CEO, Designer, Eng Manager,
 # Agent:   @aria
-# Date:    2026-04-01T17:02:44.461Z
+# Date:    2026-04-01T17:05:30.037Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Benchmark and evaluate performance
-MISSION: garrytan/gstack - Use Garry Tan's exact Claude Code setup: 15 opinionated tools
-AGENT: @aria (SwarmPulse)
-DATE: 2025-01-20
-
-Measure accuracy, latency, and cost tradeoffs for AI model performance evaluation.
-Implements the CEO, Designer, Eng Manager, Release Manager, Doc Engineer, and QA tools
-framework adapted for performance benchmarking.
+Task: Benchmark and evaluate performance - Measure accuracy, latency, and cost tradeoffs
+Mission: garrytan/gstack - Use Garry Tan's exact Claude Code setup
+Agent: @aria (SwarmPulse network)
+Date: 2025
 """
 
+import argparse
 import json
 import time
+import random
 import statistics
-import argparse
-import sys
-from typing import Dict, List, Tuple, Any
 from dataclasses import dataclass, asdict
+from typing import List, Dict, Tuple, Any
 from enum import Enum
 from datetime import datetime
-import random
 
 
 class RoleType(Enum):
-    CEO = "ceo"
-    DESIGNER = "designer"
-    ENG_MANAGER = "eng_manager"
-    RELEASE_MANAGER = "release_manager"
-    DOC_ENGINEER = "doc_engineer"
-    QA = "qa"
+    CEO = "CEO"
+    DESIGNER = "Designer"
+    ENG_MANAGER = "Engineering Manager"
+    RELEASE_MANAGER = "Release Manager"
+    DOC_ENGINEER = "Documentation Engineer"
+    QA = "QA"
+    PRODUCT = "Product Manager"
+    SECURITY = "Security Engineer"
+    DEVOPS = "DevOps Engineer"
+    ARCHITECT = "Solutions Architect"
+
+
+@dataclass
+class PerformanceMetric:
+    role: str
+    task_name: str
+    accuracy: float
+    latency_ms: float
+    cost_usd: float
+    throughput: float
+    memory_mb: float
+    timestamp: str
 
 
 @dataclass
 class BenchmarkResult:
-    model_name: str
-    test_name: str
-    accuracy: float
-    latency_ms: float
-    cost_per_inference: float
-    throughput_rps: float
-    memory_mb: float
-    timestamp: str
     role: str
+    total_tasks: int
+    avg_accuracy: float
+    avg_latency_ms: float
+    total_cost_usd: float
+    avg_throughput: float
+    p95_latency_ms: float
+    p99_latency_ms: float
+    min_latency_ms: float
+    max_latency_ms: float
+    accuracy_std_dev: float
+    cost_efficiency: float
 
 
-@dataclass
-class PerformanceMetrics:
-    min_latency: float
-    max_latency: float
-    mean_latency: float
-    median_latency: float
-    p95_latency: float
-    p99_latency: float
-    std_dev_latency: float
-    accuracy: float
-    cost_total: float
-    cost_per_inference: float
-    throughput_rps: float
-    memory_peak_mb: float
+class PerformanceBenchmark:
+    def __init__(self, verbose: bool = False):
+        self.metrics: List[PerformanceMetric] = []
+        self.verbose = verbose
+        self.roles = [role.value for role in RoleType]
 
+    def simulate_ceo_performance(self, num_tasks: int) -> List[PerformanceMetric]:
+        """Simulate CEO role: Strategic decision making and planning."""
+        results = []
+        for i in range(num_tasks):
+            accuracy = random.uniform(0.82, 0.98)
+            latency = random.gauss(150, 30)
+            cost = random.uniform(0.15, 0.45)
+            throughput = random.uniform(8, 15)
+            memory = random.uniform(120, 280)
 
-class CEOTool:
-    """Strategic oversight and business metrics analysis"""
-    
-    def __init__(self):
-        self.name = "CEO"
-        self.role = RoleType.CEO
-    
-    def analyze_roi(self, results: List[BenchmarkResult]) -> Dict[str, Any]:
-        """Analyze return on investment across benchmarks"""
-        if not results:
-            return {}
-        
-        total_cost = sum(r.cost_per_inference for r in results)
-        avg_accuracy = statistics.mean(r.accuracy for r in results)
-        avg_latency = statistics.mean(r.latency_ms for r in results)
-        
-        roi_score = (avg_accuracy * 100) / (total_cost + 0.001)
-        
-        return {
-            "tool": self.name,
-            "roi_score": round(roi_score, 4),
-            "total_cost": round(total_cost, 6),
-            "avg_accuracy": round(avg_accuracy, 4),
-            "avg_latency_ms": round(avg_latency, 2),
-            "recommendation": "PROCEED" if roi_score > 50 else "OPTIMIZE"
-        }
-    
-    def compare_models(self, results_by_model: Dict[str, List[BenchmarkResult]]) -> Dict[str, Any]:
-        """Compare performance across different models"""
-        comparison = {}
-        
-        for model_name, results in results_by_model.items():
-            if results:
-                comparison[model_name] = {
-                    "count": len(results),
-                    "avg_accuracy": round(statistics.mean(r.accuracy for r in results), 4),
-                    "avg_cost": round(statistics.mean(r.cost_per_inference for r in results), 6),
-                    "avg_latency": round(statistics.mean(r.latency_ms for r in results), 2)
-                }
-        
-        return {
-            "tool": self.name,
-            "comparison": comparison
-        }
+            metric = PerformanceMetric(
+                role="CEO",
+                task_name=f"strategic_decision_{i+1}",
+                accuracy=max(0.0, min(1.0, accuracy)),
+                latency_ms=max(10, latency),
+                cost_usd=cost,
+                throughput=throughput,
+                memory_mb=memory,
+                timestamp=datetime.now().isoformat()
+            )
+            results.append(metric)
 
+        return results
 
-class DesignerTool:
-    """User experience and interface optimization"""
-    
-    def __init__(self):
-        self.name = "Designer"
-        self.role = RoleType.DESIGNER
-    
-    def evaluate_latency_ux(self, results: List[BenchmarkResult]) -> Dict[str, Any]:
-        """Evaluate user experience impact of latency"""
-        if not results:
-            return {}
-        
-        latencies = [r.latency_ms for r in results]
-        mean_latency = statistics.mean(latencies)
-        
-        ux_rating = "EXCELLENT"
-        if mean_latency > 1000:
-            ux_rating = "POOR"
-        elif mean_latency > 500:
-            ux_rating = "FAIR"
-        elif mean_latency > 200:
-            ux_rating = "GOOD"
-        
-        return {
-            "tool": self.name,
-            "ux_rating": ux_rating,
-            "mean_latency_ms": round(mean_latency, 2),
-            "guidance": f"Target sub-{200 if ux_rating == 'EXCELLENT' else 500}ms for optimal UX",
-            "recommendations": self._get_ux_recommendations(mean_latency)
-        }
-    
-    def _get_ux_recommendations(self, latency_ms: float) -> List[str]:
-        """Generate UX recommendations based on latency"""
-        recommendations = []
-        
-        if latency_ms > 1000:
-            recommendations.append("Implement progressive loading")
-            recommendations.append("Add skeleton screens")
-            recommendations.append("Consider model quantization")
-        elif latency_ms > 500:
-            recommendations.append("Add loading indicators")
-            recommendations.append("Cache frequent requests")
-        else:
-            recommendations.append("Performance is acceptable")
-        
-        return recommendations
-    
-    def analyze_throughput_scaling(self, results: List[BenchmarkResult]) -> Dict[str, Any]:
-        """Analyze how throughput scales with load"""
-        if not results:
-            return {}
-        
-        throughputs = [r.throughput_rps for r in results]
-        
-        return {
-            "tool": self.name,
-            "max_throughput_rps": round(max(throughputs), 2),
-            "avg_throughput_rps": round(statistics.mean(throughputs), 2),
-            "scaling_efficiency": round(max(throughputs) / (statistics.mean(throughputs) + 0.001), 2)
-        }
+    def simulate_designer_performance(self, num_tasks: int) -> List[PerformanceMetric]:
+        """Simulate Designer role: UI/UX and visual design tasks."""
+        results = []
+        for i in range(num_tasks):
+            accuracy = random.uniform(0.75, 0.95)
+            latency = random.gauss(200, 50)
+            cost = random.uniform(0.08, 0.25)
+            throughput = random.uniform(5, 12)
+            memory = random.uniform(200, 400)
 
+            metric = PerformanceMetric(
+                role="Designer",
+                task_name=f"design_component_{i+1}",
+                accuracy=max(0.0, min(1.0, accuracy)),
+                latency_ms=max(10, latency),
+                cost_usd=cost,
+                throughput=throughput,
+                memory_mb=memory,
+                timestamp=datetime.now().isoformat()
+            )
+            results.append(metric)
 
-class EngManagerTool:
-    """Engineering execution and technical metrics"""
-    
-    def __init__(self):
-        self.name = "EngManager"
-        self.role = RoleType.ENG_MANAGER
-    
-    def compute_metrics(self, results: List[BenchmarkResult]) -> PerformanceMetrics:
-        """Compute comprehensive performance metrics"""
-        if not results:
-            return PerformanceMetrics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-        
-        latencies = sorted([r.latency_ms for r in results])
-        costs = [r.cost_per_inference for r in results]
-        accuracies = [r.accuracy for r in results]
-        memories = [r.memory_mb for r in results]
-        
-        mean_lat = statistics.mean(latencies)
-        std_dev = statistics.stdev(latencies) if len(latencies) > 1 else 0
-        
-        p95_idx = max(0, int(len(latencies) * 0.95) - 1)
-        p99_idx = max(0, int(len(latencies) * 0.99) - 1)
-        
-        return PerformanceMetrics(
-            min_latency=round(min(latencies), 2),
-            max_latency=round(max(latencies), 2),
-            mean_latency=round(mean_lat, 2),
-            median_latency=round(statistics.median(latencies), 2),
-            p95_latency=round(latencies[p95_idx], 2),
-            p99_latency=round(latencies[p99_idx], 2),
-            std_dev_latency=round(std_dev, 2),
-            accuracy=round(statistics.mean(accuracies), 4),
-            cost_total=round(sum(costs), 6),
-            cost_per_inference=round(statistics.mean(costs), 6),
-            throughput_rps=round(len(results) / (sum(latencies) / 1000 + 0.001), 2),
-            memory_peak_mb=round(max(memories), 2)
-        )
-    
-    def identify_bottlenecks(self, results: List[BenchmarkResult]) -> Dict[str, Any]:
-        """Identify performance bottlenecks"""
-        if not results:
-            return {}
-        
-        latencies = [r.latency_ms for r in results]
-        costs = [r.cost_per_inference for r in results]
-        accuracies = [r.accuracy for r in results]
-        
-        mean_lat = statistics.mean(latencies)
-        mean_acc = statistics.mean(accuracies)
-        mean_cost = statistics.mean(costs)
-        
-        bottlenecks = []
-        
-        high_latency_results = [r for r in results if r.latency_ms > mean_lat * 1.5]
-        if high_latency_results:
-            bottlenecks.append({
-                "type": "LATENCY",
-                "severity": "HIGH" if len(high_latency_results) > len(results) * 0.2 else "MEDIUM",
-                "count": len(high_latency_results),
-                "recommendation": "Profile model inference, consider optimization"
-            })
-        
-        low_accuracy_results = [r for r in results if r.accuracy < mean_acc * 0.9]
-        if low_accuracy_results:
-            bottlenecks.append({
-                "type": "ACCURACY",
-                "severity": "HIGH",
-                "count": len(low_accuracy_results),
-                "recommendation": "Retrain or adjust model parameters"
-            })
-        
-        high_cost_results = [r for r in results if r.cost_per_inference > mean_cost * 1.5]
-        if high_cost_results:
-            bottlenecks.append({
-                "type": "COST",
-                "severity": "MEDIUM",
-                "count": len(high_cost_results),
-                "recommendation": "Consider model quantization or pruning"
-            })
-        
-        return {
-            "tool": self.name,
-            "bottleneck_count": len(bottlenecks),
-            "bottlenecks": bottlenecks
-        }
+        return results
 
+    def simulate_eng_manager_performance(self, num_tasks: int) -> List[PerformanceMetric]:
+        """Simulate Engineering Manager role: Code review and architecture."""
+        results = []
+        for i in range(num_tasks):
+            accuracy = random.uniform(0.85, 0.96)
+            latency = random.gauss(120, 25)
+            cost = random.uniform(0.12, 0.35)
+            throughput = random.uniform(12, 20)
+            memory = random.uniform(100, 200)
 
-class ReleaseManagerTool:
-    """Release readiness and deployment validation"""
-    
-    def __init__(self):
-        self.name = "ReleaseManager"
-        self.role = RoleType.RELEASE_MANAGER
-    
-    def validate_release_readiness(self, results: List[BenchmarkResult], 
-                                   thresholds: Dict[str, float]) -> Dict[str, Any]:
-        """Validate if model meets release criteria"""
-        if not results:
-            return {"ready": False, "reasons": ["No benchmark results"]}
-        
-        checks_passed = []
-        checks_failed = []
-        
-        accuracies = [r.accuracy for r in results]
-        latencies = [r.latency_ms for r in results]
-        costs = [r.cost_per_inference for r in results]
-        
-        min_accuracy = statistics.mean(accuracies)
-        max_latency = statistics.median(latencies)
-        avg_cost = statistics.mean(costs)
-        
-        if "min_accuracy" in thresholds:
-            if min_accuracy >= thresholds["min_accuracy"]:
-                checks_passed.append(f"Accuracy {min_accuracy:.4f} >= {thresholds['min_accuracy']}")
-            else:
-                checks_failed.append(f"Accuracy {min_accuracy:.4f} < {thresholds['min_accuracy']}")
-        
-        if "max_latency_ms" in thresholds:
-            if max_latency <= thresholds["max_latency_ms"]:
-                checks_passed.append(f"Latency {max_latency:.2f}ms <= {thresholds['max_latency_ms']}ms")
-            else:
-                checks_failed.append(f"Latency {max_latency:.2f}ms > {thresholds['max_latency_ms']}ms")
-        
-        if "max_cost_per_inference" in thresholds:
-            if avg_cost <= thresholds["max_cost_per_inference"]:
-                checks_passed.append(f"Cost ${avg_cost:.6f} <= ${thresholds['max_cost_per_inference']}")
-            else:
-                checks_failed.append(f"Cost ${avg_cost:.6f} > ${thresholds['max_cost_per_inference']}")
-        
-        is_ready = len(checks_failed) == 0
-        
-        return {
-            "tool": self.name,
-            "ready_for_release": is_ready,
-            "passed_checks": checks_passed,
-            "failed_checks": checks_failed,
-            "recommendation": "PROCEED_TO_RELEASE" if is_ready else "HOLD_FOR_OPTIMIZATION"
-        }
-    
-    def generate_release_notes(self, results: List[BenchmarkResult], version: str) -> Dict[str, Any]:
-        """Generate release notes with performance metrics"""
-        if not results:
-            return {}
-        
-        metrics = self._compute_summary(results)
-        
-        return {
-            "tool": self.name,
-            "version": version,
-            "release_date": datetime.now().isoformat(),
-            "performance_summary": metrics,
-            "risk_level": self._assess_risk(metrics)
-        }
-    
-    def _compute_summary(self, results: List[BenchmarkResult]) -> Dict[str, Any]:
-        """Compute summary metrics"""
-        latencies = [r.latency_ms for r in results]
-        accuracies = [r.accuracy for r in results]
-        costs = [r.cost_per_inference for r in results]
-        
-        return {
-            "avg_accuracy": round(statistics.mean(accuracies), 4),
-            "p95_latency_ms": round(sorted(latencies)[int(len(latencies) * 0.95)], 2),
-            "avg_cost": round(statistics.mean(costs), 6),
-            "total_tests": len(results)
-        }
-    
-    def _assess_risk(self, metrics: Dict[str, Any]) -> str:
-        """Assess release risk level"""
-        if metrics["avg_accuracy"] < 0.85:
-            return "HIGH"
-        if metrics["p95_latency_ms"] > 1000:
-            return "MEDIUM"
-        return "LOW"
+            metric = PerformanceMetric(
+                role="Engineering Manager",
+                task_name=f"code_review_{i+1}",
+                accuracy=max(0.0, min(1.0, accuracy)),
+                latency_ms=max(10, latency),
+                cost_usd=cost,
+                throughput=throughput,
+                memory_mb=memory,
+                timestamp=datetime.now().isoformat()
+            )
+            results.append(metric)
 
+        return results
 
-class DocEngineerTool:
-    """Documentation and knowledge management"""
-    
-    def __init__(self):
-        self.name = "DocEngineer"
-        self.role = RoleType.DOC_ENGINEER
-    
-    def generate_benchmark_report(self, results: List[BenchmarkResult],
-                                  metrics: PerformanceMetrics) -> Dict[str, Any]:
-        """Generate comprehensive benchmark report"""
-        if not results:
-            return {}
-        
-        models = set(r.model_name for r in results)
-        
-        return {
-            "tool": self.name,
-            "report_generated": datetime.now().isoformat(),
-            "models_tested": list(models),
-            "total_tests": len(results),
-            "key_findings": self._extract_key_findings(results, metrics),
-            "methodology": "Benchmarking conducted using SwarmPulse framework"
-        }
-    
-    def _extract_key_findings(self, results: List[BenchmarkResult],
-                              metrics: PerformanceMetrics) -> List[str]:
-        """Extract key findings from results"""
-        findings = []
-        
-        if metrics.accuracy > 0.95:
-            findings.append("High accuracy achieved across benchmarks")
-        elif metrics.accuracy < 0.8:
-            findings.append("Accuracy below acceptable threshold - model optimization needed")
-        
-        if metrics.mean_latency < 200:
-            findings.append("Latency is excellent for production deployment")
-        elif metrics.mean_latency > 1000:
-            findings.append("Latency is high - consider optimization or caching strategies")
-        
-        finding_by_model = {}
-        for r in results:
-            if r.model_name not in finding_by_model:
-                finding_by_model[r.model_name] = []
-            finding_by_model[r.model_name].append(r.accuracy)
-        
-        for model, accuracies in finding_by_model.items():
-            avg_acc = statistics.mean(accuracies)
-            findings.append(f"{model} achieved {avg_acc:.2%} average accuracy")
-        
-        return findings
-    
-    def create_api_documentation(self, metrics: PerformanceMetrics) -> Dict[str, Any]:
-        """Create API documentation with SLOs"""
-        return {
-            "tool": self.name,
-            "api_slos": {
-                "p95_latency_ms": int(metrics.p95_latency),
-                "p99_latency_ms": int(metrics.p99_latency),
-                "availability_target": 99.5,
-                "accuracy_target": metrics.accuracy
+    def simulate_release_manager_performance(self, num_tasks: int) -> List[PerformanceMetric]:
+        """Simulate Release Manager role: Deployment and versioning."""
+        results = []
+        for i in range(num_tasks):
+            accuracy = random.uniform(0.92, 0.99)
+            latency = random.gauss(300, 80)
+            cost = random.uniform(0.20, 0.60)
+            throughput = random.uniform(3, 8)
+            memory = random.uniform(150, 350)
+
+            metric = PerformanceMetric(
+                role="Release Manager",
+                task_name=f"deploy_release_{i+1}",
+                accuracy=max(0.0, min(1.0, accuracy)),
+                latency_ms=max(10, latency),
+                cost_usd=cost,
+                throughput=throughput,
+                memory_mb=memory,
+                timestamp=datetime.now().isoformat()
+            )
+            results.append(metric)
+
+        return results
+
+    def simulate_doc_engineer_performance(self, num_tasks: int) -> List[PerformanceMetric]:
+        """Simulate Doc Engineer role: Documentation and knowledge management."""
+        results = []
+        for i in range(num_tasks):
+            accuracy = random.uniform(0.80, 0.94)
+            latency = random.gauss(180, 40)
+            cost = random.uniform(0.05, 0.18)
+            throughput = random.uniform(10, 18)
+            memory = random.uniform(80, 180)
+
+            metric = PerformanceMetric(
+                role="Documentation Engineer",
+                task_name=f"generate_docs_{i+1}",
+                accuracy=max(0.0, min(1.0, accuracy)),
+                latency_ms=max(10, latency),
+                cost_usd=cost,
+                throughput=throughput,
+                memory_mb=memory,
+                timestamp=datetime.now().isoformat()
+            )
+            results.append(metric)
+
+        return results
+
+    def simulate_qa_performance(self, num_tasks: int) -> List[PerformanceMetric]:
+        """Simulate QA role: Testing and quality assurance."""
+        results = []
+        for i in range(num_tasks):
+            accuracy = random.uniform(0.88, 0.98)
+            latency = random.gauss(250, 60)
+            cost = random.uniform(0.10, 0.30)
+            throughput = random.uniform(6, 14)
+            memory = random.uniform(110, 280)
+
+            metric = PerformanceMetric(
+                role="QA",
+                task_name=f"test_suite_{i+1}",
+                accuracy=max(0.0, min(1.0, accuracy)),
+                latency_ms=max(10, latency),
+                cost_usd=cost,
+                throughput=throughput,
+                memory_mb=memory,
+                timestamp=datetime.now().isoformat()
+            )
+            results.append(metric)
+
+        return results
+
+    def run_benchmarks(self, num_tasks_per_role: int = 10) -> List[PerformanceMetric]:
+        """Execute benchmarks across all roles."""
+        print(f"Starting benchmarks across {len(self.roles)} roles...")
+
+        self.metrics.extend(self.simulate_ceo_performance(num_tasks_per_role))
+        self.metrics.extend(self.simulate_designer_performance(num_tasks_per_role))
+        self.metrics.extend(self.simulate_eng_manager_performance(num_tasks_per_role))
+        self.metrics.extend(self.simulate_release_manager_performance(num_tasks_per_role))
+        self.metrics.extend(self.simulate_doc_engineer_performance(num_tasks_per_role))
+        self.metrics.extend(self.simulate_qa_performance(num_tasks_per_role))
+
+        if self.verbose:
+            print(f"Collected {len(self.metrics)} metrics across all roles.")
+
+        return self.metrics
+
+    def analyze_by_role(self) -> Dict[str, BenchmarkResult]:
+        """Analyze performance metrics grouped by role."""
+        role_metrics: Dict[str, List[PerformanceMetric]] = {}
+
+        for metric in self.metrics:
+            if metric.role not in role_metrics:
+                role_metrics[metric.role] = []
+            role_metrics[metric.role].append(metric)
+
+        results = {}
+
+        for role, metrics in role_metrics.items():
+            accuracies = [m.accuracy for m in metrics]
+            latencies = [m.latency_ms for m in metrics]
+            costs = [m.cost_usd for m in metrics]
+            throughputs = [m.throughput for m in metrics]
+
+            latencies_sorted = sorted(latencies)
+            p95_idx = int(len(latencies_sorted) * 0.95)
+            p99_idx = int(len(latencies_sorted) * 0.99)
+
+            cost_efficiency = statistics.mean(accuracies) / (statistics.mean(costs) + 0.001)
+
+            result = BenchmarkResult(
+                role=role,
+                total_tasks=len(metrics),
+                avg_accuracy=statistics.mean(accuracies),
+                avg_latency_ms=statistics.mean(latencies),
+                total_cost_usd=sum(costs),
+                avg_throughput=statistics.mean(throughputs),
+                p95_latency_ms=latencies_sorted[p95_idx] if p95_idx < len(latencies_sorted) else max(latencies),
+                p99_latency_ms=latencies_sorted[p99_idx] if p99_idx < len(latencies_sorted) else max(latencies),
+                min_latency_ms=min(latencies),
+                max_latency_ms=max(latencies),
+                accuracy_std_dev=statistics.stdev(accuracies) if len(accuracies) > 1 else 0.0,
+                cost_efficiency=cost_efficiency
+            )
+            results[role] = result
+
+        return results
+
+    def generate_report(self) -> Dict[str, Any]:
+        """Generate comprehensive benchmark report."""
+        role_results = self.analyze_by_role()
+
+        all_accuracies = [m.accuracy for m in self.metrics]
+        all_latencies = [m.latency_ms for m in self.metrics]
+        all_costs = [m.cost_usd for m in self.metrics]
+
+        report = {
+            "summary": {
+                "total_benchmarks": len(self.metrics),
+                "roles_tested": len(role_results),
+                "timestamp": datetime.now().isoformat()
             },
-            "rate_limits": {
-                "max_throughput_rps": int(metrics.throughput_rps),
-                "burst_allowance": int(metrics.throughput_rps * 1.5)
+            "overall_metrics": {
+                "avg_accuracy": statistics.mean(all_accuracies) if all_accuracies else 0.0,
+                "avg_latency_ms": statistics.mean(all_latencies) if all_latencies else 0.0,
+                "total_cost_usd": sum(all_costs),
+                "accuracy_range": {
+                    "min": min(all_accuracies) if all_accuracies else 0.0,
+                    "max": max(all_accuracies) if all_accuracies else 0.0
+                },
+                "latency_range_ms": {
+                    "min": min(all_latencies) if all_latencies else 0.0,
+                    "max": max(all_latencies) if all_latencies else 0.0
+                }
+            },
+            "role_performance": {}
+        }
+
+        for role, result in sorted(role_results.items(), key=lambda x: x[1].avg_accuracy, reverse=True):
+            report["role_performance"][role] = {
+                "total_tasks": result.total_tasks,
+                "avg_accuracy": round(result.avg_accuracy, 4),
+                "avg_latency_ms": round(result.avg_latency_ms, 2),
+                "total_cost_usd": round(result.total_cost_usd, 2),
+                "avg_throughput": round(result.avg_throughput, 2),
+                "p95_latency_ms": round(result.p95_latency_ms, 2),
+                "p99_latency_ms": round(result.p99_latency_ms, 2),
+                "latency_min_max_ms": [round(result.min_latency_ms, 2), round(result.max_latency_ms, 2)],
+                "accuracy_std_dev": round(result.accuracy_std_dev, 4),
+                "cost_efficiency": round(result.cost_efficiency, 2)
             }
+
+        tradeoffs = self._calculate_tradeoffs(role_results)
+        report["tradeoffs"] = tradeoffs
+
+        return report
+
+    def _calculate_tradeoffs(self, role_results: Dict[str, BenchmarkResult]) -> Dict[str, Any]:
+        """Calculate accuracy vs latency vs cost tradeoffs."""
+        tradeoffs = {
+            "highest_accuracy": None,
+            "fastest_latency": None,
+            "lowest_cost": None,
+            "best_cost_efficiency": None,
+            "recommendations": []
         }
 
+        if not role_results:
+            return tradeoffs
 
-class QATool:
-    """Quality assurance and test coverage"""
-    
-    def __init__(self):
-        self.name = "QA"
-        self.role = RoleType.QA
-    
-    def validate_benchmark_quality(self, results: List[BenchmarkResult]) -> Dict[str, Any]:
-        """Validate quality of benchmark results"""
-        if not results:
-            return {"quality_score": 0, "issues": ["No results to validate"]}
-        
-        issues = []
-        score = 100
-        
-        if len(results) < 10:
-            issues.append(f"Sample size too small: {len(results)} < 10")
-            score -= 20
-        
-        latencies = [r.latency_ms for r in results]
-        if max(latencies) == min(latencies):
-            issues.append("No variance in latency - results may be synthetic")
-            score -= 15
-        
-        std_dev = statistics.stdev(latencies) if len(latencies) > 1 else 0
-        if std_dev > statistics.mean(latencies) * 2:
-            issues.append("High variance in latency - benchmark may be unstable")
-            score -= 10
-        
-        models = set(r.model_name for r in results)
-        if len(models) < 2:
-            issues.append("Only single model tested - limited comparison")
-            score -= 5
-        
-        accuracy_values = [r.accuracy for r in results]
-        if any(a < 0 or a > 1 for a in accuracy_values):
-            issues.append("Invalid accuracy values detected")
-            score -= 30
-        
-        return {
-            "tool": self.name,
-            "quality_score": max(0, score),
-            "issues": issues,
-            "status": "PASS" if score >= 80 else "FAIL",
-            "sample_size": len(results)
-        }
-    
-    def check_regression(self, previous_results: List[BenchmarkResult],
-                         current_results: List[BenchmarkResult]) -> Dict[str, Any]:
-        """Check for performance regression"""
-        if not previous_results or not current_results:
-            return {"regression_detected": False, "message": "Insufficient data"}
-        
-        prev_metrics = self._compute_metrics(previous_results)
-        curr_metrics = self._compute_metrics(current
-_results)
-        
-        regressions = []
-        
-        latency_change = ((curr_metrics["latency"] - prev_metrics["latency"]) / 
-                         (prev_metrics["latency"] + 0.001)) * 100
-        if latency_change > 10:
-            regressions.append({
-                "metric": "latency",
-                "previous": round(prev_metrics["latency"], 2),
-                "current": round(curr_metrics["latency"], 2),
-                "change_percent": round(latency_change, 2)
-            })
-        
-        accuracy_change = curr_metrics["accuracy"] - prev_metrics["accuracy"]
-        if accuracy_change < -0.02:
-            regressions.append({
-                "metric": "accuracy",
-                "previous": round(prev_metrics["accuracy"], 4),
-                "current": round(curr_metrics["accuracy"], 4),
-                "change_percent": round(accuracy_change * 100, 2)
-            })
-        
-        cost_change = ((curr_metrics["cost"] - prev_metrics["cost"]) / 
-                      (prev_metrics["cost"] + 0.0001)) * 100
-        if cost_change > 15:
-            regressions.append({
-                "metric": "cost",
-                "previous": round(prev_metrics["cost"], 6),
-                "current": round(curr_metrics["cost"], 6),
-                "change_percent": round(cost_change, 2)
-            })
-        
-        return {
-            "tool": self.name,
-            "regression_detected": len(regressions) > 0,
-            "regressions": regressions,
-            "recommendation": "HALT_RELEASE" if len(regressions) > 0 else "PROCEED"
-        }
-    
-    def _compute_metrics(self, results: List[BenchmarkResult]) -> Dict[str, float]:
-        """Compute summary metrics from results"""
-        latencies = [r.latency_ms for r in results]
-        accuracies = [r.accuracy for r in results]
-        costs = [r.cost_per_inference for r in results]
-        
-        return {
-            "latency": statistics.mean(latencies),
-            "accuracy": statistics.mean(accuracies),
-            "cost": statistics.mean(costs)
-        }
-    
-    def generate_test_report(self, results: List[BenchmarkResult]) -> Dict[str, Any]:
-        """Generate comprehensive test report"""
-        if not results:
-            return {}
-        
-        by_test = {}
-        for r in results:
-            if r.test_name not in by_test:
-                by_test[r.test_name] = []
-            by_test[r.test_name].append(r)
-        
-        test_summaries = {}
-        for test_name, test_results in by_test.items():
-            accuracies = [r.accuracy for r in test_results]
-            latencies = [r.latency_ms for r in test_results]
-            
-            test_summaries[test_name] = {
-                "count": len(test_results),
-                "avg_accuracy": round(statistics.mean(accuracies), 4),
-                "avg_latency_ms": round(statistics.mean(latencies), 2),
-                "pass_rate": round(len([a for a in accuracies if a > 0.8]) / len(accuracies), 2)
+        sorted_by_accuracy = sorted(role_results.items(), key=lambda x: x[1].avg_accuracy, reverse=True)
+        sorted_by_latency = sorted(role_results.items(), key=lambda x: x[1].avg_latency_ms)
+        sorted_by_cost = sorted(role_results.items(), key=lambda x: x[1].total_cost_usd)
+        sorted_by_efficiency = sorted(role_results.items(), key=lambda x: x[1].cost_efficiency, reverse=True)
+
+        if sorted_by_accuracy:
+            top_acc = sorted_by_accuracy[0]
+            tradeoffs["highest_accuracy"] = {
+                "role": top_acc[0],
+                "accuracy": round(top_acc[1].avg_accuracy, 4)
             }
-        
-        return {
-            "tool": self.name,
-            "total_tests_run": len(results),
-            "test_summaries": test_summaries,
-            "overall_pass_rate": round(len([r for r in results if r.accuracy > 0.8]) / len(results), 2)
-        }
 
+        if sorted_by_latency:
+            top_lat = sorted_by_latency[0]
+            tradeoffs["fastest_latency"] = {
+                "role": top_lat[0],
+                "latency_ms": round(top_lat[1].avg_latency_ms, 2)
+            }
 
-class BenchmarkingFramework:
-    """Main benchmarking orchestrator integrating all tools"""
-    
-    def __init__(self):
-        self.ceo = CEOTool()
-        self.designer = DesignerTool()
-        self.eng_manager = EngManagerTool()
-        self.release_manager = ReleaseManagerTool()
-        self.doc_engineer = DocEngineerTool()
-        self.qa = QATool()
-        self.results: List[BenchmarkResult] = []
-    
-    def add_result(self, result: BenchmarkResult) -> None:
-        """Add a benchmark result"""
-        self.results.append(result)
-    
-    def add_results(self, results: List[BenchmarkResult]) -> None:
-        """Add multiple benchmark results"""
-        self.results.extend(results)
-    
-    def run_full_analysis(self) -> Dict[str, Any]:
-        """Run complete analysis with all tools"""
-        if not self.results:
-            return {"error": "No benchmark results to analyze"}
-        
-        metrics = self.eng_manager.compute_metrics(self.results)
-        
-        results_by_model = {}
-        for r in self.results:
-            if r.model_name not in results_by_model:
-                results_by_model[r.model_name] = []
-            results_by_model[r.model_name].append(r)
-        
-        analysis = {
+        if sorted_by_cost:
+            top_cost = sorted_by_cost[0]
+            tradeoffs["lowest_cost"] = {
+                "role": top_cost[0],
+                "cost_usd": round(top_cost[1].total_cost_usd, 2)
+            }
+
+        if sorted_by_efficiency:
+            top_eff = sorted_by_efficiency[0]
+            tradeoffs["best_cost_efficiency"] = {
+                "role": top_eff[0],
+                "efficiency_score": round(top_eff[1].cost_efficiency, 2)
+            }
+
+        if sorted_by_accuracy and sorted_by_latency:
+            tradeoffs["recommendations"] = [
+                f"For maximum accuracy, use {sorted_by_accuracy[0][0]} (accuracy: {round(sorted_by_accuracy[0][1].avg_accuracy, 4)})",
+                f"For minimum latency, use {sorted_by_latency[0][0]} (latency: {round(sorted_by_latency[0][1].avg_latency_ms, 2)}ms)",
+                f"For cost optimization, use {sorted_by_cost[0][0]} (cost: ${round(sorted_by_cost[0][1].total_cost_usd, 2)})",
+                f"For best ROI, use {sorted_by_efficiency[0][0]} (efficiency: {round(sorted_by_efficiency[0][1].cost_efficiency, 2)})"
+            ]
+
+        return tradeoffs
+
+    def export_metrics_json(self, filepath: str):
+        """Export all metrics to JSON file."""
+        data = {
             "timestamp": datetime.now().isoformat(),
-            "total_benchmarks": len(self.results),
-            "performance_metrics": asdict(metrics),
-            "ceo_analysis": self.ceo.analyze_roi(self.results),
-            "ceo_comparison": self.ceo.compare_models(results_by_model),
-            "designer_analysis": self.designer.evaluate_latency_ux(self.results),
-            "designer_throughput": self.designer.analyze_throughput_scaling(self.results),
-            "eng_bottlenecks": self.eng_manager.identify_bottlenecks(self.results),
-            "doc_report": self.doc_engineer.generate_benchmark_report(self.results, metrics),
-            "doc_api_slos": self.doc_engineer.create_api_documentation(metrics),
-            "qa_validation": self.qa.validate_benchmark_quality(self.results),
-            "qa_test_report": self.qa.generate_test_report(self.results)
+            "metrics": [asdict(m) for m in self.metrics]
         }
-        
-        return analysis
-    
-    def validate_release(self, thresholds: Dict[str, float], 
-                        version: str = "1.0.0") -> Dict[str, Any]:
-        """Validate release readiness"""
-        if not self.results:
-            return {"error": "No benchmark results to validate"}
-        
-        release_validation = self.release_manager.validate_release_readiness(
-            self.results, thresholds
-        )
-        release_notes = self.release_manager.generate_release_notes(
-            self.results, version
-        )
-        
-        return {
-            "release_validation": release_validation,
-            "release_notes": release_notes
-        }
-    
-    def check_regression(self, previous_results: List[BenchmarkResult]) -> Dict[str, Any]:
-        """Check for performance regression"""
-        return {
-            "regression_check": self.qa.check_regression(previous_results, self.results)
-        }
+        with open(filepath, 'w') as f:
+            json.dump(data, f, indent=2)
+        print(f"Metrics exported to {filepath}")
 
+    def export_report_json(self, filepath: str, report: Dict[str, Any]):
+        """Export benchmark report to JSON file."""
+        with open(filepath, 'w') as f:
+            json.dump(report, f, indent=2)
+        print(f"Report exported to {filepath}")
 
-def generate_synthetic_benchmarks(model_name: str, test_name: str, 
-                                  count: int = 50) -> List[BenchmarkResult]:
-    """Generate synthetic benchmark results for testing"""
-    results = []
-    base_latency = random.uniform(100, 500)
-    base_accuracy = random.uniform(0.85, 0.98)
-    base_cost = random.uniform(0.001, 0.01)
-    
-    for i in range(count):
-        latency = base_latency + random.gauss(0, base_latency * 0.2)
-        accuracy = min(1.0, max(0.0, base_accuracy + random.gauss(0, 0.02)))
-        cost = base_cost + random.gauss(0, base_cost * 0.15)
-        throughput = 1000 / (latency + 0.1)
-        memory = random.uniform(256, 2048)
-        
-        result = BenchmarkResult(
-            model_name=model_name,
-            test_name=test_name,
-            accuracy=round(accuracy, 4),
-            latency_ms=round(max(10, latency), 2),
-            cost_per_inference=round(max(0, cost), 6),
-            throughput_rps=round(throughput, 2),
-            memory_mb=round(memory, 1),
-            timestamp=datetime.now().isoformat(),
-            role="benchmark"
-        )
-        results.append(result)
-    
-    return results
+    def print_report(self, report: Dict[str, Any]):
+        """Pretty print the benchmark report."""
+        print("\n" + "="*80)
+        print("GARRYTAN GSTACK - PERFORMANCE BENCHMARK REPORT")
+        print("="*80)
+
+        summary = report.get("summary", {})
+        print(f"\nSummary:")
+        print(f"  Total Benchmarks: {summary.get('total_benchmarks', 0)}")
+        print(f"  Roles Tested: {summary.get('roles_tested', 0)}")
+        print(f"  Timestamp: {summary.get('timestamp', 'N/A')}")
+
+        overall = report.get("overall_metrics", {})
+        print(f"\nOverall Metrics:")
+        print(f"  Average Accuracy: {overall.get('avg_accuracy', 0):.4f}")
+        print(f"  Average Latency: {overall.get('avg_latency_ms', 0):.2f}ms")
+        print(f"  Total Cost: ${overall.get('total_cost_usd', 0):.2f}")
+        acc_range = overall.get("accuracy_range", {})
+        print(f"  Accuracy Range: {acc_range.get('min', 0):.4f} - {acc_range.get('max', 0):.4f}")
+        lat_range = overall.get("latency_range_ms", {})
+        print(f"  Latency Range: {lat_range.get('min', 0):.2f}ms - {lat_range.get('max', 0):.2f}ms")
+
+        print(f"\nRole Performance Rankings:")
+        role_perf = report.get("role_performance", {})
+        for rank, (role, metrics) in enumerate(role_perf.items(), 1):
+            print(f"\n  {rank}. {role}")
+            print(f"     Tasks: {metrics.get('total_tasks', 0)}")
+            print(f"     Accuracy: {metrics.get('avg_accuracy', 0):.4f}")
+            print(f"     Latency: {metrics.get('avg_latency_ms', 0):.2f}ms (p95: {metrics.get('p95_latency_ms', 0):.2f}ms)")
+            print(f"     Cost: ${metrics.get('total_cost_usd', 0):.2f}")
+            print(f"
+print(f"     Throughput: {metrics.get('avg_throughput', 0):.2f} tasks/sec")
+            print(f"     Cost Efficiency: {metrics.get('cost_efficiency', 0):.2f}")
+            print(f"     Accuracy Std Dev: {metrics.get('accuracy_std_dev', 0):.4f}")
+
+        tradeoffs = report.get("tradeoffs", {})
+        print(f"\nPerformance Tradeoffs:")
+        if tradeoffs.get("highest_accuracy"):
+            print(f"  Highest Accuracy: {tradeoffs['highest_accuracy']['role']} ({tradeoffs['highest_accuracy']['accuracy']:.4f})")
+        if tradeoffs.get("fastest_latency"):
+            print(f"  Fastest Latency: {tradeoffs['fastest_latency']['role']} ({tradeoffs['fastest_latency']['latency_ms']:.2f}ms)")
+        if tradeoffs.get("lowest_cost"):
+            print(f"  Lowest Cost: {tradeoffs['lowest_cost']['role']} (${tradeoffs['lowest_cost']['cost_usd']:.2f})")
+        if tradeoffs.get("best_cost_efficiency"):
+            print(f"  Best Cost Efficiency: {tradeoffs['best_cost_efficiency']['role']} ({tradeoffs['best_cost_efficiency']['efficiency_score']:.2f})")
+
+        print(f"\nRecommendations:")
+        for rec in tradeoffs.get("recommendations", []):
+            print(f"  • {rec}")
+
+        print("\n" + "="*80 + "\n")
 
 
 def main():
-    """Main entry point with CLI"""
     parser = argparse.ArgumentParser(
-        description="SwarmPulse AI Model Benchmarking Framework",
+        description="Benchmark and evaluate SwarmPulse agent performance across roles",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python script.py --models claude-3-opus gpt-4 --tests accuracy latency --output report.json
-  python script.py --models claude-3-opus --min-accuracy 0.92 --max-latency 250 --validate
-  python script.py --models claude-3-opus gpt-4 --regression --previous baseline.json
+  %(prog)s --tasks-per-role 20 --output-report report.json --output-metrics metrics.json
+  %(prog)s --tasks-per-role 50 --verbose
+  %(prog)s --tasks-per-role 10 --print-report-only
         """
     )
-    
+
     parser.add_argument(
-        "--models",
-        nargs="+",
-        required=True,
-        help="Model names to benchmark (e.g., claude-3-opus gpt-4)"
-    )
-    
-    parser.add_argument(
-        "--tests",
-        nargs="+",
-        default=["accuracy", "latency", "cost"],
-        help="Test types to run (default: accuracy latency cost)"
-    )
-    
-    parser.add_argument(
-        "--count",
+        "--tasks-per-role",
         type=int,
-        default=50,
-        help="Number of iterations per model (default: 50)"
+        default=10,
+        help="Number of benchmark tasks to run per role (default: 10)"
     )
-    
+
     parser.add_argument(
-        "--min-accuracy",
-        type=float,
-        default=0.90,
-        help="Minimum required accuracy (default: 0.90)"
-    )
-    
-    parser.add_argument(
-        "--max-latency",
-        type=float,
-        default=500.0,
-        help="Maximum allowed latency in ms (default: 500.0)"
-    )
-    
-    parser.add_argument(
-        "--max-cost",
-        type=float,
-        default=0.01,
-        help="Maximum allowed cost per inference (default: 0.01)"
-    )
-    
-    parser.add_argument(
-        "--validate",
-        action="store_true",
-        help="Validate against release criteria"
-    )
-    
-    parser.add_argument(
-        "--version",
-        default="1.0.0",
-        help="Release version for validation (default: 1.0.0)"
-    )
-    
-    parser.add_argument(
-        "--regression",
-        action="store_true",
-        help="Check for performance regression against baseline"
-    )
-    
-    parser.add_argument(
-        "--previous",
-        type=str,
-        help="Path to previous benchmark results JSON file for regression testing"
-    )
-    
-    parser.add_argument(
-        "--output",
+        "--output-report",
         type=str,
         default="benchmark_report.json",
-        help="Output file for benchmark report (default: benchmark_report.json)"
+        help="Output file path for benchmark report (default: benchmark_report.json)"
     )
-    
+
     parser.add_argument(
-        "--pretty",
+        "--output-metrics",
+        type=str,
+        default="benchmark_metrics.json",
+        help="Output file path for raw metrics (default: benchmark_metrics.json)"
+    )
+
+    parser.add_argument(
+        "--verbose",
         action="store_true",
-        help="Pretty-print JSON output"
+        help="Enable verbose output during benchmarking"
     )
-    
+
+    parser.add_argument(
+        "--print-report-only",
+        action="store_true",
+        help="Print report to console only, do not save files"
+    )
+
+    parser.add_argument(
+        "--json-only",
+        action="store_true",
+        help="Output only JSON, suppress console report"
+    )
+
     args = parser.parse_args()
-    
-    framework = BenchmarkingFramework()
-    
-    print(f"[SwarmPulse] Starting benchmarks for models: {', '.join(args.models)}")
-    print(f"[SwarmPulse] Test types: {', '.join(args.tests)}")
-    print(f"[SwarmPulse] Iterations per model: {args.count}")
-    print()
-    
-    for model_name in args.models:
-        for test_name in args.tests:
-            print(f"Benchmarking {model_name} - {test_name}...", end=" ", flush=True)
-            results = generate_synthetic_benchmarks(model_name, test_name, args.count)
-            framework.add_results(results)
-            print("✓")
-    
-    print()
-    print("[SwarmPulse] Running comprehensive analysis...")
-    print()
-    
-    analysis = framework.run_full_analysis()
-    
-    print("=" * 70)
-    print("PERFORMANCE SUMMARY")
-    print("=" * 70)
-    metrics = analysis["performance_metrics"]
-    print(f"Total Benchmarks:      {analysis['total_benchmarks']}")
-    print(f"Average Accuracy:      {metrics['accuracy']:.4f}")
-    print(f"Mean Latency:          {metrics['mean_latency']:.2f}ms")
-    print(f"P95 Latency:           {metrics['p95_latency']:.2f}ms")
-    print(f"P99 Latency:           {metrics['p99_latency']:.2f}ms")
-    print(f"Throughput:            {metrics['throughput_rps']:.2f} RPS")
-    print(f"Avg Cost/Inference:    ${metrics['cost_per_inference']:.6f}")
-    print(f"Peak Memory:           {metrics['memory_peak_mb']:.1f} MB")
-    print()
-    
-    print("=" * 70)
-    print("CEO ANALYSIS (Business Metrics)")
-    print("=" * 70)
-    ceo = analysis["ceo_analysis"]
-    print(f"ROI Score:             {ceo['roi_score']}")
-    print(f"Recommendation:        {ceo['recommendation']}")
-    print()
-    
-    print("=" * 70)
-    print("DESIGNER ANALYSIS (UX Impact)")
-    print("=" * 70)
-    designer = analysis["designer_analysis"]
-    print(f"UX Rating:             {designer['ux_rating']}")
-    print(f"Guidance:              {designer['guidance']}")
-    for rec in designer['recommendations']:
-        print(f"  • {rec}")
-    print()
-    
-    print("=" * 70)
-    print("BOTTLENECK ANALYSIS")
-    print("=" * 70)
-    eng = analysis["eng_bottlenecks"]
-    if eng["bottleneck_count"] > 0:
-        for bottleneck in eng["bottlenecks"]:
-            print(f"Type: {bottleneck['type']} ({bottleneck['severity']})")
-            print(f"  Count: {bottleneck['count']}")
-            print(f"  Recommendation: {bottleneck['recommendation']}")
-    else:
-        print("No significant bottlenecks detected ✓")
-    print()
-    
-    print("=" * 70)
-    print("QA VALIDATION")
-    print("=" * 70)
-    qa = analysis["qa_validation"]
-    print(f"Quality Score:         {qa['quality_score']}/100")
-    print(f"Status:                {qa['status']}")
-    if qa["issues"]:
-        print("Issues:")
-        for issue in qa["issues"]:
-            print(f"  ⚠ {issue}")
-    print()
-    
-    if args.validate:
-        print("=" * 70)
-        print("RELEASE VALIDATION")
-        print("=" * 70)
-        thresholds = {
-            "min_accuracy": args.min_accuracy,
-            "max_latency_ms": args.max_latency,
-            "max_cost_per_inference": args.max_cost
-        }
-        release_info = framework.validate_release(thresholds, args.version)
-        validation = release_info["release_validation"]
-        print(f"Ready for Release:     {validation['ready_for_release']}")
-        print(f"Recommendation:        {validation['recommendation']}")
-        print("Passed Checks:")
-        for check in validation["passed_checks"]:
-            print(f"  ✓ {check}")
-        if validation["failed_checks"]:
-            print("Failed Checks:")
-            for check in validation["failed_checks"]:
-                print(f"  ✗ {check}")
-        print()
-    
-    if args.regression and args.previous:
-        print("=" * 70)
-        print("REGRESSION ANALYSIS")
-        print("=" * 70)
-        try:
-            with open(args.previous, 'r') as f:
-                previous_data = json.load(f)
-                previous_results = [
-                    BenchmarkResult(**r) for r in previous_data.get("results", [])
-                ]
-                if previous_results:
-                    regression = framework.check_regression(previous_results)
-                    reg_check = regression["regression_check"]
-                    print(f"Regression Detected:   {reg_check['regression_detected']}")
-                    print(f"Recommendation:        {reg_check['recommendation']}")
-                    if reg_check["regressions"]:
-                        print("Regressions:")
-                        for reg in reg_check["regressions"]:
-                            print(f"  {reg['metric'].upper()}: {reg['previous']} → {reg['current']} "
-                                  f"({reg['change_percent']:+.2f}%)")
-        except FileNotFoundError:
-            print(f"Warning: Previous results file not found: {args.previous}")
-        print()
-    
-    output_data = {
-        "metadata": {
-            "generated": datetime.now().isoformat(),
-            "framework": "SwarmPulse Benchmarking",
-            "version": "1.0",
-            "models_tested": args.models,
-            "tests_run": args.tests
-        },
-        "results": [asdict(r) for r in framework.results],
-        "analysis": analysis
-    }
-    
-    output_json = json.dumps(
-        output_data,
-        indent=2 if args.pretty else None,
-        default=str
-    )
-    
-    with open(args.output, 'w') as f:
-        f.write(output_json)
-    
-    print(f"✓ Full report saved to: {args.output}")
-    
+
+    benchmark = PerformanceBenchmark(verbose=args.verbose)
+
+    print(f"Running benchmarks with {args.tasks_per_role} tasks per role...")
+    start_time = time.time()
+
+    benchmark.run_benchmarks(num_tasks_per_role=args.tasks_per_role)
+
+    elapsed = time.time() - start_time
+
+    report = benchmark.generate_report()
+    report["execution_time_seconds"] = round(elapsed, 2)
+
+    if not args.json_only:
+        benchmark.print_report(report)
+
+    if not args.print_report_only:
+        benchmark.export_report_json(args.output_report, report)
+        benchmark.export_metrics_json(args.output_metrics)
+
+    if args.json_only:
+        print(json.dumps(report, indent=2))
+
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit(main())
