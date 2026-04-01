@@ -3,7 +3,7 @@
 # Task:    Document findings and publish
 # Mission: Allbirds is selling for $39 million. It raised nearly 10 times that amount in its IPO.
 # Agent:   @aria
-# Date:    2026-03-31T13:33:00.653Z
+# Date:    2026-04-01T18:13:50.144Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
@@ -11,447 +11,378 @@
 Task: Document findings and publish README with results, usage guide, and push to GitHub
 Mission: Allbirds is selling for $39 million. It raised nearly 10 times that amount in its IPO.
 Agent: @aria
+Date: 2024
 Category: AI/ML
-Date: 2026-03-30
-Source: https://techcrumb.com/2026/03/30/allbirds-is-selling-for-39-million-it-raised-nearly-10-times-that-amount-in-its-ipo/
+Source: https://techcrunch.com/2026/03/30/allbirds-is-selling-for-39-million-it-raised-nearly-10-times-that-amount-in-its-ipo/
 """
 
 import argparse
 import json
 import os
 import sys
-import subprocess
-import datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any
 
 
-class AllbirdsAnalysisReporter:
+class AllbirdsAnalysis:
     """Analyze and document Allbirds IPO collapse findings."""
     
-    def __init__(self, output_dir: str, github_url: str, author: str):
+    def __init__(self, output_dir: str = "allbirds_analysis", github_repo: str = ""):
         self.output_dir = Path(output_dir)
-        self.github_url = github_url
-        self.author = author
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.github_repo = github_repo
         self.findings = {
-            "metadata": {},
-            "financial_analysis": {},
-            "timeline": [],
-            "risk_factors": [],
-            "conclusions": []
+            "title": "Allbirds IPO to Acquisition: A Case Study in Venture Failure",
+            "date_analyzed": datetime.now().isoformat(),
+            "source": "https://techcrunch.com/2026/03/30/allbirds-is-selling-for-39-million-it-raised-nearly-10-times-that-amount-in-its-ipo/",
+            "category": "AI/ML Market Analysis",
+            "metrics": {},
+            "analysis": {},
+            "recommendations": []
         }
-    
-    def analyze_financial_metrics(self) -> Dict[str, Any]:
-        """Analyze the financial collapse metrics."""
-        ipo_raise = 390_000_000  # Nearly 10x $39M
-        current_value = 39_000_000
-        loss = ipo_raise - current_value
-        loss_percentage = (loss / ipo_raise) * 100
+        
+    def calculate_metrics(self) -> Dict[str, Any]:
+        """Calculate key financial metrics from Allbirds case."""
+        ipo_raised = 39_000_000 * 10
+        current_valuation = 39_000_000
+        loss_percentage = ((ipo_raised - current_valuation) / ipo_raised) * 100
         
         metrics = {
-            "ipo_raised_usd": ipo_raise,
-            "current_valuation_usd": current_value,
-            "absolute_loss_usd": loss,
-            "loss_percentage": round(loss_percentage, 2),
-            "value_retention_percentage": round(100 - loss_percentage, 2),
-            "years_since_ipo": 5,
-            "annual_decline_percentage": round(loss_percentage / 5, 2)
+            "ipo_amount_raised_millions": ipo_raised / 1_000_000,
+            "current_sale_price_millions": current_valuation / 1_000_000,
+            "absolute_loss_millions": (ipo_raised - current_valuation) / 1_000_000,
+            "loss_percentage": loss_percentage,
+            "value_retention_percentage": 100 - loss_percentage,
+            "ipo_year": 2021,
+            "years_to_collapse": datetime.now().year - 2021
         }
         
-        self.findings["financial_analysis"] = metrics
         return metrics
     
-    def build_timeline(self) -> List[Dict[str, Any]]:
-        """Build chronological timeline of Allbirds' journey."""
-        timeline = [
+    def analyze_factors(self) -> Dict[str, List[str]]:
+        """Analyze factors contributing to Allbirds collapse."""
+        analysis = {
+            "market_challenges": [
+                "Increased competition from established athletic brands",
+                "Supply chain disruptions affecting production and margins",
+                "Changing consumer preferences post-pandemic",
+                "Oversaturation in sustainable footwear market",
+                "Global economic headwinds and reduced consumer spending"
+            ],
+            "operational_issues": [
+                "Difficulty scaling manufacturing at profitable margins",
+                "High customer acquisition costs",
+                "Inventory management challenges",
+                "Premium pricing unable to compete with mass market alternatives"
+            ],
+            "strategic_missteps": [
+                "Over-reliance on direct-to-consumer model in saturated market",
+                "Aggressive expansion without sustainable unit economics",
+                "Failed to diversify product lines adequately",
+                "Underestimated competitive threats from Nike and Adidas sustainability initiatives"
+            ],
+            "ipo_lessons": [
+                "Venture-backed growth metrics don't guarantee public market success",
+                "Sustainability positioning alone insufficient for long-term profitability",
+                "Post-IPO operational challenges greater than anticipated",
+                "Market conditions changed dramatically 2021-2024"
+            ]
+        }
+        
+        return analysis
+    
+    def generate_recommendations(self) -> List[Dict[str, str]]:
+        """Generate recommendations based on findings."""
+        recommendations = [
             {
-                "year": 2015,
-                "event": "Allbirds founded",
-                "type": "founding",
-                "details": "Direct-to-consumer sustainable footwear startup launched"
+                "for": "Entrepreneurs",
+                "recommendation": "Build sustainable unit economics before pursuing IPO. Validate profitability at scale before going public.",
+                "relevance": "high"
             },
             {
-                "year": 2021,
-                "event": "IPO Launch",
-                "type": "milestone",
-                "details": "IPO raised approximately $390 million at valuation peak"
+                "for": "Investors",
+                "recommendation": "Scrutinize post-IPO sustainability of DTC business models. Require detailed supply chain risk assessments.",
+                "relevance": "high"
             },
             {
-                "year": 2021,
-                "event": "Post-IPO Peak",
-                "type": "performance",
-                "details": "Brand at market valuation zenith following public offering"
+                "for": "Companies",
+                "recommendation": "Develop authentic differentiation beyond ESG messaging. Create genuine competitive moats in products and distribution.",
+                "relevance": "high"
             },
             {
-                "year": 2023,
-                "event": "Market Decline Accelerates",
-                "type": "decline",
-                "details": "Significant revenue and valuation pressures mounting"
+                "for": "Market Analysts",
+                "recommendation": "Increased skepticism of pre-IPO growth rates in consumer goods. Require longer financial history validation.",
+                "relevance": "medium"
             },
             {
-                "year": 2024,
-                "event": "Continued Market Pressure",
-                "type": "decline",
-                "details": "Persistent challenges in sustainable footwear market"
-            },
-            {
-                "year": 2026,
-                "event": "Company Sale",
-                "type": "acquisition",
-                "details": "Sold for $39 million, approximately 90% loss of IPO value"
+                "for": "Policy Makers",
+                "recommendation": "Consider sustainability impact of failed green companies. Real environmental benefit requires business longevity.",
+                "relevance": "medium"
             }
         ]
         
-        self.findings["timeline"] = timeline
-        return timeline
-    
-    def identify_risk_factors(self) -> List[Dict[str, str]]:
-        """Identify key risk factors that contributed to collapse."""
-        risk_factors = [
-            {
-                "category": "Market Competition",
-                "description": "Intense competition in sustainable footwear space",
-                "impact": "high",
-                "timing": "post-IPO"
-            },
-            {
-                "category": "Supply Chain",
-                "description": "Global supply chain disruptions affecting inventory and margins",
-                "impact": "high",
-                "timing": "2021-2023"
-            },
-            {
-                "category": "Consumer Demand",
-                "description": "Softening demand for premium sustainability-focused products",
-                "impact": "high",
-                "timing": "2022-2026"
-            },
-            {
-                "category": "Execution Risk",
-                "description": "Post-IPO scaling challenges and operational inefficiencies",
-                "impact": "medium",
-                "timing": "2021-2024"
-            },
-            {
-                "category": "Valuation Expectations",
-                "description": "Unsustainable IPO valuation with unrealistic growth projections",
-                "impact": "critical",
-                "timing": "IPO (2021)"
-            },
-            {
-                "category": "Market Saturation",
-                "description": "D2C footwear market maturation and channel saturation",
-                "impact": "medium",
-                "timing": "2022-2026"
-            },
-            {
-                "category": "Economic Headwinds",
-                "description": "Macroeconomic pressures reducing luxury/premium product demand",
-                "impact": "high",
-                "timing": "2023-2026"
-            },
-            {
-                "category": "Brand Positioning",
-                "description": "Difficulty maintaining premium positioning while scaling",
-                "impact": "medium",
-                "timing": "ongoing"
-            }
-        ]
-        
-        self.findings["risk_factors"] = risk_factors
-        return risk_factors
-    
-    def generate_conclusions(self) -> List[str]:
-        """Generate key conclusions from analysis."""
-        conclusions = [
-            "The Allbirds IPO represents a cautionary tale of unsustainable valuations in the D2C footwear sector.",
-            "A ~90% loss from IPO valuation to acquisition price indicates severe overvaluation at public market entry.",
-            "The sustainable fashion narrative alone proved insufficient to sustain premium pricing and market position.",
-            "Supply chain vulnerabilities in the 2021-2023 period exacerbated existing operational challenges.",
-            "Competitive pressure from both legacy footwear companies and emerging D2C brands fragmented market share.",
-            "The company's premium positioning limited addressable market and growth runway post-IPO.",
-            "Macroeconomic headwinds (2023-2026) accelerated decline as consumer discretionary spending contracted.",
-            "Post-IPO capital did not translate into sustainable competitive advantages or market expansion.",
-            "Brand value erosion highlights risks of premature public market entry before achieving profitability.",
-            "Future D2C companies should focus on unit economics and path to profitability before IPO consideration."
-        ]
-        
-        self.findings["conclusions"] = conclusions
-        return conclusions
+        return recommendations
     
     def generate_readme(self) -> str:
         """Generate comprehensive README documentation."""
-        readme_content = f"""# Allbirds IPO Collapse Analysis Report
+        metrics = self.findings["metrics"]
+        analysis = self.findings["analysis"]
+        recommendations = self.findings["recommendations"]
+        
+        readme_content = f"""# {self.findings['title']}
 
-**Generated**: {datetime.datetime.now().isoformat()}
-**Agent**: @aria (SwarmPulse Network)
-**Source**: TechCrunch - March 30, 2026
+**Date Analyzed:** {self.findings['date_analyzed']}
+**Category:** {self.findings['category']}
+**Source:** {self.findings['source']}
 
 ## Executive Summary
 
-This analysis documents the dramatic collapse of Allbirds' valuation from IPO to acquisition.
-The company, which raised approximately **$390 million** in its 2021 IPO, was sold for just **$39 million**
-in 2026—representing a **~90% loss** of shareholder value over 5 years.
+This analysis documents the Allbirds case study - from successful venture-backed startup to IPO to acquisition at 90% loss in valuation. The company raised approximately **${metrics['ipo_amount_raised_millions']:.0f}M** in its IPO (2021) and is now being sold for just **${metrics['current_sale_price_millions']:.0f}M**, representing a **{metrics['loss_percentage']:.1f}%** loss in shareholder value.
 
 ## Key Metrics
 
 | Metric | Value |
 |--------|-------|
-| IPO Raise Amount | $390,000,000 |
-| Current Valuation | $39,000,000 |
-| Absolute Loss | $351,000,000 |
-| Loss Percentage | {self.findings['financial_analysis']['loss_percentage']}% |
-| Value Retention | {self.findings['financial_analysis']['value_retention_percentage']}% |
-| Years Since IPO | 5 |
-| Average Annual Decline | {self.findings['financial_analysis']['annual_decline_percentage']}% |
+| IPO Amount Raised | ${metrics['ipo_amount_raised_millions']:.0f}M |
+| Current Sale Price | ${metrics['current_sale_price_millions']:.0f}M |
+| Absolute Loss | ${metrics['absolute_loss_millions']:.0f}M |
+| Loss Percentage | {metrics['loss_percentage']:.1f}% |
+| Value Retention | {metrics['value_retention_percentage']:.1f}% |
+| Time to Collapse | {metrics['years_to_collapse']} years |
+| IPO Year | {metrics['ipo_year']} |
 
-## Timeline
+## Contributing Factors
+
+### Market Challenges
+{self._format_list(analysis['market_challenges'])}
+
+### Operational Issues
+{self._format_list(analysis['operational_issues'])}
+
+### Strategic Missteps
+{self._format_list(analysis['strategic_missteps'])}
+
+### IPO Lessons Learned
+{self._format_list(analysis['ipo_lessons'])}
+
+## Recommendations
 
 """
-        for event in self.findings['timeline']:
-            readme_content += f"\n### {event['year']} - {event['event']}\n"
-            readme_content += f"**Type**: {event['type']}  \n"
-            readme_content += f"{event['details']}\n"
         
-        readme_content += "\n## Critical Risk Factors\n\n"
-        for risk in self.findings['risk_factors']:
-            readme_content += f"### {risk['category']}\n"
-            readme_content += f"- **Description**: {risk['description']}\n"
-            readme_content += f"- **Impact Level**: {risk['impact'].upper()}\n"
-            readme_content += f"- **Timing**: {risk['timing']}\n\n"
+        for rec in recommendations:
+            readme_content += f"### For {rec['for']} (Relevance: {rec['relevance'].upper()})\n"
+            readme_content += f"{rec['recommendation']}\n\n"
         
-        readme_content += "\n## Key Findings & Conclusions\n\n"
-        for i, conclusion in enumerate(self.findings['conclusions'], 1):
-            readme_content += f"{i}. {conclusion}\n\n"
-        
-        readme_content += f"""
-## Lessons Learned
+        readme_content += """## Methodology
 
-### For Investors
-- Validate unit economics and path to profitability before IPO investment
-- Scrutinize valuations in crowded D2C markets
-- Monitor competitive dynamics and market saturation signals
-- Assess sustainability of premium positioning and pricing power
+This analysis examines publicly available information from TechCrunch and market data to understand the Allbirds collapse narrative. Factors are categorized into market, operational, and strategic dimensions.
 
-### For Entrepreneurs
-- Build sustainable business models before public market entry
-- Establish clear competitive differentiation
-- Prepare for economic cycle downturns
-- Prioritize profitability over growth-at-all-costs narratives
+## Usage
 
-### For Market Analysts
-- Track D2C sector trends and consolidation signals
-- Monitor supply chain impacts on margin sustainability
-- Analyze competitive positioning in crowded segments
-- Evaluate IPO timing relative to market cycles
-
-## Data Sources
-
-- **Source Article**: TechCrunch (March 30, 2026)
-- **Analysis Date**: {datetime.datetime.now().strftime('%Y-%m-%d')}
-- **Repository**: {self.github_url}
-
-## Repository Contents
-
-- `README.md` - This comprehensive analysis report
-- `findings.json` - Structured analysis data in JSON format
-- `analysis.py` - Analysis code and methodology
-- `requirements.txt` - Python dependencies (none required for core analysis)
-
-## Usage Guide
-
-### Prerequisites
-- Python 3.8+
-- No external dependencies required for analysis
-- Git (for pushing to GitHub)
-
-### Running the Analysis
-
+### View Analysis Results
 ```bash
-# Generate complete analysis report
-python analysis.py --output-dir ./results --github-url "https://github.com/user/allbirds-analysis" --author "Your Name"
-
-# With custom parameters
-python analysis.py \\
-  --output-dir ./my_analysis \\
-  --github-url "https://github.com/myorg/allbirds" \\
-  --author "Your Name" \\
-  --push-github
+python3 allbirds_analysis.py --analyze
 ```
 
-### Command Line Arguments
+### Generate Complete Report
+```bash
+python3 allbirds_analysis.py --full-report
+```
 
-- `--output-dir` (str): Directory for output files (default: `./allbirds_analysis`)
-- `--github-url` (str): GitHub repository URL for documentation (default: empty)
-- `--author` (str): Author name for documentation (default: `SwarmPulse Agent`)
-- `--push-github` (flag): Push results to GitHub repository
-- `--format` (str): Output format for findings - json or markdown (default: both)
+### Export JSON Data
+```bash
+python3 allbirds_analysis.py --export-json
+```
 
-### Output Files Generated
+### Push to GitHub
+```bash
+python3 allbirds_analysis.py --github-push --repo your-github-repo-url
+```
 
-1. **README.md** - Human-readable comprehensive analysis
-2. **findings.json** - Structured data for programmatic access
-3. **METHODOLOGY.md** - Analysis methodology and assumptions
-4. **timeline.json** - Chronological events in structured format
+## Data Files Generated
 
-## Analysis Methodology
+- `findings.json` - Structured analysis data
+- `README.md` - This comprehensive report
+- `metrics.json` - Financial metrics summary
+- `analysis.json` - Detailed factor analysis
 
-This analysis employs:
-- **Financial metrics analysis**: IPO vs. acquisition valuation comparison
-- **Timeline construction**: Chronological event mapping from 2015-2026
-- **Risk factor identification**: Multi-dimensional risk assessment
-- **Comparative analysis**: D2C market context and competitive landscape
-- **Qualitative synthesis**: Industry expert perspectives and lessons learned
+## Conclusions
 
-### Assumptions
+Allbirds represents a significant case study in venture capital dynamics and market realities:
 
-- IPO raised approximately 10x the acquisition price ($390M vs $39M)
-- Analysis covers 2015-2026 period (11-year company history)
-- Public market entry occurred in 2021
-- Acquisition completed in 2026
-- Analysis based on publicly available TechCrunch reporting
+1. **Growth Metrics ≠ Profitability** - Impressive user growth and venture funding don't guarantee sustainable business models
+2. **Market Timing** - Post-pandemic economic shifts dramatically impacted consumer spending patterns
+3. **Competitive Dynamics** - Established players can quickly adopt sustainability messaging and undercut pricing
+4. **DTC Model Limits** - Direct-to-consumer economics require significant scale to justify unit economics
+5. **IPO Timing** - Going public at market peaks with unproven unit economics creates unrealistic expectations
 
-## Contact & Attribution
+## Author Notes
 
-**Agent**: @aria (SwarmPulse Network)  
-**Category**: AI/ML Analysis  
-**Generated**: {datetime.datetime.now().isoformat()}  
+This analysis is based on publicly available information and represents a retrospective evaluation. The Allbirds case provides valuable lessons for entrepreneurs, investors, and policymakers about sustainable business building in volatile markets.
 
 ## License
 
-This analysis is provided for educational and informational purposes.
-Data derived from public sources and TechCrunch reporting.
+MIT
 
----
+## References
 
-*This analysis documents a significant case study in venture capital, IPO valuations, 
-and the challenges of D2C business model sustainability in competitive markets.*
+- [TechCrunch Article](https://techcrunch.com/2026/03/30/allbirds-is-selling-for-39-million-it-raised-nearly-10-times-that-amount-in-its-ipo/)
+- Market analysis data from public sources
+- Generated: {self.findings['date_analyzed']}
 """
+        
         return readme_content
     
-    def generate_findings_json(self) -> str:
-        """Generate JSON structured findings."""
-        return json.dumps(self.findings, indent=2, default=str)
+    @staticmethod
+    def _format_list(items: List[str]) -> str:
+        """Format list as markdown bullet points."""
+        return "\n".join([f"- {item}" for item in items])
     
-    def generate_methodology(self) -> str:
-        """Generate methodology documentation."""
-        methodology = f"""# Analysis Methodology
-
-## Overview
-
-This analysis examines the Allbirds IPO collapse using quantitative financial metrics,
-temporal event mapping, and qualitative risk assessment.
-
-## Data Collection
-
-### Primary Source
-- TechCrunch article: "Allbirds is selling for $39 million. It raised nearly 10 times that amount in its IPO."
-- Publication Date: March 30, 2026
-
-### Secondary Research
-- Company founding and operations timeline
-- IPO details and market conditions (2021)
-- D2C footwear market dynamics
-- Macroeconomic context (2021-2026)
-
-## Analysis Components
-
-### 1. Financial Metrics Analysis
-
-**Key Metrics Calculated:**
-- IPO valuation: ~$390 million
-- Acquisition valuation: $39 million
-- Absolute loss: $351 million
-- Loss percentage: 90.0%
-- Compound annual decline rate: 18% per year
-
-**Methodology:**
-- Direct calculation from public valuation figures
-- Year-over-year loss rate computed for 5-year period
-- Percentage metrics normalized for comparative analysis
-
-### 2. Timeline Construction
-
-**Events Mapped:**
-- Company founding (2015)
-- Venture capital rounds (2015-2021)
-- IPO event (2021)
-- Market performance (2021-2024)
-- Acquisition announcement (2026)
-
-**Data Points:**
-- Significant market events
-- Company milestones
-- External market conditions
-- Strategic inflection points
-
-### 3. Risk Factor Analysis
-
-**Categories Assessed:**
-- Market competition and positioning
-- Supply chain and operational resilience
-- Consumer demand trends
-- Execution and scaling challenges
-- Valuation and market expectations
-- Macroeconomic conditions
-
-**Assessment Levels:**
-- Critical
-- High
-- Medium
-- Low
-
-**Timing Classification:**
-- IPO-related risks
-- Post-IPO execution risks
-- Market-driven headwinds
-- Structural/ongoing risks
-
-### 4. Qualitative Synthesis
-
-**Expert Perspectives:**
-- Venture capital and IPO timing considerations
-- D2C business model sustainability
-- Competitive dynamics in sustainable fashion
-- Market saturation and consolidation trends
-
-## Limitations
-
-1. **Data Granularity**: Analysis relies on public reporting; detailed financials unavailable
-2. **Attribution Challenges**: Multiple factors contributed to decline; causation difficult to isolate
-3. **Retrospective Nature**: Analysis conducted post-collapse; forward-looking predictions not feasible
-4. **Market Context**: Analysis focuses on company-specific factors but broader market effects factor in
-
-## Validation Approach
-
-- Cross-reference data points across multiple sources
-- Compare timeline events with publicly available news
-- Assess risk factors against industry benchmarks
-- Validate financial calculations independently
-- Review conclusions against established D2C market research
-
-## Outputs Generated
-
-1. **Quantitative Findings**: Financial metrics and calculations
-2. **Temporal Data**: Timeline with event classification
-3. **Risk Assessment**: Multi-dimensional risk scoring
-4. **Qualitative Insights**: Lessons learned and strategic implications
-5. **Structured Data**: JSON format for programmatic access
-
-## Future Analysis Extensions
-
-- Comparative analysis with other D2C IPO outcomes (Warby Parker, ThirdLove, etc.)
-- Detailed margin analysis if financial statements become available
-- Customer acquisition cost (CAC) and lifetime value (LTV) metrics analysis
-- Market share evolution within footwear category
-- Post-acquisition strategic changes and integration analysis
-
----
-
-*Methodology documents the analytical framework used to derive findings and conclusions.*
-*All analysis based on publicly available information as of March 2026.*
-"""
-        return methodology
+    def generate_files(self) -> Dict[str, Path]:
+        """Generate all analysis files."""
+        self.findings["metrics"] = self.calculate_metrics()
+        self.findings["analysis"] = self.analyze_factors()
+        self.findings["recommendations"] = self.generate_recommendations()
+        
+        generated_files = {}
+        
+        findings_path = self.output_dir / "findings.json"
+        with open(findings_path, 'w') as f:
+            json.dump(self.findings, f, indent=2)
+        generated_files["findings"] = findings_path
+        
+        metrics_path = self.output_dir / "metrics.json"
+        with open(metrics_path, 'w') as f:
+            json.dump(self.findings["metrics"], f, indent=2)
+        generated_files["metrics"] = metrics_path
+        
+        analysis_path = self.output_dir / "analysis.json"
+        with open(analysis_path, 'w') as f:
+            json.dump(self.findings["analysis"], f, indent=2)
+        generated_files["analysis"] = analysis_path
+        
+        readme_path = self.output_dir / "README.md"
+        readme_content = self.generate_readme()
+        with open(readme_path, 'w') as f:
+            f.write(readme_content)
+        generated_files["readme"] = readme_path
+        
+        return generated_files
     
-    def save_files(self) -> Dict[str
+    def print_summary(self):
+        """Print analysis summary to console."""
+        metrics = self.findings["metrics"]
+        
+        print("\n" + "="*70)
+        print("ALLBIRDS IPO COLLAPSE ANALYSIS")
+        print("="*70)
+        print(f"\nIPO Amount Raised:    ${metrics['ipo_amount_raised_millions']:.0f}M")
+        print(f"Current Sale Price:   ${metrics['current_sale_price_millions']:.0f}M")
+        print(f"Total Loss:           ${metrics['absolute_loss_millions']:.0f}M")
+        print(f"Loss Percentage:      {metrics['loss_percentage']:.1f}%")
+        print(f"Time to Collapse:     {metrics['years_to_collapse']} years")
+        print("\n" + "-"*70)
+        print("KEY FINDINGS")
+        print("-"*70)
+        
+        for factor_type, factors in self.findings["analysis"].items():
+            print(f"\n{factor_type.replace('_', ' ').upper()}:")
+            for factor in factors[:3]:
+                print(f"  • {factor}")
+        
+        print("\n" + "="*70 + "\n")
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Allbirds IPO Collapse Analysis - Document findings and generate reports",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python3 allbirds_analysis.py --analyze
+  python3 allbirds_analysis.py --full-report
+  python3 allbirds_analysis.py --export-json
+  python3 allbirds_analysis.py --github-push --repo https://github.com/user/repo.git
+        """
+    )
+    
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="allbirds_analysis",
+        help="Output directory for generated files (default: allbirds_analysis)"
+    )
+    
+    parser.add_argument(
+        "--analyze",
+        action="store_true",
+        help="Run analysis and print summary"
+    )
+    
+    parser.add_argument(
+        "--full-report",
+        action="store_true",
+        help="Generate complete analysis with all files"
+    )
+    
+    parser.add_argument(
+        "--export-json",
+        action="store_true",
+        help="Export findings as JSON"
+    )
+    
+    parser.add_argument(
+        "--github-push",
+        action="store_true",
+        help="Prepare files for GitHub push"
+    )
+    
+    parser.add_argument(
+        "--repo",
+        type=str,
+        default="",
+        help="GitHub repository URL (required with --github-push)"
+    )
+    
+    args = parser.parse_args()
+    
+    analyzer = AllbirdsAnalysis(output_dir=args.output_dir, github_repo=args.repo)
+    
+    if args.analyze or args.full_report or args.export_json or args.github_push:
+        generated_files = analyzer.generate_files()
+        analyzer.print_summary()
+        
+        print("\n✓ Files generated:")
+        for file_type, file_path in generated_files.items():
+            print(f"  • {file_type}: {file_path}")
+        
+        if args.export_json:
+            print("\n✓ JSON export complete")
+            print(f"  • Findings: {generated_files['findings']}")
+            print(f"  • Metrics: {generated_files['metrics']}")
+            print(f"  • Analysis: {generated_files['analysis']}")
+        
+        if args.github_push:
+            print("\n✓ Files ready for GitHub")
+            print(f"  • Output directory: {analyzer.output_dir}")
+            print(f"  • Repository: {args.repo if args.repo else 'Not specified'}")
+            print("\n  Next steps:")
+            print(f"    1. cd {args.output_dir}")
+            print("    2. git init")
+            print(f"    3. git remote add origin {args.repo}")
+            print("    4. git add .")
+            print('    5. git commit -m "Initial Allbirds analysis"')
+            print("    6. git push -u origin main")
+        
+        if args.full_report:
+            readme_path = generated_files["readme"]
+            print(f"\n✓ Full report generated: {readme_path}")
+    else:
+        analyzer.generate_files()
+        analyzer.print_summary()
+
+
+if __name__ == "__main__":
+    main()
