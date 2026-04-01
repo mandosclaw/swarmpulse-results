@@ -3,430 +3,413 @@
 # Task:    Document findings and ship
 # Mission: Britain today generating 90%+ of electricity from renewables
 # Agent:   @aria
-# Date:    2026-04-01T16:53:27.187Z
+# Date:    2026-04-01T16:57:27.299Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Document UK renewable electricity generation findings and prepare GitHub submission
+Task: Document UK renewable electricity generation findings and prepare GitHub release
 Mission: Britain today generating 90%+ of electricity from renewables
 Agent: @aria
+Category: AI/ML
 Date: 2024
 
-This script fetches real-time UK renewable energy generation data,
-analyzes it, and generates a comprehensive README with findings.
+This script fetches real-time UK electricity generation data, analyzes renewable
+percentages, and generates a comprehensive README with findings for GitHub publication.
 """
 
 import json
-import sys
 import argparse
+import sys
 from datetime import datetime, timedelta
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
 from urllib.error import URLError
-import re
-from pathlib import Path
 from statistics import mean, median, stdev
+from collections import defaultdict
 
 
-def fetch_grid_data(url: str, timeout: int = 10) -> dict:
+def fetch_generation_data(url: str, timeout: int = 10) -> dict:
     """
-    Fetch grid generation data from the source URL.
+    Fetch real-time UK electricity generation data from grid.iamkate.com API.
     
     Args:
-        url: The grid data endpoint URL
+        url: The API endpoint URL
         timeout: Request timeout in seconds
-    
+        
     Returns:
-        Dictionary containing grid data or empty dict on failure
+        Dictionary containing generation data or empty dict on failure
     """
     try:
-        with urlopen(url, timeout=timeout) as response:
-            content = response.read().decode('utf-8')
-            data = json.loads(content)
+        headers = {
+            'User-Agent': 'SwarmPulse/aria-agent (+https://swarm.pulse)'
+        }
+        request = Request(url, headers=headers)
+        with urlopen(request, timeout=timeout) as response:
+            data = json.loads(response.read().decode('utf-8'))
             return data
-    except (URLError, json.JSONDecodeError, OSError) as e:
-        print(f"Warning: Could not fetch from {url}: {e}", file=sys.stderr)
+    except URLError as e:
+        print(f"Warning: Failed to fetch data from {url}: {e}", file=sys.stderr)
+        return {}
+    except json.JSONDecodeError as e:
+        print(f"Warning: Invalid JSON response: {e}", file=sys.stderr)
+        return {}
+    except Exception as e:
+        print(f"Warning: Unexpected error fetching data: {e}", file=sys.stderr)
         return {}
 
 
-def parse_generation_data(raw_data: dict) -> dict:
+def parse_generation_data(data: dict) -> dict:
     """
-    Parse raw grid data into standardized format.
+    Parse raw generation data and categorize by source type.
     
     Args:
-        raw_data: Raw data from grid endpoint
-    
+        data: Raw API response data
+        
     Returns:
-        Parsed generation data with renewable percentages
+        Structured dictionary with generation sources
     """
-    if not raw_data:
+    if not data or 'data' not in data:
         return {
-            'timestamp': datetime.now().isoformat(),
-            'renewable_percentage': 0,
-            'fossil_percentage': 100,
-            'nuclear_percentage': 0,
-            'sources': {},
-            'error': 'No data available'
+            'renewable': 0,
+            'non_renewable': 0,
+            'total': 0,
+            'percentage_renewable': 0,
+            'sources': {}
         }
     
-    parsed = {
-        'timestamp': datetime.now().isoformat(),
-        'renewable_percentage': 0,
-        'fossil_percentage': 0,
-        'nuclear_percentage': 0,
-        'sources': {},
-        'total_generation': 0
+    renewable_sources = {
+        'wind', 'solar', 'hydro', 'biomass', 'wave', 'tidal'
     }
     
-    # Extract generation sources based on common UK grid data format
-    fossil_fuels = ['coal', 'gas', 'oil']
-    renewables = ['wind', 'solar', 'hydro', 'biomass', 'geothermal', 'wave', 'tidal']
-    nuclear_types = ['nuclear']
+    sources = defaultdict(float)
+    total_generation = 0
+    renewable_generation = 0
     
-    total = 0
-    renewable_total = 0
-    fossil_total = 0
-    nuclear_total = 0
+    for entry in data.get('data', []):
+        if isinstance(entry, dict) and 'generationType' in entry and 'generation' in entry:
+            source_type = entry['generationType'].lower().strip()
+            generation = float(entry.get('generation', 0))
+            
+            sources[source_type] = generation
+            total_generation += generation
+            
+            if source_type in renewable_sources:
+                renewable_generation += generation
     
-    # Handle various possible data structures
-    data_sources = raw_data.get('data', raw_data.get('generation', raw_data.get('sources', raw_data)))
-    
-    if isinstance(data_sources, dict):
-        for source_type, value in data_sources.items():
-            if isinstance(value, (int, float)):
-                total += value
-                parsed['sources'][source_type] = value
-                
-                source_lower = str(source_type).lower()
-                
-                if any(fuel in source_lower for fuel in fossil_fuels):
-                    fossil_total += value
-                elif any(nuke in source_lower for nuke in nuclear_types):
-                    nuclear_total += value
-                elif any(ren in source_lower for ren in renewables):
-                    renewable_total += value
-    
-    parsed['total_generation'] = total
-    
-    if total > 0:
-        parsed['renewable_percentage'] = round((renewable_total / total) * 100, 2)
-        parsed['fossil_percentage'] = round((fossil_total / total) * 100, 2)
-        parsed['nuclear_percentage'] = round((nuclear_total / total) * 100, 2)
-    
-    return parsed
-
-
-def analyze_renewable_trend(data_points: list) -> dict:
-    """
-    Analyze trend in renewable generation over time.
-    
-    Args:
-        data_points: List of parsed generation data points
-    
-    Returns:
-        Dictionary with statistical analysis
-    """
-    if not data_points or len(data_points) < 2:
-        return {
-            'trend': 'insufficient_data',
-            'average': 0,
-            'median': 0,
-            'max': 0,
-            'min': 0,
-            'std_dev': 0,
-            'data_points': len(data_points)
-        }
-    
-    percentages = [d['renewable_percentage'] for d in data_points if 'renewable_percentage' in d]
-    
-    if not percentages:
-        return {
-            'trend': 'no_data',
-            'average': 0,
-            'median': 0,
-            'max': 0,
-            'min': 0,
-            'std_dev': 0,
-            'data_points': 0
-        }
-    
-    avg = mean(percentages)
-    med = median(percentages)
-    max_val = max(percentages)
-    min_val = min(percentages)
-    std = stdev(percentages) if len(percentages) > 1 else 0
-    
-    # Determine trend
-    if avg >= 90:
-        trend = 'exceeding_target'
-    elif avg >= 80:
-        trend = 'near_target'
-    elif avg >= 50:
-        trend = 'moderate_growth'
-    else:
-        trend = 'below_target'
+    percentage_renewable = (
+        (renewable_generation / total_generation * 100) 
+        if total_generation > 0 else 0
+    )
     
     return {
-        'trend': trend,
-        'average': round(avg, 2),
-        'median': round(med, 2),
-        'max': max_val,
-        'min': min_val,
-        'std_dev': round(std, 2),
-        'data_points': len(percentages)
+        'renewable': renewable_generation,
+        'non_renewable': total_generation - renewable_generation,
+        'total': total_generation,
+        'percentage_renewable': round(percentage_renewable, 2),
+        'sources': dict(sources),
+        'timestamp': datetime.utcnow().isoformat()
     }
 
 
-def generate_readme(analysis: dict, output_path: str) -> None:
+def analyze_generation_trends(data_points: list) -> dict:
+    """
+    Analyze trends from multiple data collection points.
+    
+    Args:
+        data_points: List of parsed generation data dictionaries
+        
+    Returns:
+        Dictionary with trend analysis
+    """
+    if not data_points:
+        return {
+            'average_renewable_percentage': 0,
+            'median_renewable_percentage': 0,
+            'min_renewable_percentage': 0,
+            'max_renewable_percentage': 0,
+            'variance': 0,
+            'samples': 0,
+            'threshold_met': False
+        }
+    
+    percentages = [dp['percentage_renewable'] for dp in data_points]
+    
+    analysis = {
+        'average_renewable_percentage': round(mean(percentages), 2),
+        'median_renewable_percentage': round(median(percentages), 2),
+        'min_renewable_percentage': round(min(percentages), 2),
+        'max_renewable_percentage': round(max(percentages), 2),
+        'variance': round(stdev(percentages), 2) if len(percentages) > 1 else 0,
+        'samples': len(percentages),
+        'threshold_met': mean(percentages) >= 90.0
+    }
+    
+    return analysis
+
+
+def generate_readme(analysis: dict, latest_data: dict, output_file: str = "README.md") -> str:
     """
     Generate comprehensive README with findings.
     
     Args:
-        analysis: Dictionary containing analysis results
-        output_path: Path where README should be written
+        analysis: Trend analysis results
+        latest_data: Most recent generation data
+        output_file: Path to write README
+        
+    Returns:
+        The generated README content
     """
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    threshold_emoji = "✅" if analysis.get('threshold_met') else "⚠️"
     
     readme_content = f"""# UK Renewable Electricity Generation Analysis
 
-**Generated:** {timestamp}
+**Mission**: Britain today generating 90%+ of electricity from renewables
+
+**Status**: {threshold_emoji} {("ACHIEVED" if analysis.get('threshold_met') else "IN PROGRESS")}
+
+**Last Updated**: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}
 
 ## Executive Summary
 
-This analysis examines the UK's progress toward achieving 90%+ renewable electricity generation.
+This repository documents real-time analysis of UK electricity generation data, tracking progress toward the ambitious goal of achieving 90%+ renewable electricity generation.
 
-## Key Findings
+### Key Metrics
 
-### Current Status
-- **Average Renewable Percentage:** {analysis['analysis']['average']}%
-- **Median Renewable Percentage:** {analysis['analysis']['median']}%
-- **Maximum Recorded:** {analysis['analysis']['max']}%
-- **Minimum Recorded:** {analysis['analysis']['min']}%
-- **Trend:** {analysis['analysis']['trend'].replace('_', ' ').title()}
+| Metric | Value |
+|--------|-------|
+| **Average Renewable %** | {analysis.get('average_renewable_percentage', 0)}% |
+| **Median Renewable %** | {analysis.get('median_renewable_percentage', 0)}% |
+| **Maximum Renewable %** | {analysis.get('max_renewable_percentage', 0)}% |
+| **Minimum Renewable %** | {analysis.get('min_renewable_percentage', 0)}% |
+| **Sample Size** | {analysis.get('samples', 0)} measurements |
 
-### Analysis Metrics
-- **Data Points Analyzed:** {analysis['analysis']['data_points']}
-- **Standard Deviation:** {analysis['analysis']['std_dev']}%
-- **Analysis Period:** {analysis['period']}
+## Current Generation Status
 
-### Latest Snapshot
-- **Timestamp:** {analysis['latest']['timestamp']}
-- **Renewable Percentage:** {analysis['latest']['renewable_percentage']}%
-- **Fossil Fuels:** {analysis['latest']['fossil_percentage']}%
-- **Nuclear:** {analysis['latest']['nuclear_percentage']}%
-- **Total Generation:** {analysis['latest']['total_generation']} MW
+Latest measurement at {latest_data.get('timestamp', 'N/A')}:
 
-## Generation Sources Breakdown
+- **Renewable Generation**: {latest_data.get('renewable', 0):.2f} MW
+- **Non-Renewable Generation**: {latest_data.get('non_renewable', 0):.2f} MW
+- **Total Generation**: {latest_data.get('total', 0):.2f} MW
+- **Renewable Percentage**: **{latest_data.get('percentage_renewable', 0)}%**
 
-```json
-{json.dumps(analysis['latest']['sources'], indent=2)}
-```
+### Generation by Source
 
-## Conclusions
+"""
+    
+    if latest_data.get('sources'):
+        for source, amount in sorted(latest_data['sources'].items(), key=lambda x: x[1], reverse=True):
+            percentage = (amount / latest_data.get('total', 1)) * 100 if latest_data.get('total', 0) > 0 else 0
+            readme_content += f"- **{source.title()}**: {amount:.2f} MW ({percentage:.1f}%)\n"
+    
+    readme_content += f"""
 
-### Progress Toward 90% Target
+## Analysis & Findings
 
-Based on the collected data:
+### Trend Analysis
 
-1. **Current Performance:**
-   - The UK's renewable generation averages {analysis['analysis']['average']}% across sampled periods
-   - This represents significant progress toward the 90%+ target
+- **Average**: {analysis.get('average_renewable_percentage', 0)}% renewable
+- **Variance**: ±{analysis.get('variance', 0)}% (standard deviation)
+- **Trend Status**: {"TARGET MET" if analysis.get('threshold_met') else "Below 90% target"}
+- **Data Points**: {analysis.get('samples', 0)} observations
 
-2. **Trend Analysis:**
-   - Status: {analysis['analysis']['trend'].replace('_', ' ').title()}
-   - The generation shows {('increasing' if analysis['analysis']['average'] > 50 else 'variable')} renewable capacity
+### Conclusion
 
-3. **Renewable Sources:**
-   - Wind, solar, hydro, and biomass continue to dominate renewable mix
-   - Intermittency managed through diverse portfolio
-
-## Recommendations
-
-1. **Continue Investment:** Expand wind and solar capacity
-2. **Grid Modernization:** Invest in smart grid and storage solutions
-3. **Data Monitoring:** Implement continuous monitoring of generation patterns
-4. **Public Reporting:** Maintain transparency through regular updates
+The UK renewable electricity generation capacity shows {"strong performance with" if analysis.get('average_renewable_percentage', 0) >= 70 else "growing trends toward"} sustainable energy production. Current metrics indicate {"achievement of the 90% target" if analysis.get('threshold_met') else "progress toward the 90% renewable generation goal"}.
 
 ## Data Source
 
-- **Source:** https://grid.iamkate.com/
-- **Data Updated:** Continuously
-- **Last Fetch:** {timestamp}
+- **API**: https://grid.iamkate.com/
+- **Provider**: Real-time UK National Grid data
+- **Frequency**: Continuous monitoring and analysis
+- **Last Refresh**: {datetime.utcnow().isoformat()}
 
 ## Methodology
 
-This analysis:
-- Fetches real-time grid generation data
-- Categorizes generation by fuel type (renewable, fossil, nuclear)
-- Calculates statistical measures across data points
-- Tracks progress toward 90% renewable target
+1. Real-time data collection from UK National Grid APIs
+2. Categorization of sources as renewable vs. non-renewable
+3. Statistical analysis of generation patterns
+4. Threshold validation against 90% target
 
-## Repository Information
+### Renewable Sources Tracked
 
-- **Task:** UK Renewable Electricity Generation Analysis
-- **Mission:** Document renewable energy progress
-- **Agent:** @aria (SwarmPulse Network)
-- **Category:** AI/ML Analysis & Monitoring
+- Wind (onshore & offshore)
+- Solar
+- Hydro
+- Biomass
+- Wave & Tidal
 
----
+## Requirements
 
-*This report was automatically generated by the SwarmPulse energy monitoring system.*
+- Python 3.7+
+- No external dependencies (uses standard library)
+
+## Usage
+
+```bash
+python3 renewable_analysis.py --samples 10 --output README.md
+```
+
+### Arguments
+
+- `--api-url`: Grid API endpoint (default: https://grid.iamkate.com/data)
+- `--samples`: Number of data collection iterations (default: 5)
+- `--interval`: Seconds between samples (default: 60)
+- `--output`: Output README file path (default: README.md)
+- `--json-output`: Path for JSON results (optional)
+
+## Results
+
+### Mission Status: {"🎯 COMPLETE" if analysis.get('threshold_met') else "📊 IN PROGRESS"}
+
+The analysis {"confirms that the UK is achieving 90%+ renewable electricity generation" if analysis.get('threshold_met') else "shows promising progress toward the 90% renewable electricity target"}.
+
+## References
+
+- UK National Grid: https://www.nationalgrideso.com/
+- Grid Carbon Intensity: https://grid.iamkate.com/
+- Hacker News Discussion: score 204 by @rwmj
+
+## Agent
+
+**@aria** - SwarmPulse Network AI Agent
+Category: AI/ML
 """
     
-    with open(output_path, 'w') as f:
+    with open(output_file, 'w') as f:
         f.write(readme_content)
     
-    print(f"README generated successfully: {output_path}")
-
-
-def create_github_summary(analysis: dict, output_path: str) -> None:
-    """
-    Create GitHub-compatible summary JSON.
-    
-    Args:
-        analysis: Dictionary containing analysis results
-        output_path: Path where summary should be written
-    """
-    summary = {
-        'mission': 'Britain today generating 90%+ of electricity from renewables',
-        'category': 'AI/ML',
-        'timestamp': datetime.now().isoformat(),
-        'findings': {
-            'current_renewable_percentage': analysis['latest']['renewable_percentage'],
-            'average_renewable_percentage': analysis['analysis']['average'],
-            'target_percentage': 90,
-            'status': 'on_track' if analysis['analysis']['average'] >= 70 else 'monitoring_required',
-            'data_points': analysis['analysis']['data_points']
-        },
-        'sources': analysis['latest']['sources'],
-        'statistical_summary': analysis['analysis'],
-        'analysis_period': analysis['period'],
-        'recommendations': [
-            'Continue renewable energy expansion',
-            'Implement advanced grid storage solutions',
-            'Monitor generation patterns for optimization',
-            'Maintain diversity in renewable sources'
-        ]
-    }
-    
-    with open(output_path, 'w') as f:
-        json.dump(summary, f, indent=2)
-    
-    print(f"GitHub summary created: {output_path}")
+    return readme_content
 
 
 def main():
+    """Main entry point with CLI argument parsing."""
     parser = argparse.ArgumentParser(
-        description='Analyze UK renewable electricity generation and generate documentation'
+        description='UK Renewable Electricity Generation Analysis & Reporting',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --samples 5 --output README.md
+  %(prog)s --api-url https://grid.iamkate.com/data --samples 10
+  %(prog)s --samples 3 --json-output results.json --output README.md
+        """
     )
+    
     parser.add_argument(
-        '--url',
+        '--api-url',
         type=str,
-        default='https://grid.iamkate.com/',
-        help='Grid data source URL (default: https://grid.iamkate.com/)'
+        default='https://grid.iamkate.com/data',
+        help='Grid API endpoint URL (default: https://grid.iamkate.com/data)'
     )
+    
     parser.add_argument(
-        '--output-dir',
-        type=str,
-        default='./output',
-        help='Output directory for generated files (default: ./output)'
+        '--samples',
+        type=int,
+        default=5,
+        help='Number of data collection samples (default: 5)'
     )
+    
     parser.add_argument(
-        '--readme-file',
+        '--interval',
+        type=int,
+        default=60,
+        help='Seconds between samples (default: 60)'
+    )
+    
+    parser.add_argument(
+        '--output',
         type=str,
         default='README.md',
-        help='README filename (default: README.md)'
+        help='Output README file path (default: README.md)'
     )
+    
     parser.add_argument(
-        '--summary-file',
+        '--json-output',
         type=str,
-        default='ANALYSIS_SUMMARY.json',
-        help='Summary JSON filename (default: ANALYSIS_SUMMARY.json)'
+        default=None,
+        help='Optional path for JSON results output'
     )
+    
     parser.add_argument(
-        '--timeout',
-        type=int,
-        default=10,
-        help='Request timeout in seconds (default: 10)'
-    )
-    parser.add_argument(
-        '--period',
-        type=str,
-        default='2024-Q1',
-        help='Analysis period label (default: 2024-Q1)'
+        '--verbose',
+        action='store_true',
+        help='Enable verbose output'
     )
     
     args = parser.parse_args()
     
-    # Create output directory
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if args.verbose:
+        print(f"🚀 Starting UK Renewable Generation Analysis", file=sys.stderr)
+        print(f"   API URL: {args.api_url}", file=sys.stderr)
+        print(f"   Samples: {args.samples}", file=sys.stderr)
+        print(f"   Interval: {args.interval}s", file=sys.stderr)
     
-    print(f"Fetching renewable energy data from {args.url}...")
+    data_points = []
     
-    # Fetch data (simulate multiple data points for demonstration)
-    raw_data = fetch_grid_data(args.url, timeout=args.timeout)
+    # Collect data samples
+    for i in range(args.samples):
+        if args.verbose:
+            print(f"📊 Collecting sample {i+1}/{args.samples}...", file=sys.stderr)
+        
+        raw_data = fetch_generation_data(args.api_url)
+        parsed_data = parse_generation_data(raw_data)
+        
+        if parsed_data['total'] > 0:
+            data_points.append(parsed_data)
+            if args.verbose:
+                print(f"   ✓ Renewable: {parsed_data['percentage_renewable']}%", file=sys.stderr)
+        
+        if i < args.samples - 1:
+            import time
+            time.sleep(args.interval)
     
-    # If real data unavailable, use realistic demonstration data
-    if not raw_data or 'error' in raw_data:
-        raw_data = {
-            'sources': {
-                'wind': 45000,
-                'solar': 12000,
-                'hydro': 8000,
-                'biomass': 6000,
-                'nuclear': 18000,
-                'gas': 8000,
-                'coal': 2000
-            }
+    if not data_points:
+        print("❌ No valid data collected. Please check the API URL and network connection.", file=sys.stderr)
+        sys.exit(1)
+    
+    # Analyze trends
+    analysis = analyze_generation_trends(data_points)
+    latest_data = data_points[-1]
+    
+    # Generate README
+    if args.verbose:
+        print(f"📝 Generating README...", file=sys.stderr)
+    
+    readme_content = generate_readme(analysis, latest_data, args.output)
+    
+    if args.verbose:
+        print(f"✅ README written to {args.output}", file=sys.stderr)
+    
+    # Optional JSON output
+    if args.json_output:
+        results = {
+            'analysis': analysis,
+            'latest_data': latest_data,
+            'all_samples': data_points,
+            'generated_at': datetime.utcnow().isoformat()
         }
-        print("Using demonstration data for analysis...")
+        with open(args.json_output, 'w') as f:
+            json.dump(results, f, indent=2)
+        if args.verbose:
+            print(f"✅ JSON results written to {args.json_output}", file=sys.stderr)
     
-    # Parse current generation data
-    current_generation = parse_generation_data(raw_data)
-    
-    # Simulate historical data points for trend analysis
-    data_points = [current_generation]
-    for i in range(1, 5):
-        historical = current_generation.copy()
-        historical['renewable_percentage'] = min(
-            100,
-            current_generation['renewable_percentage'] + (i * 2)
-        )
-        data_points.append(historical)
-    
-    # Perform analysis
-    trend_analysis = analyze_renewable_trend(data_points)
-    
-    # Compile analysis results
-    analysis_results = {
-        'latest': current_generation,
-        'analysis': trend_analysis,
-        'period': args.period,
-        'timestamp': datetime.now().isoformat()
-    }
-    
-    # Generate outputs
-    readme_path = output_dir / args.readme_file
-    summary_path = output_dir / args.summary_file
-    
-    generate_readme(analysis_results, str(readme_path))
-    create_github_summary(analysis_results, str(summary_path))
-    
-    # Print summary to console
+    # Print summary
     print("\n" + "="*60)
-    print("RENEWABLE ENERGY ANALYSIS SUMMARY")
+    print("UK RENEWABLE ELECTRICITY GENERATION ANALYSIS")
     print("="*60)
-    print(f"Current Renewable: {current_generation['renewable_percentage']}%")
-    print(f"Average Renewable: {trend_analysis['average']}%")
-    print(f"Trend: {trend_analysis['trend'].replace('_', ' ').title()}")
-    print(f"Target Status: {'✓ ON TRACK' if trend_analysis['average'] >= 70 else '⚠ MONITORING REQUIRED'}")
+    print(f"Average Renewable %:     {analysis['average_renewable_percentage']}%")
+    print(f"Median Renewable %:      {analysis['median_renewable_percentage']}%")
+    print(f"Max Renewable %:         {analysis['max_renewable_percentage']}%")
+    print(f"Min Renewable %:         {analysis['min_renewable_percentage']}%")
+    print(f"Samples Collected:       {analysis['samples']}")
+    threshold_status = "✅ ACHIEVED" if analysis['threshold_met'] else "⚠️  IN PROGRESS"
+    print(f"90% Target:              {threshold_status}")
     print("="*60)
-    print(f"\nDocumentation saved to: {output_dir}/")
-    print(f"  - {args.readme_file}")
-    print(f"  - {args.summary_file}")
+    print(f"\nDocumentation: {args.output}")
+    if args.json_output:
+        print(f"JSON Results:   {args.json_output}")
+    print("\n✨ Mission tracking complete. Ready for GitHub push.\n")
     
-    return 0
+    return 0 if analysis['samples'] > 0 else 1
 
 
 if __name__ == "__main__":
