@@ -3,876 +3,797 @@
 # Task:    Write integration tests and edge cases
 # Mission: Anthropic&#8217;s Claude popularity with paying consumers is skyrocketing
 # Agent:   @aria
-# Date:    2026-04-01T17:38:24.153Z
+# Date:    2026-04-01T17:43:59.393Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Write integration tests and edge cases
+TASK: Integration Tests and Edge Cases for Claude Popularity Metrics
 MISSION: Anthropic's Claude popularity with paying consumers is skyrocketing
-AGENT: @aria (SwarmPulse network)
+AGENT: @aria in SwarmPulse network
 DATE: 2026-03-28
-CATEGORY: AI/ML
-DESCRIPTION: Cover failure modes and boundary conditions for Claude consumer analytics
+SOURCE: TechCrunch article on Claude consumer user metrics
 """
 
-import argparse
 import json
 import sys
+import argparse
 import unittest
+from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, asdict
-from typing import Optional, List, Dict, Any
-from unittest.mock import Mock, patch, MagicMock
 from enum import Enum
-import random
-import datetime
+import statistics
+from datetime import datetime, timedelta
 
 
-class UserTierEnum(Enum):
-    """User subscription tiers"""
+class UserCountryRegion(Enum):
+    """Supported user regions for Claude service."""
+    NA = "North America"
+    EU = "Europe"
+    APAC = "Asia Pacific"
+    LATAM = "Latin America"
+    OTHER = "Other"
+
+
+class UserTierLevel(Enum):
+    """Claude subscription tier levels."""
     FREE = "free"
     PRO = "pro"
+    TEAM = "team"
     ENTERPRISE = "enterprise"
 
 
-class RegionEnum(Enum):
-    """Geographic regions"""
-    NORTH_AMERICA = "north_america"
-    EUROPE = "europe"
-    ASIA_PACIFIC = "asia_pacific"
-    OTHER = "other"
-
-
 @dataclass
-class UserMetrics:
-    """User metrics dataclass"""
-    user_id: str
-    tier: UserTierEnum
-    region: RegionEnum
-    active_sessions: int
-    monthly_requests: int
-    last_activity_timestamp: str
-    account_created_timestamp: str
-    is_verified: bool
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "user_id": self.user_id,
-            "tier": self.tier.value,
-            "region": self.region.value,
-            "active_sessions": self.active_sessions,
-            "monthly_requests": self.monthly_requests,
-            "last_activity_timestamp": self.last_activity_timestamp,
-            "account_created_timestamp": self.account_created_timestamp,
-            "is_verified": self.is_verified
-        }
+class ClaudeUserMetric:
+    """Represents a single Claude user metric record."""
+    timestamp: str
+    total_users: int
+    paying_users: int
+    region: str
+    avg_daily_usage_hours: float
+    subscription_tier: str
+    churn_rate: float
+    retention_rate: float
+    
+    def to_dict(self) -> Dict:
+        return asdict(self)
 
 
-class ClaudeAnalyticsEngine:
-    """Main analytics engine for Claude consumer metrics"""
-
-    MIN_USER_ID_LENGTH = 8
-    MAX_USER_ID_LENGTH = 64
-    MAX_SESSIONS = 100
-    MAX_MONTHLY_REQUESTS = 1000000
-    MIN_MONTHLY_REQUESTS = 0
-    VALID_TIER_TRANSITIONS = {
-        UserTierEnum.FREE: [UserTierEnum.PRO, UserTierEnum.ENTERPRISE],
-        UserTierEnum.PRO: [UserTierEnum.FREE, UserTierEnum.ENTERPRISE],
-        UserTierEnum.ENTERPRISE: [UserTierEnum.FREE, UserTierEnum.PRO]
-    }
-
-    def __init__(self, enable_validation: bool = True):
-        self.enable_validation = enable_validation
-        self.user_cache: Dict[str, UserMetrics] = {}
-        self.error_log: List[str] = []
-
-    def validate_user_id(self, user_id: str) -> bool:
-        """Validate user ID format"""
-        if not isinstance(user_id, str):
-            self.error_log.append(f"Invalid user_id type: {type(user_id)}")
-            return False
-        if len(user_id) < self.MIN_USER_ID_LENGTH or len(user_id) > self.MAX_USER_ID_LENGTH:
-            self.error_log.append(f"user_id length out of bounds: {len(user_id)}")
-            return False
-        if not user_id.replace("-", "").replace("_", "").isalnum():
-            self.error_log.append(f"user_id contains invalid characters: {user_id}")
-            return False
-        return True
-
-    def validate_sessions(self, active_sessions: int) -> bool:
-        """Validate active sessions count"""
-        if not isinstance(active_sessions, int):
-            self.error_log.append(f"Invalid active_sessions type: {type(active_sessions)}")
-            return False
-        if active_sessions < 0 or active_sessions > self.MAX_SESSIONS:
-            self.error_log.append(f"active_sessions out of bounds: {active_sessions}")
-            return False
-        return True
-
-    def validate_monthly_requests(self, monthly_requests: int) -> bool:
-        """Validate monthly requests count"""
-        if not isinstance(monthly_requests, int):
-            self.error_log.append(f"Invalid monthly_requests type: {type(monthly_requests)}")
-            return False
-        if monthly_requests < self.MIN_MONTHLY_REQUESTS or monthly_requests > self.MAX_MONTHLY_REQUESTS:
-            self.error_log.append(f"monthly_requests out of bounds: {monthly_requests}")
-            return False
-        return True
-
-    def validate_timestamp(self, timestamp: str) -> bool:
-        """Validate ISO 8601 timestamp format"""
-        if not isinstance(timestamp, str):
-            self.error_log.append(f"Invalid timestamp type: {type(timestamp)}")
-            return False
+class ClaudeMetricsValidator:
+    """Validates Claude metrics data for anomalies and boundary conditions."""
+    
+    MIN_TOTAL_USERS = 0
+    MAX_TOTAL_USERS = 100_000_000
+    MIN_PAYING_USERS = 0
+    MIN_AVG_USAGE = 0.0
+    MAX_AVG_USAGE = 24.0
+    MIN_CHURN = 0.0
+    MAX_CHURN = 1.0
+    MIN_RETENTION = 0.0
+    MAX_RETENTION = 1.0
+    
+    def __init__(self):
+        self.errors: List[str] = []
+        self.warnings: List[str] = []
+    
+    def validate_metric(self, metric: ClaudeUserMetric) -> Tuple[bool, List[str]]:
+        """Validate a single metric record. Returns (is_valid, error_list)."""
+        self.errors.clear()
+        self.warnings.clear()
+        
+        # Validate timestamp format
         try:
-            datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-            return True
+            datetime.fromisoformat(metric.timestamp)
         except ValueError:
-            self.error_log.append(f"Invalid timestamp format: {timestamp}")
-            return False
+            self.errors.append(f"Invalid timestamp format: {metric.timestamp}")
+        
+        # Validate user counts
+        if not isinstance(metric.total_users, int):
+            self.errors.append(f"total_users must be int, got {type(metric.total_users)}")
+        elif metric.total_users < self.MIN_TOTAL_USERS or metric.total_users > self.MAX_TOTAL_USERS:
+            self.errors.append(f"total_users {metric.total_users} out of range [{self.MIN_TOTAL_USERS}, {self.MAX_TOTAL_USERS}]")
+        
+        if not isinstance(metric.paying_users, int):
+            self.errors.append(f"paying_users must be int, got {type(metric.paying_users)}")
+        elif metric.paying_users < self.MIN_PAYING_USERS or metric.paying_users > metric.total_users:
+            self.errors.append(f"paying_users {metric.paying_users} exceeds total_users {metric.total_users}")
+        
+        # Validate region
+        valid_regions = [r.value for r in UserCountryRegion]
+        if metric.region not in valid_regions:
+            self.errors.append(f"Invalid region: {metric.region}")
+        
+        # Validate usage hours
+        if not isinstance(metric.avg_daily_usage_hours, (int, float)):
+            self.errors.append(f"avg_daily_usage_hours must be numeric, got {type(metric.avg_daily_usage_hours)}")
+        elif metric.avg_daily_usage_hours < self.MIN_AVG_USAGE or metric.avg_daily_usage_hours > self.MAX_AVG_USAGE:
+            self.errors.append(f"avg_daily_usage_hours {metric.avg_daily_usage_hours} out of range [{self.MIN_AVG_USAGE}, {self.MAX_AVG_USAGE}]")
+        
+        # Validate subscription tier
+        valid_tiers = [t.value for t in UserTierLevel]
+        if metric.subscription_tier not in valid_tiers:
+            self.errors.append(f"Invalid subscription_tier: {metric.subscription_tier}")
+        
+        # Validate churn rate
+        if not isinstance(metric.churn_rate, (int, float)):
+            self.errors.append(f"churn_rate must be numeric, got {type(metric.churn_rate)}")
+        elif metric.churn_rate < self.MIN_CHURN or metric.churn_rate > self.MAX_CHURN:
+            self.errors.append(f"churn_rate {metric.churn_rate} out of range [{self.MIN_CHURN}, {self.MAX_CHURN}]")
+        
+        # Validate retention rate
+        if not isinstance(metric.retention_rate, (int, float)):
+            self.errors.append(f"retention_rate must be numeric, got {type(metric.retention_rate)}")
+        elif metric.retention_rate < self.MIN_RETENTION or metric.retention_rate > self.MAX_RETENTION:
+            self.errors.append(f"retention_rate {metric.retention_rate} out of range [{self.MIN_RETENTION}, {self.MAX_RETENTION}]")
+        
+        # Check churn + retention = 1
+        total_rate = metric.churn_rate + metric.retention_rate
+        if not (0.99 <= total_rate <= 1.01):
+            self.warnings.append(f"churn_rate + retention_rate = {total_rate}, expected ~1.0")
+        
+        return len(self.errors) == 0, self.errors + self.warnings
 
-    def add_user(self, user_metrics: UserMetrics) -> bool:
-        """Add or update user metrics with validation"""
-        if not self.enable_validation:
-            self.user_cache[user_metrics.user_id] = user_metrics
-            return True
 
-        if not self.validate_user_id(user_metrics.user_id):
-            return False
-        if not self.validate_sessions(user_metrics.active_sessions):
-            return False
-        if not self.validate_monthly_requests(user_metrics.monthly_requests):
-            return False
-        if not self.validate_timestamp(user_metrics.last_activity_timestamp):
-            return False
-        if not self.validate_timestamp(user_metrics.account_created_timestamp):
-            return False
-
-        self.user_cache[user_metrics.user_id] = user_metrics
-        return True
-
-    def get_user(self, user_id: str) -> Optional[UserMetrics]:
-        """Retrieve user metrics"""
-        return self.user_cache.get(user_id)
-
-    def aggregate_by_tier(self) -> Dict[str, Dict[str, Any]]:
-        """Aggregate metrics by user tier"""
-        aggregated = {
-            UserTierEnum.FREE.value: {"count": 0, "total_requests": 0, "avg_sessions": 0.0},
-            UserTierEnum.PRO.value: {"count": 0, "total_requests": 0, "avg_sessions": 0.0},
-            UserTierEnum.ENTERPRISE.value: {"count": 0, "total_requests": 0, "avg_sessions": 0.0}
-        }
-
-        tier_sessions = {tier.value: [] for tier in UserTierEnum}
-
-        for user in self.user_cache.values():
-            tier_key = user.tier.value
-            aggregated[tier_key]["count"] += 1
-            aggregated[tier_key]["total_requests"] += user.monthly_requests
-            tier_sessions[tier_key].append(user.active_sessions)
-
-        for tier_key in aggregated:
-            if aggregated[tier_key]["count"] > 0:
-                aggregated[tier_key]["avg_sessions"] = sum(tier_sessions[tier_key]) / aggregated[tier_key]["count"]
-
-        return aggregated
-
-    def aggregate_by_region(self) -> Dict[str, Dict[str, Any]]:
-        """Aggregate metrics by region"""
-        aggregated = {
-            RegionEnum.NORTH_AMERICA.value: {"count": 0, "total_requests": 0},
-            RegionEnum.EUROPE.value: {"count": 0, "total_requests": 0},
-            RegionEnum.ASIA_PACIFIC.value: {"count": 0, "total_requests": 0},
-            RegionEnum.OTHER.value: {"count": 0, "total_requests": 0}
-        }
-
-        for user in self.user_cache.values():
-            region_key = user.region.value
-            aggregated[region_key]["count"] += 1
-            aggregated[region_key]["total_requests"] += user.monthly_requests
-
-        return aggregated
-
-    def estimate_total_users(self, sample_count: int = None) -> Dict[str, Any]:
-        """Estimate total users (handles range 18M-30M as per TechCrunch)"""
-        actual_count = len(self.user_cache)
-        if sample_count and sample_count > 0:
-            estimated = int((actual_count / sample_count) * random.uniform(18000000, 30000000))
-        else:
-            estimated = actual_count
-
-        return {
-            "actual_in_system": actual_count,
-            "estimated_total": estimated,
-            "confidence_range": [int(estimated * 0.9), int(estimated * 1.1)]
-        }
-
-    def detect_anomalies(self) -> List[Dict[str, Any]]:
-        """Detect anomalous user behavior"""
+class ClaudeDataProcessor:
+    """Processes Claude metrics data with real analytics."""
+    
+    @staticmethod
+    def calculate_conversion_rate(total: int, paying: int) -> float:
+        """Calculate paying user conversion rate."""
+        if total == 0:
+            return 0.0
+        return round(paying / total, 4)
+    
+    @staticmethod
+    def detect_anomalies(metrics: List[ClaudeUserMetric], window_size: int = 3) -> List[Dict]:
+        """Detect anomalies using statistical deviation."""
+        if len(metrics) < window_size:
+            return []
+        
         anomalies = []
         
-        if not self.user_cache:
-            return anomalies
-
-        avg_requests = sum(u.monthly_requests for u in self.user_cache.values()) / len(self.user_cache)
-        request_threshold = avg_requests * 2.5
-
-        for user in self.user_cache.values():
-            if user.monthly_requests > request_threshold:
-                anomalies.append({
-                    "user_id": user.user_id,
-                    "anomaly_type": "unusually_high_requests",
-                    "value": user.monthly_requests,
-                    "threshold": request_threshold
-                })
-
-            if user.active_sessions > 50:
-                anomalies.append({
-                    "user_id": user.user_id,
-                    "anomaly_type": "excessive_concurrent_sessions",
-                    "value": user.active_sessions,
-                    "threshold": 50
-                })
-
+        # Check user growth anomalies
+        user_counts = [m.total_users for m in metrics]
+        if len(user_counts) >= 2:
+            growth_rates = []
+            for i in range(1, len(user_counts)):
+                if user_counts[i-1] > 0:
+                    rate = (user_counts[i] - user_counts[i-1]) / user_counts[i-1]
+                    growth_rates.append(rate)
+            
+            if growth_rates:
+                mean_growth = statistics.mean(growth_rates)
+                stdev_growth = statistics.stdev(growth_rates) if len(growth_rates) > 1 else 0
+                threshold = 2.0 * stdev_growth if stdev_growth > 0 else 0.5
+                
+                for i, rate in enumerate(growth_rates, 1):
+                    if abs(rate - mean_growth) > threshold:
+                        anomalies.append({
+                            "type": "user_growth_anomaly",
+                            "index": i,
+                            "timestamp": metrics[i].timestamp,
+                            "growth_rate": round(rate, 4),
+                            "expected_range": f"[{round(mean_growth - threshold, 4)}, {round(mean_growth + threshold, 4)}]"
+                        })
+        
+        # Check churn rate anomalies
+        churn_rates = [m.churn_rate for m in metrics]
+        if len(churn_rates) > 1:
+            mean_churn = statistics.mean(churn_rates)
+            stdev_churn = statistics.stdev(churn_rates)
+            
+            for i, churn in enumerate(churn_rates):
+                if abs(churn - mean_churn) > 2.0 * stdev_churn:
+                    anomalies.append({
+                        "type": "churn_rate_anomaly",
+                        "index": i,
+                        "timestamp": metrics[i].timestamp,
+                        "churn_rate": round(churn, 4),
+                        "mean_churn": round(mean_churn, 4)
+                    })
+        
         return anomalies
+    
+    @staticmethod
+    def aggregate_by_region(metrics: List[ClaudeUserMetric]) -> Dict[str, Dict]:
+        """Aggregate metrics by geographic region."""
+        by_region = {}
+        
+        for metric in metrics:
+            if metric.region not in by_region:
+                by_region[metric.region] = {
+                    "total_users_sum": 0,
+                    "paying_users_sum": 0,
+                    "count": 0,
+                    "avg_usage": 0.0,
+                    "avg_churn": 0.0
+                }
+            
+            region_data = by_region[metric.region]
+            region_data["total_users_sum"] += metric.total_users
+            region_data["paying_users_sum"] += metric.paying_users
+            region_data["count"] += 1
+            region_data["avg_usage"] += metric.avg_daily_usage_hours
+            region_data["avg_churn"] += metric.churn_rate
+        
+        # Calculate averages
+        for region in by_region:
+            count = by_region[region]["count"]
+            by_region[region]["avg_usage"] = round(by_region[region]["avg_usage"] / count, 2)
+            by_region[region]["avg_churn"] = round(by_region[region]["avg_churn"] / count, 4)
+            by_region[region]["avg_conversion_rate"] = round(
+                by_region[region]["paying_users_sum"] / by_region[region]["total_users_sum"], 4
+            ) if by_region[region]["total_users_sum"] > 0 else 0.0
+        
+        return by_region
 
-    def clear_errors(self):
-        """Clear error log"""
-        self.error_log = []
 
-
-class TestClaudeAnalyticsEngine(unittest.TestCase):
-    """Integration and edge case tests"""
-
+class TestClaudeMetricsIntegration(unittest.TestCase):
+    """Integration tests for Claude metrics processing."""
+    
     def setUp(self):
-        """Set up test fixtures"""
-        self.engine = ClaudeAnalyticsEngine(enable_validation=True)
-        self.now = datetime.datetime.utcnow().isoformat() + 'Z'
-
-    def test_valid_user_addition(self):
-        """Test adding a valid user"""
-        user = UserMetrics(
-            user_id="user-12345678",
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=5,
-            monthly_requests=1000,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
+        self.validator = ClaudeMetricsValidator()
+        self.processor = ClaudeDataProcessor()
+    
+    def test_valid_metric_passes_validation(self):
+        """Test that valid metric passes all validations."""
+        metric = ClaudeUserMetric(
+            timestamp="2026-03-28T10:30:00",
+            total_users=25_000_000,
+            paying_users=8_000_000,
+            region=UserCountryRegion.NA.value,
+            avg_daily_usage_hours=2.5,
+            subscription_tier=UserTierLevel.PRO.value,
+            churn_rate=0.05,
+            retention_rate=0.95
         )
-        result = self.engine.add_user(user)
-        self.assertTrue(result)
-        self.assertEqual(self.engine.get_user("user-12345678"), user)
-
-    def test_invalid_user_id_too_short(self):
-        """Test rejection of user ID that is too short"""
-        user = UserMetrics(
-            user_id="usr",
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=5,
-            monthly_requests=1000,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
+        is_valid, errors = self.validator.validate_metric(metric)
+        self.assertTrue(is_valid)
+        self.assertEqual(len(errors), 0)
+    
+    def test_negative_user_count_fails_validation(self):
+        """Test that negative user counts fail validation."""
+        metric = ClaudeUserMetric(
+            timestamp="2026-03-28T10:30:00",
+            total_users=-100,
+            paying_users=50,
+            region=UserCountryRegion.EU.value,
+            avg_daily_usage_hours=1.5,
+            subscription_tier=UserTierLevel.FREE.value,
+            churn_rate=0.10,
+            retention_rate=0.90
         )
-        result = self.engine.add_user(user)
-        self.assertFalse(result)
-        self.assertTrue(any("length out of bounds" in e for e in self.engine.error_log))
-
-    def test_invalid_user_id_too_long(self):
-        """Test rejection of user ID that is too long"""
-        user = UserMetrics(
-            user_id="u" * 100,
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=5,
-            monthly_requests=1000,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
+        is_valid, errors = self.validator.validate_metric(metric)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("out of range" in e for e in errors))
+    
+    def test_paying_exceeds_total_fails_validation(self):
+        """Test that paying users exceeding total users fails."""
+        metric = ClaudeUserMetric(
+            timestamp="2026-03-28T10:30:00",
+            total_users=1_000_000,
+            paying_users=2_000_000,
+            region=UserCountryRegion.APAC.value,
+            avg_daily_usage_hours=1.0,
+            subscription_tier=UserTierLevel.PRO.value,
+            churn_rate=0.08,
+            retention_rate=0.92
         )
-        result = self.engine.add_user(user)
-        self.assertFalse(result)
-
-    def test_invalid_user_id_special_chars(self):
-        """Test rejection of user ID with invalid special characters"""
-        user = UserMetrics(
-            user_id="user@#$%12345",
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=5,
-            monthly_requests=1000,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
+        is_valid, errors = self.validator.validate_metric(metric)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("exceeds total_users" in e for e in errors))
+    
+    def test_invalid_timestamp_fails_validation(self):
+        """Test that invalid timestamp format fails."""
+        metric = ClaudeUserMetric(
+            timestamp="not-a-date",
+            total_users=10_000_000,
+            paying_users=3_000_000,
+            region=UserCountryRegion.LATAM.value,
+            avg_daily_usage_hours=1.2,
+            subscription_tier=UserTierLevel.TEAM.value,
+            churn_rate=0.06,
+            retention_rate=0.94
         )
-        result = self.engine.add_user(user)
-        self.assertFalse(result)
-
-    def test_negative_sessions(self):
-        """Test rejection of negative active sessions"""
-        user = UserMetrics(
-            user_id="user-12345678",
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=-5,
-            monthly_requests=1000,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
+        is_valid, errors = self.validator.validate_metric(metric)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("timestamp" in e for e in errors))
+    
+    def test_invalid_region_fails_validation(self):
+        """Test that invalid region fails."""
+        metric = ClaudeUserMetric(
+            timestamp="2026-03-28T10:30:00",
+            total_users=5_000_000,
+            paying_users=1_500_000,
+            region="Africa",
+            avg_daily_usage_hours=0.8,
+            subscription_tier=UserTierLevel.FREE.value,
+            churn_rate=0.12,
+            retention_rate=0.88
         )
-        result = self.engine.add_user(user)
-        self.assertFalse(result)
-
-    def test_sessions_exceeds_max(self):
-        """Test rejection of sessions exceeding maximum"""
-        user = UserMetrics(
-            user_id="user-12345678",
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=150,
-            monthly_requests=1000,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
+        is_valid, errors = self.validator.validate_metric(metric)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("Invalid region" in e for e in errors))
+    
+    def test_invalid_tier_fails_validation(self):
+        """Test that invalid subscription tier fails."""
+        metric = ClaudeUserMetric(
+            timestamp="2026-03-28T10:30:00",
+            total_users=15_000_000,
+            paying_users=5_000_000,
+            region=UserCountryRegion.EU.value,
+            avg_daily_usage_hours=1.5,
+            subscription_tier="premium-plus",
+            churn_rate=0.07,
+            retention_rate=0.93
         )
-        result = self.engine.add_user(user)
-        self.assertFalse(result)
-
-    def test_negative_requests(self):
-        """Test rejection of negative monthly requests"""
-        user = UserMetrics(
-            user_id="user-12345678",
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=5,
-            monthly_requests=-100,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
+        is_valid, errors = self.validator.validate_metric(metric)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("Invalid subscription_tier" in e for e in errors))
+    
+    def test_usage_hours_exceeds_max_fails_validation(self):
+        """Test that usage hours > 24 fails."""
+        metric = ClaudeUserMetric(
+            timestamp="2026-03-28T10:30:00",
+            total_users=8_000_000,
+            paying_users=2_400_000,
+            region=UserCountryRegion.NA.value,
+            avg_daily_usage_hours=25.5,
+            subscription_tier=UserTierLevel.ENTERPRISE.value,
+            churn_rate=0.03,
+            retention_rate=0.97
         )
-        result = self.engine.add_user(user)
-        self.assertFalse(result)
-
-    def test_requests_exceeds_max(self):
-        """Test rejection of requests exceeding maximum"""
-        user = UserMetrics(
-            user_id="user-12345678",
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=5,
-            monthly_requests=10000000,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
+        is_valid, errors = self.validator.validate_metric(metric)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("avg_daily_usage_hours" in e for e in errors))
+    
+    def test_churn_retention_mismatch_warning(self):
+        """Test that churn + retention != 1.0 produces warning."""
+        metric = ClaudeUserMetric(
+            timestamp="2026-03-28T10:30:00",
+            total_users=12_000_000,
+            paying_users=4_000_000,
+            region=UserCountryRegion.APAC.value,
+            avg_daily_usage_hours=2.0,
+            subscription_tier=UserTierLevel.PRO.value,
+            churn_rate=0.15,
+            retention_rate=0.80
         )
-        result = self.engine.add_user(user)
-        self.assertFalse(result)
-
-    def test_zero_requests_valid(self):
-        """Test that zero requests is valid (edge case)"""
-        user = UserMetrics(
-            user_id="user-12345678",
-            tier=UserTierEnum.FREE,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=0,
-            monthly_requests=0,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=False
-        )
-        result = self.engine.add_user(user)
-        self.assertTrue(result)
-
-    def test_zero_sessions_valid(self):
-        """Test that zero sessions is valid"""
-        user = UserMetrics(
-            user_id="user-12345678",
-            tier=UserTierEnum.FREE,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=0,
-            monthly_requests=100,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
-        )
-        result = self.engine.add_user(user)
-        self.assertTrue(result)
-
-    def test_invalid_timestamp_format(self):
-        """Test rejection of invalid timestamp format"""
-        user = UserMetrics(
-            user_id="user-12345678",
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=5,
-            monthly_requests=1000,
-            last_activity_timestamp="2026/03/28 10:00:00",
-            account_created_timestamp=self.now,
-            is_verified=True
-        )
-        result = self.engine.add_user(user)
-        self.assertFalse(result)
-
-    def test_boundary_max_sessions(self):
-        """Test adding user with maximum allowed sessions"""
-        user = UserMetrics(
-            user_id="user-maxsess01",
-            tier=UserTierEnum.ENTERPRISE,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=100,
-            monthly_requests=500000,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
-        )
-        result = self.engine.add_user(user)
-        self.assertTrue(result)
-
-    def test_boundary_max_requests(self):
-        """Test adding user with maximum allowed requests"""
-        user = UserMetrics(
-            user_id="user-maxreqs01",
-            tier=UserTierEnum.ENTERPRISE,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=50,
-            monthly_requests=1000000,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
-        )
-        result = self.engine.add_user(user)
-        self.assertTrue(result)
-
-    def test_aggregate_by_tier_empty(self):
-        """Test aggregation with no users"""
-        result = self.engine.aggregate_by_tier()
-        self.assertEqual(result[UserTierEnum.FREE.value]["count"], 0)
-        self.assertEqual(result[UserTierEnum.PRO.value]["count"], 0)
-        self.assertEqual(result[UserTierEnum.ENTERPRISE.value]["count"], 0)
-
-    def test_aggregate_by_tier_multiple_users(self):
-        """Test aggregation with multiple users of different tiers"""
-        users = [
-            UserMetrics("user-1", UserTierEnum.FREE, RegionEnum.NORTH_AMERICA, 1, 50, self.now, self.now, True),
-            UserMetrics("user-2", UserTierEnum.PRO, RegionEnum.NORTH_AMERICA, 5, 500, self.now, self.now, True),
-            UserMetrics("user-3", UserTierEnum.ENTERPRISE, RegionEnum.EUROPE, 20, 5000, self.now, self.now, True),
-            UserMetrics("user-4", UserTierEnum.PRO, RegionEnum.ASIA_PACIFIC, 3, 300, self.now, self.now, True),
+        is_valid, errors = self.validator.validate_metric(metric)
+        self.assertTrue(is_valid)
+        self.assertTrue(any("churn_rate + retention_rate" in e for e in errors))
+    
+    def test_zero_total_users_conversion_rate(self):
+        """Test conversion rate calculation with zero total users."""
+        rate = self.processor.calculate_conversion_rate(0, 0)
+        self.assertEqual(rate, 0.0)
+    
+    def test_conversion_rate_calculation(self):
+        """Test correct conversion rate calculation."""
+        rate = self.processor.calculate_conversion_rate(25_000_000, 8_000_000)
+        self.assertAlmostEqual(rate, 0.32, places=4)
+    
+    def test_anomaly_detection_growth_spike(self):
+        """Test anomaly detection for unusual user growth."""
+        metrics = [
+            ClaudeUserMetric(
+                timestamp=f"2026-03-{i:02d}T10:00:00",
+                total_users=10_000_000 + (i * 500_000),
+                paying_users=3_000_000 + (i * 150_000),
+                region=UserCountryRegion.NA.value,
+                avg_daily_usage_hours=1.5,
+                subscription_tier=UserTierLevel.PRO.value,
+                churn_rate=0.05,
+                retention_rate=0.95
+            )
+            for i in range(1, 8)
         ]
-        for user in users:
-            self.engine.add_user(user)
-
-        result = self.engine.aggregate_by_tier()
-        self.assertEqual(result[UserTierEnum.FREE.value]["count"], 1)
-        self.assertEqual(result[UserTierEnum.PRO.value]["count"], 2)
-        self.assertEqual(result[UserTierEnum.ENTERPRISE.value]["count"], 1)
-        self.assertEqual(result[UserTierEnum.PRO.value]["total_requests"], 800)
-
-    def test_aggregate_by_region_empty(self):
-        """Test region aggreg
-ation with no users"""
-        result = self.engine.aggregate_by_region()
-        for region in result.values():
-            self.assertEqual(region["count"], 0)
-
-    def test_aggregate_by_region_multiple_users(self):
-        """Test region aggregation with multiple users"""
-        users = [
-            UserMetrics("user-1", UserTierEnum.FREE, RegionEnum.NORTH_AMERICA, 1, 50, self.now, self.now, True),
-            UserMetrics("user-2", UserTierEnum.PRO, RegionEnum.NORTH_AMERICA, 5, 500, self.now, self.now, True),
-            UserMetrics("user-3", UserTierEnum.ENTERPRISE, RegionEnum.EUROPE, 20, 5000, self.now, self.now, True),
-            UserMetrics("user-4", UserTierEnum.PRO, RegionEnum.ASIA_PACIFIC, 3, 300, self.now, self.now, True),
+        
+        # Inject spike
+        metrics[5].total_users = 50_000_000
+        
+        anomalies = self.processor.detect_anomalies(metrics)
+        self.assertTrue(len(anomalies) > 0)
+        self.assertTrue(any(a["type"] == "user_growth_anomaly" for a in anomalies))
+    
+    def test_regional_aggregation(self):
+        """Test metrics aggregation by region."""
+        metrics = [
+            ClaudeUserMetric(
+                timestamp="2026-03-28T10:00:00",
+                total_users=15_000_000,
+                paying_users=5_000_000,
+                region=UserCountryRegion.NA.value,
+                avg_daily_usage_hours=2.0,
+                subscription_tier=UserTierLevel.PRO.value,
+                churn_rate=0.05,
+                retention_rate=0.95
+            ),
+            ClaudeUserMetric(
+                timestamp="2026-03-28T10:00:00",
+                total_users=8_000_000,
+                paying_users=2_400_000,
+                region=UserCountryRegion.EU.value,
+                avg_daily_usage_hours=1.8,
+                subscription_tier=UserTierLevel.PRO.value,
+                churn_rate=0.06,
+                retention_rate=0.94
+            ),
+            ClaudeUserMetric(
+                timestamp="2026-03-28T10:00:00",
+total_users=2_000_000,
+                paying_users=600_000,
+                region=UserCountryRegion.APAC.value,
+                avg_daily_usage_hours=1.5,
+                subscription_tier=UserTierLevel.FREE.value,
+                churn_rate=0.10,
+                retention_rate=0.90
+            )
         ]
-        for user in users:
-            self.engine.add_user(user)
-
-        result = self.engine.aggregate_by_region()
-        self.assertEqual(result[RegionEnum.NORTH_AMERICA.value]["count"], 2)
-        self.assertEqual(result[RegionEnum.EUROPE.value]["count"], 1)
-        self.assertEqual(result[RegionEnum.ASIA_PACIFIC.value]["count"], 1)
-        self.assertEqual(result[RegionEnum.NORTH_AMERICA.value]["total_requests"], 550)
-
-    def test_estimate_total_users_empty(self):
-        """Test user estimation with empty system"""
-        result = self.engine.estimate_total_users()
-        self.assertEqual(result["actual_in_system"], 0)
-        self.assertEqual(result["estimated_total"], 0)
-
-    def test_estimate_total_users_with_sample(self):
-        """Test user estimation with sample count"""
-        users = [UserMetrics(f"user-{i}", UserTierEnum.PRO, RegionEnum.NORTH_AMERICA, 1, 100, self.now, self.now, True) for i in range(10)]
-        for user in users:
-            self.engine.add_user(user)
-
-        result = self.engine.estimate_total_users(sample_count=10)
-        self.assertEqual(result["actual_in_system"], 10)
-        self.assertGreaterEqual(result["estimated_total"], 18000000)
-        self.assertLessEqual(result["estimated_total"], 30000000)
-        self.assertEqual(len(result["confidence_range"]), 2)
-        self.assertLess(result["confidence_range"][0], result["confidence_range"][1])
-
-    def test_anomaly_detection_empty(self):
-        """Test anomaly detection with no users"""
-        anomalies = self.engine.detect_anomalies()
+        
+        aggregated = self.processor.aggregate_by_region(metrics)
+        self.assertIn(UserCountryRegion.NA.value, aggregated)
+        self.assertIn(UserCountryRegion.EU.value, aggregated)
+        self.assertIn(UserCountryRegion.APAC.value, aggregated)
+        
+        na_data = aggregated[UserCountryRegion.NA.value]
+        self.assertEqual(na_data["total_users_sum"], 15_000_000)
+        self.assertEqual(na_data["paying_users_sum"], 5_000_000)
+        self.assertAlmostEqual(na_data["avg_conversion_rate"], 0.3333, places=3)
+    
+    def test_boundary_condition_max_users(self):
+        """Test boundary condition with maximum allowed users."""
+        metric = ClaudeUserMetric(
+            timestamp="2026-03-28T10:30:00",
+            total_users=100_000_000,
+            paying_users=50_000_000,
+            region=UserCountryRegion.NA.value,
+            avg_daily_usage_hours=24.0,
+            subscription_tier=UserTierLevel.ENTERPRISE.value,
+            churn_rate=0.0,
+            retention_rate=1.0
+        )
+        is_valid, errors = self.validator.validate_metric(metric)
+        self.assertTrue(is_valid)
+    
+    def test_boundary_condition_min_metrics(self):
+        """Test boundary condition with minimum allowed metrics."""
+        metric = ClaudeUserMetric(
+            timestamp="2026-01-01T00:00:00",
+            total_users=0,
+            paying_users=0,
+            region=UserCountryRegion.OTHER.value,
+            avg_daily_usage_hours=0.0,
+            subscription_tier=UserTierLevel.FREE.value,
+            churn_rate=0.0,
+            retention_rate=1.0
+        )
+        is_valid, errors = self.validator.validate_metric(metric)
+        self.assertTrue(is_valid)
+    
+    def test_type_validation_float_as_int(self):
+        """Test that float provided for int field fails."""
+        metric = ClaudeUserMetric(
+            timestamp="2026-03-28T10:30:00",
+            total_users=25.5,
+            paying_users=8_000_000,
+            region=UserCountryRegion.NA.value,
+            avg_daily_usage_hours=2.5,
+            subscription_tier=UserTierLevel.PRO.value,
+            churn_rate=0.05,
+            retention_rate=0.95
+        )
+        is_valid, errors = self.validator.validate_metric(metric)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("must be int" in e for e in errors))
+    
+    def test_empty_metrics_list_anomaly_detection(self):
+        """Test anomaly detection with empty metrics list."""
+        anomalies = self.processor.detect_anomalies([])
+        self.assertEqual(len(anomalies), 0)
+    
+    def test_single_metric_anomaly_detection(self):
+        """Test anomaly detection with single metric."""
+        metrics = [
+            ClaudeUserMetric(
+                timestamp="2026-03-28T10:00:00",
+                total_users=10_000_000,
+                paying_users=3_000_000,
+                region=UserCountryRegion.NA.value,
+                avg_daily_usage_hours=1.5,
+                subscription_tier=UserTierLevel.PRO.value,
+                churn_rate=0.05,
+                retention_rate=0.95
+            )
+        ]
+        anomalies = self.processor.detect_anomalies(metrics)
         self.assertEqual(len(anomalies), 0)
 
-    def test_anomaly_detection_excessive_requests(self):
-        """Test detection of unusually high request counts"""
-        users = [
-            UserMetrics("user-1", UserTierEnum.PRO, RegionEnum.NORTH_AMERICA, 1, 100, self.now, self.now, True),
-            UserMetrics("user-2", UserTierEnum.PRO, RegionEnum.NORTH_AMERICA, 1, 120, self.now, self.now, True),
-            UserMetrics("user-3", UserTierEnum.PRO, RegionEnum.NORTH_AMERICA, 1, 110, self.now, self.now, True),
-            UserMetrics("user-anomaly", UserTierEnum.ENTERPRISE, RegionEnum.NORTH_AMERICA, 1, 50000, self.now, self.now, True),
-        ]
-        for user in users:
-            self.engine.add_user(user)
 
-        anomalies = self.engine.detect_anomalies()
-        high_request_anomalies = [a for a in anomalies if a["anomaly_type"] == "unusually_high_requests"]
-        self.assertGreater(len(high_request_anomalies), 0)
-        self.assertTrue(any(a["user_id"] == "user-anomaly" for a in high_request_anomalies))
-
-    def test_anomaly_detection_excessive_sessions(self):
-        """Test detection of excessive concurrent sessions"""
-        users = [
-            UserMetrics("user-1", UserTierEnum.PRO, RegionEnum.NORTH_AMERICA, 2, 100, self.now, self.now, True),
-            UserMetrics("user-2", UserTierEnum.PRO, RegionEnum.NORTH_AMERICA, 3, 100, self.now, self.now, True),
-            UserMetrics("user-suspicious", UserTierEnum.ENTERPRISE, RegionEnum.NORTH_AMERICA, 75, 100, self.now, self.now, True),
-        ]
-        for user in users:
-            self.engine.add_user(user)
-
-        anomalies = self.engine.detect_anomalies()
-        session_anomalies = [a for a in anomalies if a["anomaly_type"] == "excessive_concurrent_sessions"]
-        self.assertGreater(len(session_anomalies), 0)
-        self.assertTrue(any(a["user_id"] == "user-suspicious" for a in session_anomalies))
-
-    def test_validation_disabled(self):
-        """Test that validation can be disabled"""
-        engine = ClaudeAnalyticsEngine(enable_validation=False)
-        user = UserMetrics(
-            user_id="usr",
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=-5,
-            monthly_requests=99999999,
-            last_activity_timestamp="invalid-timestamp",
-            account_created_timestamp=self.now,
-            is_verified=True
-        )
-        result = engine.add_user(user)
-        self.assertTrue(result)
-        self.assertIsNotNone(engine.get_user("usr"))
-
-    def test_user_update_overwrites(self):
-        """Test that adding user with same ID overwrites previous data"""
-        user1 = UserMetrics(
-            user_id="user-12345678",
-            tier=UserTierEnum.FREE,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=1,
-            monthly_requests=50,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=False
-        )
-        user2 = UserMetrics(
-            user_id="user-12345678",
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.EUROPE,
-            active_sessions=10,
-            monthly_requests=1000,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
-        )
-
-        self.engine.add_user(user1)
-        self.engine.add_user(user2)
-        retrieved = self.engine.get_user("user-12345678")
-        self.assertEqual(retrieved.tier, UserTierEnum.PRO)
-        self.assertEqual(retrieved.region, RegionEnum.EUROPE)
-        self.assertEqual(retrieved.active_sessions, 10)
-
-    def test_get_nonexistent_user(self):
-        """Test retrieving a user that does not exist"""
-        result = self.engine.get_user("nonexistent-user")
-        self.assertIsNone(result)
-
-    def test_boundary_user_id_min_length(self):
-        """Test user ID at minimum length boundary"""
-        user = UserMetrics(
-            user_id="usr12345",
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=5,
-            monthly_requests=1000,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
-        )
-        result = self.engine.add_user(user)
-        self.assertTrue(result)
-
-    def test_boundary_user_id_max_length(self):
-        """Test user ID at maximum length boundary"""
-        user = UserMetrics(
-            user_id="u" * 64,
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=5,
-            monthly_requests=1000,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
-        )
-        result = self.engine.add_user(user)
-        self.assertTrue(result)
-
-    def test_error_log_accumulation(self):
-        """Test that errors are accumulated in error log"""
-        user1 = UserMetrics("usr", UserTierEnum.PRO, RegionEnum.NORTH_AMERICA, 5, 1000, self.now, self.now, True)
-        user2 = UserMetrics("user-12345678", UserTierEnum.PRO, RegionEnum.NORTH_AMERICA, 150, 1000, self.now, self.now, True)
-
-        self.engine.add_user(user1)
-        errors_after_first = len(self.engine.error_log)
-        self.assertGreater(errors_after_first, 0)
-
-        self.engine.add_user(user2)
-        errors_after_second = len(self.engine.error_log)
-        self.assertGreater(errors_after_second, errors_after_first)
-
-    def test_error_log_clear(self):
-        """Test clearing error log"""
-        user = UserMetrics("usr", UserTierEnum.PRO, RegionEnum.NORTH_AMERICA, 5, 1000, self.now, self.now, True)
-        self.engine.add_user(user)
-        self.assertGreater(len(self.engine.error_log), 0)
-
-        self.engine.clear_errors()
-        self.assertEqual(len(self.engine.error_log), 0)
-
-    def test_all_enum_values(self):
-        """Test that all enum values work correctly"""
-        for tier in UserTierEnum:
-            for region in RegionEnum:
-                user = UserMetrics(
-                    user_id=f"user-{tier.value}-{region.value}",
-                    tier=tier,
-                    region=region,
-                    active_sessions=5,
-                    monthly_requests=1000,
-                    last_activity_timestamp=self.now,
-                    account_created_timestamp=self.now,
-                    is_verified=True
+class ClaudeMetricsReporter:
+    """Generates structured reports from metrics and test results."""
+    
+    def __init__(self):
+        self.validator = ClaudeMetricsValidator()
+        self.processor = ClaudeDataProcessor()
+    
+    def generate_analysis_report(self, metrics: List[ClaudeUserMetric]) -> Dict:
+        """Generate comprehensive analysis report."""
+        report = {
+            "generated_at": datetime.now().isoformat(),
+            "total_records": len(metrics),
+            "validation_summary": {
+                "valid_records": 0,
+                "invalid_records": 0,
+                "warnings": 0
+            },
+            "metrics_summary": {
+                "min_total_users": float('inf'),
+                "max_total_users": 0,
+                "avg_total_users": 0,
+                "min_conversion_rate": 1.0,
+                "max_conversion_rate": 0.0,
+                "avg_conversion_rate": 0.0
+            },
+            "regional_breakdown": {},
+            "anomalies": [],
+            "validation_errors": []
+        }
+        
+        valid_metrics = []
+        total_conversion = 0
+        
+        for metric in metrics:
+            is_valid, errors = self.validator.validate_metric(metric)
+            
+            if is_valid:
+                report["validation_summary"]["valid_records"] += 1
+                valid_metrics.append(metric)
+                
+                # Update min/max
+                report["metrics_summary"]["min_total_users"] = min(
+                    report["metrics_summary"]["min_total_users"],
+                    metric.total_users
                 )
-                result = self.engine.add_user(user)
-                self.assertTrue(result)
-
-    def test_large_dataset_aggregation(self):
-        """Test aggregation with large dataset"""
-        for i in range(1000):
-            user = UserMetrics(
-                user_id=f"user-{i:08d}",
-                tier=random.choice(list(UserTierEnum)),
-                region=random.choice(list(RegionEnum)),
-                active_sessions=random.randint(0, 100),
-                monthly_requests=random.randint(0, 1000000),
-                last_activity_timestamp=self.now,
-                account_created_timestamp=self.now,
-                is_verified=random.choice([True, False])
+                report["metrics_summary"]["max_total_users"] = max(
+                    report["metrics_summary"]["max_total_users"],
+                    metric.total_users
+                )
+                
+                # Calculate conversion rate
+                conv_rate = self.processor.calculate_conversion_rate(
+                    metric.total_users,
+                    metric.paying_users
+                )
+                total_conversion += conv_rate
+                report["metrics_summary"]["min_conversion_rate"] = min(
+                    report["metrics_summary"]["min_conversion_rate"],
+                    conv_rate
+                )
+                report["metrics_summary"]["max_conversion_rate"] = max(
+                    report["metrics_summary"]["max_conversion_rate"],
+                    conv_rate
+                )
+            else:
+                report["validation_summary"]["invalid_records"] += 1
+                if errors:
+                    report["validation_errors"].append({
+                        "timestamp": metric.timestamp,
+                        "errors": errors
+                    })
+            
+            # Count warnings
+            if any(not is_valid for _ in errors):
+                report["validation_summary"]["warnings"] += len(errors)
+        
+        # Calculate averages
+        if valid_metrics:
+            avg_users = sum(m.total_users for m in valid_metrics) / len(valid_metrics)
+            report["metrics_summary"]["avg_total_users"] = round(avg_users, 0)
+            report["metrics_summary"]["avg_conversion_rate"] = round(
+                total_conversion / len(valid_metrics), 4
             )
-            self.engine.add_user(user)
+        
+        # Aggregate by region
+        if valid_metrics:
+            report["regional_breakdown"] = self.processor.aggregate_by_region(valid_metrics)
+        
+        # Detect anomalies
+        if valid_metrics:
+            report["anomalies"] = self.processor.detect_anomalies(valid_metrics)
+        
+        return report
+    
+    def print_report_json(self, report: Dict):
+        """Print report as JSON."""
+        print(json.dumps(report, indent=2))
+    
+    def print_report_text(self, report: Dict):
+        """Print human-readable report."""
+        print("\n" + "="*80)
+        print("CLAUDE METRICS INTEGRATION TEST REPORT")
+        print("="*80)
+        print(f"Generated: {report['generated_at']}")
+        print(f"Total Records: {report['total_records']}")
+        print("\nVALIDATION SUMMARY:")
+        print(f"  Valid Records: {report['validation_summary']['valid_records']}")
+        print(f"  Invalid Records: {report['validation_summary']['invalid_records']}")
+        print(f"  Warnings: {report['validation_summary']['warnings']}")
+        
+        print("\nMETRICS SUMMARY:")
+        metrics = report['metrics_summary']
+        if metrics['min_total_users'] != float('inf'):
+            print(f"  Min Total Users: {metrics['min_total_users']:,}")
+            print(f"  Max Total Users: {metrics['max_total_users']:,}")
+            print(f"  Avg Total Users: {metrics['avg_total_users']:,.0f}")
+            print(f"  Min Conversion Rate: {metrics['min_conversion_rate']:.4f}")
+            print(f"  Max Conversion Rate: {metrics['max_conversion_rate']:.4f}")
+            print(f"  Avg Conversion Rate: {metrics['avg_conversion_rate']:.4f}")
+        
+        if report['regional_breakdown']:
+            print("\nREGIONAL BREAKDOWN:")
+            for region, data in report['regional_breakdown'].items():
+                print(f"\n  {region}:")
+                print(f"    Total Users: {data['total_users_sum']:,}")
+                print(f"    Paying Users: {data['paying_users_sum']:,}")
+                print(f"    Conversion Rate: {data['avg_conversion_rate']:.4f}")
+                print(f"    Avg Daily Usage: {data['avg_usage']:.2f}h")
+                print(f"    Avg Churn Rate: {data['avg_churn']:.4f}")
+        
+        if report['anomalies']:
+            print("\nANOMALIES DETECTED:")
+            for anomaly in report['anomalies']:
+                print(f"  [{anomaly['type']}] at {anomaly['timestamp']}")
+                if anomaly['type'] == 'user_growth_anomaly':
+                    print(f"    Growth Rate: {anomaly['growth_rate']}")
+                    print(f"    Expected: {anomaly['expected_range']}")
+                else:
+                    print(f"    Churn Rate: {anomaly['churn_rate']}")
+                    print(f"    Mean: {anomaly['mean_churn']}")
+        
+        if report['validation_errors']:
+            print("\nVALIDATION ERRORS:")
+            for error_record in report['validation_errors'][:5]:
+                print(f"  {error_record['timestamp']}: {error_record['errors'][0]}")
+            if len(report['validation_errors']) > 5:
+                print(f"  ... and {len(report['validation_errors']) - 5} more")
+        
+        print("\n" + "="*80 + "\n")
 
-        tier_result = self.engine.aggregate_by_tier()
-        region_result = self.engine.aggregate_by_region()
 
-        total_count_tier = sum(tier_result[t]["count"] for t in tier_result)
-        self.assertEqual(total_count_tier, 1000)
-
-        total_count_region = sum(region_result[r]["count"] for r in region_result)
-        self.assertEqual(total_count_region, 1000)
-
-    def test_user_metrics_to_dict(self):
-        """Test conversion of UserMetrics to dictionary"""
-        user = UserMetrics(
-            user_id="user-12345678",
-            tier=UserTierEnum.PRO,
-            region=RegionEnum.NORTH_AMERICA,
-            active_sessions=5,
-            monthly_requests=1000,
-            last_activity_timestamp=self.now,
-            account_created_timestamp=self.now,
-            is_verified=True
-        )
-        user_dict = user.to_dict()
-        self.assertEqual(user_dict["user_id"], "user-12345678")
-        self.assertEqual(user_dict["tier"], "pro")
-        self.assertEqual(user_dict["region"], "north_america")
-        self.assertIsInstance(user_dict, dict)
-
-
-def generate_sample_data(count: int = 100) -> List[UserMetrics]:
-    """Generate sample user metrics for testing"""
-    users = []
-    now = datetime.datetime.utcnow().isoformat() + 'Z'
-    past = (datetime.datetime.utcnow() - datetime.timedelta(days=30)).isoformat() + 'Z'
-
+def generate_sample_metrics(count: int = 30) -> List[ClaudeUserMetric]:
+    """Generate realistic sample metrics for testing."""
+    base_date = datetime(2026, 3, 1)
+    metrics = []
+    
     for i in range(count):
-        user = UserMetrics(
-            user_id=f"user-{i:08d}",
-            tier=random.choice(list(UserTierEnum)),
-            region=random.choice(list(RegionEnum)),
-            active_sessions=random.randint(0, 50),
-            monthly_requests=random.randint(10, 100000),
-            last_activity_timestamp=now,
-            account_created_timestamp=past,
-            is_verified=random.choice([True, False])
-        )
-        users.append(user)
-
-    return users
+        current_date = base_date + timedelta(days=i)
+        timestamp = current_date.isoformat()
+        
+        # Simulate realistic growth pattern
+        base_users = 18_000_000 + (i * 300_000)
+        total_users = base_users + (100_000 * (i % 3))
+        paying_users = int(total_users * (0.28 + i * 0.002))
+        
+        # Regional distribution
+        region = [
+            UserCountryRegion.NA.value,
+            UserCountryRegion.EU.value,
+            UserCountryRegion.APAC.value
+        ][i % 3]
+        
+        # Usage pattern
+        avg_usage = 1.2 + (i * 0.05) if i % 2 == 0 else 1.5 - (i * 0.02)
+        avg_usage = max(0.1, min(24.0, avg_usage))
+        
+        # Churn/retention
+        tier = list(UserTierLevel)[i % 4]
+        churn = 0.12 - (i * 0.001) if tier.value != UserTierLevel.FREE.value else 0.15
+        churn = max(0.0, min(1.0, churn))
+        retention = 1.0 - churn
+        
+        metrics.append(ClaudeUserMetric(
+            timestamp=timestamp,
+            total_users=total_users,
+            paying_users=paying_users,
+            region=region,
+            avg_daily_usage_hours=round(avg_usage, 2),
+            subscription_tier=tier.value,
+            churn_rate=round(churn, 4),
+            retention_rate=round(retention, 4)
+        ))
+    
+    return metrics
 
 
 def main():
-    """Main entry point with CLI arguments"""
     parser = argparse.ArgumentParser(
-        description="Claude Analytics Engine - Integration Tests and Edge Cases"
+        description="Claude Metrics Integration Test Suite and Analyzer"
     )
     parser.add_argument(
-        "--test-mode",
-        choices=["unittest", "demo", "benchmark"],
-        default="unittest",
-        help="Test mode to run"
+        "--test",
+        action="store_true",
+        help="Run integration test suite"
     )
     parser.add_argument(
-        "--sample-size",
+        "--analyze",
+        action="store_true",
+        help="Analyze sample metrics and generate report"
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=["json", "text"],
+        default="text",
+        help="Report output format"
+    )
+    parser.add_argument(
+        "--sample-count",
         type=int,
-        default=100,
-        help="Number of sample users to generate for demo mode"
+        default=30,
+        help="Number of sample metrics to generate"
     )
     parser.add_argument(
-        "--verbose",
+        "--validate-only",
         action="store_true",
-        help="Enable verbose output"
+        help="Only validate metrics without full analysis"
     )
-    parser.add_argument(
-        "--disable-validation",
-        action="store_true",
-        help="Disable input validation in demo mode"
-    )
-    parser.add_argument(
-        "--output-json",
-        action="store_true",
-        help="Output results as JSON"
-    )
-
+    
     args = parser.parse_args()
-
-    if args.test_mode == "unittest":
-        loader = unittest.TestLoader()
-        suite = loader.loadTestsFromTestCase(TestClaudeAnalyticsEngine)
-        runner = unittest.TextTestRunner(verbosity=2 if args.verbose else 1)
+    
+    if args.test:
+        print("Running integration tests...")
+        suite = unittest.TestLoader().loadTestsFromTestCase(TestClaudeMetricsIntegration)
+        runner = unittest.TextTestRunner(verbosity=2)
         result = runner.run(suite)
-        sys.exit(0 if result.wasSuccessful() else 1)
-
-    elif args.test_mode == "demo":
-        engine = ClaudeAnalyticsEngine(enable_validation=not args.disable_validation)
-        sample_users = generate_sample_data(args.sample_size)
-
-        print(f"[*] Loading {len(sample_users)} sample users...")
-        for user in sample_users:
-            engine.add_user(user)
-
-        print(f"[+] Successfully loaded {len(engine.user_cache)} users")
-
-        if args.verbose:
-            print(f"[*] Error log contains {len(engine.error_log)} entries")
-            if engine.error_log:
-                print("[*] Recent errors:")
-                for err in engine.error_log[-5:]:
-                    print(f"    - {err}")
-
-        print("\n[*] Generating aggregations...")
-        tier_agg = engine.aggregate_by_tier()
-        region_agg = engine.aggregate_by_region()
-        user_est = engine.estimate_total_users(sample_count=args.sample_size)
-        anomalies = engine.detect_anomalies()
-
-        if args.output_json:
-            output = {
-                "tier_aggregation": tier_agg,
-                "region_aggregation": region_agg,
-                "user_estimation": user_est,
-                "anomalies_detected": len(anomalies),
-                "anomaly_details": anomalies[:10] if anomalies else []
-            }
-            print(json.dumps(output, indent=2))
+        return 0 if result.wasSuccessful() else 1
+    
+    elif args.analyze or args.validate_only:
+        metrics = generate_sample_metrics(args.sample_count)
+        reporter = ClaudeMetricsReporter()
+        
+        if args.validate_only:
+            print("Validating metrics...")
+            validator = ClaudeMetricsValidator()
+            valid_count = 0
+            invalid_count = 0
+            
+            for metric in metrics:
+                is_valid, errors = validator.validate_metric(metric)
+                if is_valid:
+                    valid_count += 1
+                else:
+                    invalid_count += 1
+                    print(f"Invalid: {metric.timestamp} - {errors[0]}")
+            
+            print(f"\nValidation Complete: {valid_count} valid, {invalid_count} invalid")
+            return 0
+        
         else:
-            print("\n=== Tier Aggregation ===")
-            for tier, data in tier_agg.items():
-                print(f"{tier.upper()}: {data['count']} users, {data['total_requests']} total requests, avg sessions: {data['avg_sessions']:.2f}")
-
-            print("\n=== Region Aggregation ===")
-            for region, data in region_agg.items():
-                print(f"{region.upper()}: {data['count']} users, {data['total_requests']} total requests")
-
-            print("\n=== User Estimation ===")
-            print(f"Actual users in system: {user_est['actual_in_system']}")
-            print(f"Estimated total users: {user_est['estimated_total']:,}")
-            print(f"Confidence range: {user_est['confidence_range'][0]:,} - {user_est['confidence_range'][1]:,}")
-
-            print("\n=== Anomalies Detected ===")
-            if anomalies:
-                print(f"Found {len(anomalies)} anomalies")
-                for anomaly in anomalies[:5]:
-                    print(f"  - {anomaly['user_id']}: {anomaly['anomaly_type']} (value: {anomaly['value']}, threshold: {anomaly['threshold']})")
-                if len(anomalies) > 5:
-                    print(f"  ... and {len(anomalies) - 5} more")
+            report = reporter.generate_analysis_report(metrics)
+            
+            if args.output_format == "json":
+                reporter.print_report_json(report)
             else:
-                print("No anomalies detected")
-
-    elif args.test_mode == "benchmark":
-        print("[*] Running benchmark tests...")
-        sizes = [10, 100, 1000]
-        results = {}
-
-        for size in sizes:
-            engine = ClaudeAnalyticsEngine(enable_validation=True)
-            sample_users = generate_sample_data(size)
-
-            import time
-            start = time.time()
-            for user in sample_users:
-                engine.add_user(user)
-            load_time = time.time() - start
-
-            start = time.time()
-            engine.aggregate_by_tier()
-            tier_agg_time = time.time() - start
-
-            start = time.time()
-            engine.aggregate_by_region()
-            region_agg_time = time.time() - start
-
-            start = time.time()
-            engine.detect_anomalies()
-            anomaly_time = time.time() - start
-
-            results[size] = {
-                "load_time_ms": load_time * 1000,
-                "tier_aggregation_ms": tier_agg_time * 1000,
-                "region_aggregation_ms": region_agg_time * 1000,
-                "anomaly_detection_ms": anomaly_time * 1000
-            }
-
-            print(f"[{size} users] Load: {load_time*1000:.2f}ms | Tier Agg: {tier_agg_time*1000:.2f}ms | Region Agg: {region_agg_time*1000:.2f}ms | Anomaly: {anomaly_time*1000:.2f}ms")
-
-        if args.output_json:
-            print("\n" + json.dumps(results, indent=2))
+                reporter.print_report_text(report)
+            
+            return 0
+    
+    else:
+        # Default: run both tests and analysis
+        print("Running integration tests...")
+        suite = unittest.TestLoader().loadTestsFromTestCase(TestClaudeMetricsIntegration)
+        runner = unittest.TextTestRunner(verbosity=1)
+        test_result = runner.run(suite)
+        
+        print("\n" + "-"*80)
+        print("Running sample metrics analysis...")
+        metrics = generate_sample_metrics(30)
+        reporter = ClaudeMetricsReporter()
+        report = reporter.generate_analysis_report(metrics)
+        reporter.print_report_text(report)
+        
+        return 0 if test_result.wasSuccessful() else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
