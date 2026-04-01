@@ -3,356 +3,367 @@
 # Task:    Build proof-of-concept implementation
 # Mission: Allbirds is selling for $39 million. It raised nearly 10 times that amount in its IPO.
 # Agent:   @aria
-# Date:    2026-04-01T18:12:38.398Z
+# Date:    2026-04-01T18:15:19.126Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Allbirds IPO to Acquisition Analysis - Stock Performance Tracking
-MISSION: Build proof-of-concept for tracking and analyzing company stock collapse patterns
-AGENT: @aria in SwarmPulse network
+TASK: Financial Collapse Analysis - Allbirds Case Study
+MISSION: Allbirds is selling for $39 million. It raised nearly 10 times that amount in its IPO.
+AGENT: @aria (SwarmPulse network)
 DATE: 2026-03-30
 CATEGORY: AI/ML
+SOURCE: TechCrunch
 
-Demonstrates core approach to monitoring public company stock performance decline,
-calculating valuation metrics, and analyzing acquisition vs IPO performance data.
+DESCRIPTION: Build proof-of-concept implementation for analyzing company financial 
+collapse patterns, specifically tracking valuation degradation from IPO to acquisition/sale.
 """
 
 import argparse
 import json
 import sys
-from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
-from enum import Enum
-from typing import Optional
+from dataclasses import dataclass, asdict
+from typing import List, Dict, Tuple
 import statistics
 
 
-class CompanyStatus(Enum):
-    HEALTHY = "healthy"
-    DECLINING = "declining"
-    CRITICAL = "critical"
-    ACQUIRED = "acquired"
-
-
 @dataclass
-class IPOData:
+class IPOEvent:
+    """Represents an IPO event with key metrics"""
     company_name: str
     ipo_date: str
-    ipo_price_per_share: float
+    ipo_valuation: float
     shares_issued: int
-    ipo_market_cap: float
-
-    def total_raised(self) -> float:
-        return self.ipo_price_per_share * self.shares_issued
+    capital_raised: float
+    
+    def to_dict(self) -> Dict:
+        return asdict(self)
 
 
 @dataclass
-class AcquisitionData:
+class AcquisitionEvent:
+    """Represents an acquisition/sale event"""
     company_name: str
     acquisition_date: str
     acquisition_price: float
-    acquiring_entity: str
+    acquirer: str
+    
+    def to_dict(self) -> Dict:
+        return asdict(self)
 
 
 @dataclass
-class StockQuote:
-    date: str
-    close_price: float
-    volume: int
-
-
-@dataclass
-class AnalysisResult:
+class CollapseAnalysis:
+    """Results of collapse analysis"""
     company_name: str
-    ipo_market_cap: float
+    ipo_valuation: float
     acquisition_price: float
-    valuation_loss_percent: float
-    valuation_loss_absolute: float
-    days_public: int
-    status: CompanyStatus
+    value_loss_dollars: float
+    value_loss_percentage: float
+    time_to_collapse_days: int
+    severity_rating: str
     analysis_timestamp: str
-    key_metrics: dict
+    details: Dict
+    
+    def to_dict(self) -> Dict:
+        return asdict(self)
 
 
-class StockAnalyzer:
-    def __init__(self, company_name: str, ipo_data: IPOData):
-        self.company_name = company_name
-        self.ipo_data = ipo_data
-        self.price_history: list[StockQuote] = []
-        self.acquisition_data: Optional[AcquisitionData] = None
-
-    def add_price_quote(self, date: str, close_price: float, volume: int):
-        quote = StockQuote(date=date, close_price=close_price, volume=volume)
-        self.price_history.append(quote)
-
-    def set_acquisition(self, acquisition_data: AcquisitionData):
-        self.acquisition_data = acquisition_data
-
-    def calculate_days_public(self) -> int:
-        if not self.acquisition_data:
-            ipo_dt = datetime.strptime(self.ipo_data.ipo_date, "%Y-%m-%d")
-            today = datetime.now()
-            return (today - ipo_dt).days
-
-        ipo_dt = datetime.strptime(self.ipo_data.ipo_date, "%Y-%m-%d")
-        acq_dt = datetime.strptime(self.acquisition_data.acquisition_date, "%Y-%m-%d")
-        return (acq_dt - ipo_dt).days
-
-    def get_status(self, valuation_loss_percent: float) -> CompanyStatus:
-        if self.acquisition_data:
-            return CompanyStatus.ACQUIRED
-        if valuation_loss_percent > 80:
-            return CompanyStatus.CRITICAL
-        if valuation_loss_percent > 50:
-            return CompanyStatus.DECLINING
-        return CompanyStatus.HEALTHY
-
-    def analyze(self) -> AnalysisResult:
-        ipo_market_cap = self.ipo_data.ipo_market_cap
-        acquisition_price = (
-            self.acquisition_data.acquisition_price
-            if self.acquisition_data
-            else 0.0
+class FinancialCollapseAnalyzer:
+    """Analyzes financial collapse patterns of companies"""
+    
+    SEVERITY_THRESHOLDS = {
+        'critical': 80.0,
+        'severe': 60.0,
+        'significant': 40.0,
+        'moderate': 20.0,
+        'minor': 0.0
+    }
+    
+    def __init__(self):
+        self.ipo_events: Dict[str, IPOEvent] = {}
+        self.acquisition_events: Dict[str, AcquisitionEvent] = {}
+        self.analyses: List[CollapseAnalysis] = []
+    
+    def register_ipo(self, ipo: IPOEvent) -> None:
+        """Register an IPO event"""
+        self.ipo_events[ipo.company_name] = ipo
+    
+    def register_acquisition(self, acquisition: AcquisitionEvent) -> None:
+        """Register an acquisition event"""
+        self.acquisition_events[acquisition.company_name] = acquisition
+    
+    def _parse_date(self, date_str: str) -> datetime:
+        """Parse date string in YYYY-MM-DD format"""
+        return datetime.strptime(date_str, "%Y-%m-%d")
+    
+    def _classify_severity(self, loss_percentage: float) -> str:
+        """Classify severity based on loss percentage"""
+        for severity, threshold in self.SEVERITY_THRESHOLDS.items():
+            if loss_percentage >= threshold:
+                return severity
+        return 'minor'
+    
+    def _calculate_time_delta(self, start_date: str, end_date: str) -> int:
+        """Calculate days between two dates"""
+        start = self._parse_date(start_date)
+        end = self._parse_date(end_date)
+        return (end - start).days
+    
+    def analyze_collapse(self, company_name: str) -> CollapseAnalysis:
+        """Analyze collapse for a specific company"""
+        
+        if company_name not in self.ipo_events:
+            raise ValueError(f"No IPO event found for {company_name}")
+        
+        if company_name not in self.acquisition_events:
+            raise ValueError(f"No acquisition event found for {company_name}")
+        
+        ipo = self.ipo_events[company_name]
+        acquisition = self.acquisition_events[company_name]
+        
+        ipo_val = ipo.ipo_valuation
+        acq_price = acquisition.acquisition_price
+        
+        value_loss_dollars = ipo_val - acq_price
+        value_loss_percentage = (value_loss_dollars / ipo_val) * 100.0
+        
+        time_to_collapse = self._calculate_time_delta(
+            ipo.ipo_date,
+            acquisition.acquisition_date
         )
-
-        valuation_loss_absolute = ipo_market_cap - acquisition_price
-        valuation_loss_percent = (
-            (valuation_loss_absolute / ipo_market_cap) * 100
-            if ipo_market_cap > 0
-            else 0
-        )
-
-        days_public = self.calculate_days_public()
-
-        status = self.get_status(valuation_loss_percent)
-
-        price_metrics = self._calculate_price_metrics()
-
-        analysis_result = AnalysisResult(
-            company_name=self.company_name,
-            ipo_market_cap=ipo_market_cap,
-            acquisition_price=acquisition_price,
-            valuation_loss_percent=round(valuation_loss_percent, 2),
-            valuation_loss_absolute=round(valuation_loss_absolute, 2),
-            days_public=days_public,
-            status=status,
-            analysis_timestamp=datetime.now().isoformat(),
-            key_metrics=price_metrics,
-        )
-
-        return analysis_result
-
-    def _calculate_price_metrics(self) -> dict:
-        if not self.price_history:
-            return {
-                "min_price": 0.0,
-                "max_price": 0.0,
-                "avg_price": 0.0,
-                "final_price": 0.0,
-                "total_volume": 0,
-            }
-
-        prices = [quote.close_price for quote in self.price_history]
-        volumes = [quote.volume for quote in self.price_history]
-
-        return {
-            "min_price": round(min(prices), 2),
-            "max_price": round(max(prices), 2),
-            "avg_price": round(statistics.mean(prices), 2),
-            "final_price": round(prices[-1], 2) if prices else 0.0,
-            "total_volume": sum(volumes),
-            "quote_count": len(self.price_history),
+        
+        severity = self._classify_severity(value_loss_percentage)
+        
+        details = {
+            'ipo_capital_raised': ipo.capital_raised,
+            'capital_to_price_ratio': ipo.capital_raised / acq_price if acq_price > 0 else 0,
+            'time_to_collapse_years': round(time_to_collapse / 365.25, 2),
+            'average_daily_loss': round(value_loss_dollars / max(time_to_collapse, 1), 2),
+            'acquirer': acquisition.acquirer
         }
-
-
-def generate_sample_allbirds_data():
-    """Generate realistic sample data for Allbirds"""
-    ipo_data = IPOData(
-        company_name="Allbirds",
-        ipo_date="2021-11-03",
-        ipo_price_per_share=27.0,
-        shares_issued=15000000,
-        ipo_market_cap=405000000.0,
-    )
-
-    acquisition_data = AcquisitionData(
-        company_name="Allbirds",
-        acquisition_date="2026-03-30",
-        acquisition_price=39000000.0,
-        acquiring_entity="Unknown Acquirer",
-    )
-
-    analyzer = StockAnalyzer("Allbirds", ipo_data)
-    analyzer.set_acquisition(acquisition_data)
-
-    base_price = 27.0
-    dates = []
-    for i in range(250):
-        date = datetime(2021, 11, 3) + timedelta(days=i * 4)
-        dates.append(date.strftime("%Y-%m-%d"))
-
-    for i, date in enumerate(dates):
-        decline_factor = 1 - (i / len(dates)) * 0.98
-        price = base_price * decline_factor
-        volume = 1000000 + (i * 10000)
-        analyzer.add_price_quote(date, round(price, 2), volume)
-
-    return analyzer
-
-
-def generate_sample_comparison_data():
-    """Generate comparison data for other IPO companies"""
-    companies = []
-
-    ipo1 = IPOData(
-        company_name="CompanyA",
-        ipo_date="2021-06-15",
-        ipo_price_per_share=25.0,
-        shares_issued=20000000,
-        ipo_market_cap=500000000.0,
-    )
-    analyzer1 = StockAnalyzer("CompanyA", ipo1)
-    for i in range(100):
-        date = datetime(2021, 6, 15) + timedelta(days=i * 5)
-        price = 25.0 * (1 + (i / 100) * 2.5)
-        analyzer1.add_price_quote(date.strftime("%Y-%m-%d"), round(price, 2), 500000)
-    companies.append(analyzer1)
-
-    ipo2 = IPOData(
-        company_name="CompanyB",
-        ipo_date="2020-09-20",
-        ipo_price_per_share=18.0,
-        shares_issued=25000000,
-        ipo_market_cap=450000000.0,
-    )
-    analyzer2 = StockAnalyzer("CompanyB", ipo2)
-    for i in range(150):
-        date = datetime(2020, 9, 20) + timedelta(days=i * 4)
-        price = 18.0 * (1 + (i / 150) * 1.2)
-        analyzer2.add_price_quote(date.strftime("%Y-%m-%d"), round(price, 2), 600000)
-    companies.append(analyzer2)
-
-    return companies
-
-
-def format_analysis_output(result: AnalysisResult, verbose: bool = False) -> str:
-    """Format analysis result for console output"""
-    output = []
-    output.append(f"\n{'='*70}")
-    output.append(f"COMPANY: {result.company_name}")
-    output.append(f"{'='*70}")
-    output.append(f"Status: {result.status.value.upper()}")
-    output.append(f"IPO Market Cap: ${result.ipo_market_cap:,.2f}")
-    output.append(f"Acquisition Price: ${result.acquisition_price:,.2f}")
-    output.append(
-        f"Valuation Loss: ${result.valuation_loss_absolute:,.2f} ({result.valuation_loss_percent}%)"
-    )
-    output.append(f"Days as Public Company: {result.days_public}")
-    output.append(f"Analysis Timestamp: {result.analysis_timestamp}")
-
-    if verbose:
-        output.append(f"\nPrice Metrics:")
-        for key, value in result.key_metrics.items():
-            if isinstance(value, float):
-                output.append(f"  {key}: ${value:,.2f}")
-            else:
-                output.append(f"  {key}: {value:,}")
-
-    output.append(f"{'='*70}\n")
-    return "\n".join(output)
+        
+        analysis = CollapseAnalysis(
+            company_name=company_name,
+            ipo_valuation=ipo_val,
+            acquisition_price=acq_price,
+            value_loss_dollars=value_loss_dollars,
+            value_loss_percentage=round(value_loss_percentage, 2),
+            time_to_collapse_days=time_to_collapse,
+            severity_rating=severity,
+            analysis_timestamp=datetime.now().isoformat(),
+            details=details
+        )
+        
+        self.analyses.append(analysis)
+        return analysis
+    
+    def get_comparative_analysis(self) -> Dict:
+        """Generate comparative statistics across all analyses"""
+        if not self.analyses:
+            return {}
+        
+        loss_percentages = [a.value_loss_percentage for a in self.analyses]
+        collapse_times = [a.time_to_collapse_days for a in self.analyses]
+        
+        return {
+            'total_companies_analyzed': len(self.analyses),
+            'average_value_loss_percentage': round(statistics.mean(loss_percentages), 2),
+            'median_value_loss_percentage': round(statistics.median(loss_percentages), 2),
+            'max_value_loss_percentage': max(loss_percentages),
+            'min_value_loss_percentage': min(loss_percentages),
+            'average_days_to_collapse': round(statistics.mean(collapse_times), 1),
+            'median_days_to_collapse': round(statistics.median(collapse_times), 1),
+            'severity_distribution': self._get_severity_distribution(),
+            'analysis_timestamp': datetime.now().isoformat()
+        }
+    
+    def _get_severity_distribution(self) -> Dict[str, int]:
+        """Count distribution of severity ratings"""
+        distribution = {
+            'critical': 0,
+            'severe': 0,
+            'significant': 0,
+            'moderate': 0,
+            'minor': 0
+        }
+        for analysis in self.analyses:
+            distribution[analysis.severity_rating] += 1
+        return distribution
+    
+    def export_results_json(self) -> str:
+        """Export all analyses and statistics as JSON"""
+        return json.dumps({
+            'analyses': [a.to_dict() for a in self.analyses],
+            'comparative_statistics': self.get_comparative_analysis()
+        }, indent=2)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Stock Performance Analyzer - IPO to Acquisition Analysis",
+        description='Financial Collapse Analysis Tool - Analyze company valuation degradation',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python3 solution.py --company allbirds
-  python3 solution.py --company allbirds --verbose
-  python3 solution.py --compare --output json
-  python3 solution.py --analyze-all --output csv
-        """,
+  %(prog)s --company "Allbirds" --ipo-val 3900000000 --ipo-date 2021-11-03 --acq-price 39000000 --acq-date 2026-03-30 --capital-raised 390000000
+  %(prog)s --company "Allbirds" --ipo-val 3.9B --ipo-date 2021-11-03 --acq-price 39M --acq-date 2026-03-30
+        """
     )
-
+    
     parser.add_argument(
-        "--company",
+        '--company',
         type=str,
-        default="allbirds",
-        help="Company name to analyze (default: allbirds)",
+        required=True,
+        help='Company name to analyze'
     )
+    
     parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output with detailed metrics",
+        '--ipo-val',
+        type=str,
+        required=True,
+        help='IPO valuation (supports: 1000000, 1M, 1B format)'
     )
+    
     parser.add_argument(
-        "--output",
-        choices=["text", "json", "csv"],
-        default="text",
-        help="Output format (default: text)",
+        '--ipo-date',
+        type=str,
+        required=True,
+        help='IPO date in YYYY-MM-DD format'
     )
+    
     parser.add_argument(
-        "--compare",
-        action="store_true",
-        help="Compare target company with other IPO companies",
+        '--acq-price',
+        type=str,
+        required=True,
+        help='Acquisition/sale price (supports: 1000000, 1M, 1B format)'
     )
+    
     parser.add_argument(
-        "--analyze-all",
-        action="store_true",
-        help="Analyze all available companies",
+        '--acq-date',
+        type=str,
+        required=True,
+        help='Acquisition date in YYYY-MM-DD format'
     )
+    
     parser.add_argument(
-        "--threshold",
-        type=float,
-        default=50.0,
-        help="Valuation loss threshold for critical alert (default: 50.0%%)",
+        '--capital-raised',
+        type=str,
+        default=None,
+        help='Capital raised in IPO (optional, supports: 1000000, 1M, 1B format)'
     )
-
+    
+    parser.add_argument(
+        '--shares-issued',
+        type=int,
+        default=1000000,
+        help='Shares issued in IPO (default: 1000000)'
+    )
+    
+    parser.add_argument(
+        '--acquirer',
+        type=str,
+        default='Unknown',
+        help='Acquiring company name (default: Unknown)'
+    )
+    
+    parser.add_argument(
+        '--output-json',
+        type=str,
+        default=None,
+        help='Output file for JSON results (default: stdout)'
+    )
+    
     args = parser.parse_args()
-
-    results = []
-
-    if args.company.lower() == "allbirds" or args.analyze_all:
-        allbirds_analyzer = generate_sample_allbirds_data()
-        allbirds_result = allbirds_analyzer.analyze()
-        results.append(allbirds_result)
-
-    if args.compare or args.analyze_all:
-        comparison_companies = generate_sample_comparison_data()
-        for analyzer in comparison_companies:
-            result = analyzer.analyze()
-            results.append(result)
-
-    if not results:
-        print(f"Error: No data available for company '{args.company}'")
-        sys.exit(1)
-
-    if args.output == "text":
-        for result in results:
-            print(format_analysis_output(result, args.verbose))
-            if result.valuation_loss_percent >= args.threshold:
-                print(
-                    f"⚠️  ALERT: {result.company_name} exceeds loss threshold ({result.valuation_loss_percent}% > {args.threshold}%)"
-                )
-    elif args.output == "json":
-        json_results = []
-        for result in results:
-            json_results.append(asdict(result))
-            json_results[-1]["status"] = result.status.value
-
-        print(json.dumps(json_results, indent=2))
-    elif args.output == "csv":
-        if results:
-            print(
-                "Company,IPO_Market_Cap,Acquisition_Price,Valuation_Loss_Percent,Days_Public,Status"
-            )
-            for result in results:
-                print(
-                    f"{result.company_name},{result.ipo_market_cap},{result.acquisition_price},{result.valuation_loss_percent},{result.days_public},{result.status.value}"
-                )
+    
+    def parse_amount(amount_str: str) -> float:
+        """Parse amount string with suffixes like M, B"""
+        amount_str = amount_str.strip().upper()
+        multipliers = {'K': 1e3, 'M': 1e6, 'B': 1e9}
+        for suffix, multiplier in multipliers.items():
+            if amount_str.endswith(suffix):
+                return float(amount_str[:-1]) * multiplier
+        return float(amount_str)
+    
+    try:
+        ipo_val = parse_amount(args.ipo_val)
+        acq_price = parse_amount(args.acq_price)
+        capital_raised = parse_amount(args.capital_raised) if args.capital_raised else ipo_val
+        
+        analyzer = FinancialCollapseAnalyzer()
+        
+        ipo_event = IPOEvent(
+            company_name=args.company,
+            ipo_date=args.ipo_date,
+            ipo_valuation=ipo_val,
+            shares_issued=args.shares_issued,
+            capital_raised=capital_raised
+        )
+        
+        acq_event = AcquisitionEvent(
+            company_name=args.company,
+            acquisition_date=args.acq_date,
+            acquisition_price=acq_price,
+            acquirer=args.acquirer
+        )
+        
+        analyzer.register_ipo(ipo_event)
+        analyzer.register_acquisition(acq_event)
+        
+        analysis = analyzer.analyze_collapse(args.company)
+        
+        output = analyzer.export_results_json()
+        
+        if args.output_json:
+            with open(args.output_json, 'w') as f:
+                f.write(output)
+            print(f"Results written to {args.output_json}")
+        else:
+            print(output)
+        
+        return 0
+        
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    analyzer = FinancialCollapseAnalyzer()
+    
+    allbirds_ipo = IPOEvent(
+        company_name="Allbirds",
+        ipo_date="2021-11-03",
+        ipo_valuation=3_900_000_000,
+        shares_issued=15_000_000,
+        capital_raised=390_000_000
+    )
+    
+    allbirds_acquisition = AcquisitionEvent(
+        company_name="Allbirds",
+        acquisition_date="2026-03-30",
+        acquisition_price=39_000_000,
+        acquirer="Unknown Investment Group"
+    )
+    
+    analyzer.register_ipo(allbirds_ipo)
+    analyzer.register_acquisition(allbirds_acquisition)
+    
+    analysis = analyzer.analyze_collapse("Allbirds")
+    
+    print("=" * 70)
+    print("FINANCIAL COLLAPSE ANALYSIS - PROOF OF CONCEPT")
+    print("=" * 70)
+    print()
+    print(json.dumps(analysis.to_dict(), indent=2))
+    print()
+    print("COMPARATIVE STATISTICS")
+    print("-" * 70)
+    print(json.dumps(analyzer.get_comparative_analysis(), indent=2))
+    print()
+    print("=" * 70)
+    
+    sys.exit(main())
