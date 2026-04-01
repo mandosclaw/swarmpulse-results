@@ -3,305 +3,443 @@
 # Task:    Build proof-of-concept implementation
 # Mission: Bluesky leans into AI with Attie, an app for building custom feeds
 # Agent:   @aria
-# Date:    2026-04-01T17:26:35.514Z
+# Date:    2026-04-01T17:32:29.329Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Build proof-of-concept implementation for Bluesky's Attie custom feed builder
-Mission: Bluesky leans into AI with Attie, an app for building custom feeds
-Agent: @aria (SwarmPulse)
-Date: 2026-03-28
+TASK: Build proof-of-concept implementation for Bluesky Attie custom feed builder using AI
+MISSION: Bluesky leans into AI with Attie, an app for building custom feeds
+AGENT: @aria in SwarmPulse network
+DATE: 2026-03-28
+SOURCE: TechCrunch - https://techcrunch.com/2026/03/28/bluesky-leans-into-ai-with-attie-an-app-for-building-custom-feeds/
 
-This implementation demonstrates core components of an AI-powered custom feed builder
-for the atproto social networking protocol, including feed generation, content filtering,
-and algorithmic curation based on user preferences.
+This PoC demonstrates core functionality for an AI-powered custom feed builder for Bluesky's atproto.
+It includes feed rule generation, content filtering, and feed composition based on user preferences.
 """
 
-import json
 import argparse
+import json
 import sys
-from datetime import datetime, timedelta
-from typing import Any
 from dataclasses import dataclass, asdict
+from datetime import datetime
+from typing import Optional, List, Dict, Any
 from enum import Enum
-import random
 import hashlib
+import random
+import string
 
 
 class ContentType(Enum):
-    """Supported content types in feeds."""
-    TEXT = "text"
+    """Supported content types in Bluesky feeds"""
+    TEXT_POST = "text_post"
+    REPOST = "repost"
+    QUOTE = "quote"
+    REPLY = "reply"
     IMAGE = "image"
     VIDEO = "video"
     LINK = "link"
-    REPOST = "repost"
 
 
-class FeedAlgorithm(Enum):
-    """Available feed algorithms."""
-    TRENDING = "trending"
-    CHRONOLOGICAL = "chronological"
-    ENGAGEMENT = "engagement"
-    PERSONALIZED = "personalized"
-    HYBRID = "hybrid"
+class FilterOperator(Enum):
+    """Filter operators for feed rules"""
+    CONTAINS = "contains"
+    EQUALS = "equals"
+    STARTS_WITH = "starts_with"
+    ENDS_WITH = "ends_with"
+    REGEX = "regex"
+    GREATER_THAN = "greater_than"
+    LESS_THAN = "less_than"
+    IN_LIST = "in_list"
 
 
 @dataclass
 class Post:
-    """Represents a post in the atproto network."""
-    did: str
-    uri: str
-    text: str
-    content_type: ContentType
-    created_at: str
-    engagement_score: float
+    """Represents a Bluesky post"""
+    id: str
+    author: str
+    content: str
+    timestamp: str
     likes: int
     reposts: int
     replies: int
-    keywords: list[str]
-    author: str
+    tags: List[str]
+    content_type: ContentType
+    image_urls: Optional[List[str]] = None
+    engagement_score: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert post to dictionary"""
+        return {
+            "id": self.id,
+            "author": self.author,
+            "content": self.content,
+            "timestamp": self.timestamp,
+            "likes": self.likes,
+            "reposts": self.reposts,
+            "replies": self.replies,
+            "tags": self.tags,
+            "content_type": self.content_type.value,
+            "image_urls": self.image_urls or [],
+            "engagement_score": self.engagement_score
+        }
 
 
 @dataclass
-class FeedPreference:
-    """User preferences for feed customization."""
-    name: str
-    keywords: list[str]
-    excluded_keywords: list[str]
-    min_engagement: float
-    content_types: list[ContentType]
-    min_followers: int
-    algorithm: FeedAlgorithm
+class FilterRule:
+    """Represents a feed filter rule"""
+    field: str
+    operator: FilterOperator
+    value: Any
+    weight: float = 1.0
+    enabled: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "field": self.field,
+            "operator": self.operator.value,
+            "value": self.value,
+            "weight": self.weight,
+            "enabled": self.enabled
+        }
+
+    def matches(self, post: Post) -> bool:
+        """Check if post matches this rule"""
+        if not self.enabled:
+            return False
+
+        field_value = self._get_field_value(post)
+        if field_value is None:
+            return False
+
+        if self.operator == FilterOperator.CONTAINS:
+            return str(self.value).lower() in str(field_value).lower()
+        elif self.operator == FilterOperator.EQUALS:
+            return str(field_value).lower() == str(self.value).lower()
+        elif self.operator == FilterOperator.STARTS_WITH:
+            return str(field_value).lower().startswith(str(self.value).lower())
+        elif self.operator == FilterOperator.ENDS_WITH:
+            return str(field_value).lower().endswith(str(self.value).lower())
+        elif self.operator == FilterOperator.IN_LIST:
+            return field_value in self.value if isinstance(self.value, list) else False
+        elif self.operator == FilterOperator.GREATER_THAN:
+            try:
+                return float(field_value) > float(self.value)
+            except (ValueError, TypeError):
+                return False
+        elif self.operator == FilterOperator.LESS_THAN:
+            try:
+                return float(field_value) < float(self.value)
+            except (ValueError, TypeError):
+                return False
+        return False
+
+    def _get_field_value(self, post: Post) -> Any:
+        """Extract field value from post"""
+        field_map = {
+            "content": post.content,
+            "author": post.author,
+            "likes": post.likes,
+            "reposts": post.reposts,
+            "replies": post.replies,
+            "tags": post.tags,
+            "engagement_score": post.engagement_score,
+            "content_type": post.content_type.value,
+        }
+        return field_map.get(self.field)
 
 
 @dataclass
-class CustomFeed:
-    """Represents a custom feed."""
-    feed_id: str
-    owner_did: str
+class FeedConfig:
+    """Configuration for a custom feed"""
     name: str
-    preferences: FeedPreference
-    posts: list[Post]
-    created_at: str
-    updated_at: str
-    follower_count: int
+    description: str
+    rules: List[FilterRule]
+    sort_by: str = "engagement_score"
+    limit: int = 50
+    combination_mode: str = "all"  # "all" or "any"
+    enabled: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "rules": [rule.to_dict() for rule in self.rules],
+            "sort_by": self.sort_by,
+            "limit": self.limit,
+            "combination_mode": self.combination_mode,
+            "enabled": self.enabled
+        }
 
 
-class ContentFilter:
-    """Filters and ranks content based on preferences."""
-
-    def __init__(self, preference: FeedPreference):
-        self.preference = preference
-
-    def matches_keywords(self, post: Post) -> bool:
-        """Check if post matches include keywords."""
-        if not self.preference.keywords:
-            return True
-        return any(kw.lower() in post.text.lower() for kw in self.preference.keywords)
-
-    def matches_excluded_keywords(self, post: Post) -> bool:
-        """Check if post contains excluded keywords."""
-        return any(
-            kw.lower() in post.text.lower()
-            for kw in self.preference.excluded_keywords
-        )
-
-    def matches_content_type(self, post: Post) -> bool:
-        """Check if post matches preferred content types."""
-        if not self.preference.content_types:
-            return True
-        return post.content_type in self.preference.content_types
-
-    def meets_engagement_threshold(self, post: Post) -> bool:
-        """Check if post meets minimum engagement score."""
-        return post.engagement_score >= self.preference.min_engagement
-
-    def filter(self, posts: list[Post]) -> list[Post]:
-        """Filter posts based on all criteria."""
-        filtered = []
-        for post in posts:
-            if (
-                self.matches_keywords(post)
-                and not self.matches_excluded_keywords(post)
-                and self.matches_content_type(post)
-                and self.meets_engagement_threshold(post)
-            ):
-                filtered.append(post)
-        return filtered
-
-
-class FeedRanker:
-    """Ranks posts using various algorithms."""
-
-    @staticmethod
-    def rank_by_engagement(posts: list[Post]) -> list[Post]:
-        """Rank posts by engagement score."""
-        return sorted(posts, key=lambda p: p.engagement_score, reverse=True)
-
-    @staticmethod
-    def rank_by_chronological(posts: list[Post]) -> list[Post]:
-        """Rank posts by creation time (newest first)."""
-        return sorted(
-            posts,
-            key=lambda p: datetime.fromisoformat(p.created_at),
-            reverse=True,
-        )
-
-    @staticmethod
-    def rank_by_trending(posts: list[Post]) -> list[Post]:
-        """Rank posts by trending score (engagement with recency boost)."""
-        def trending_score(post: Post) -> float:
-            age_hours = (
-                datetime.now(datetime.now().astimezone().tzinfo)
-                - datetime.fromisoformat(post.created_at)
-            ).total_seconds() / 3600
-            recency_factor = max(0.1, 1.0 / (1.0 + age_hours / 24.0))
-            return post.engagement_score * recency_factor
-
-        return sorted(posts, key=trending_score, reverse=True)
-
-    @staticmethod
-    def rank_by_personalized(posts: list[Post], keywords: list[str]) -> list[Post]:
-        """Rank posts by personalized relevance to keywords."""
-        def relevance_score(post: Post) -> float:
-            keyword_matches = sum(
-                1 for kw in keywords if kw.lower() in post.text.lower()
-            )
-            return post.engagement_score * (1.0 + keyword_matches * 0.5)
-
-        return sorted(posts, key=relevance_score, reverse=True)
-
-    @staticmethod
-    def rank_by_hybrid(posts: list[Post], keywords: list[str]) -> list[Post]:
-        """Hybrid ranking combining engagement, recency, and relevance."""
-        def hybrid_score(post: Post) -> float:
-            age_hours = (
-                datetime.now(datetime.now().astimezone().tzinfo)
-                - datetime.fromisoformat(post.created_at)
-            ).total_seconds() / 3600
-            recency_factor = max(0.1, 1.0 / (1.0 + age_hours / 24.0))
-            keyword_matches = sum(
-                1 for kw in keywords if kw.lower() in post.text.lower()
-            )
-            relevance_factor = 1.0 + keyword_matches * 0.3
-            return post.engagement_score * recency_factor * relevance_factor
-
-        return sorted(posts, key=hybrid_score, reverse=True)
-
-    def rank(
-        self, posts: list[Post], algorithm: FeedAlgorithm, keywords: list[str] = None
-    ) -> list[Post]:
-        """Rank posts based on specified algorithm."""
-        if algorithm == FeedAlgorithm.ENGAGEMENT:
-            return self.rank_by_engagement(posts)
-        elif algorithm == FeedAlgorithm.CHRONOLOGICAL:
-            return self.rank_by_chronological(posts)
-        elif algorithm == FeedAlgorithm.TRENDING:
-            return self.rank_by_trending(posts)
-        elif algorithm == FeedAlgorithm.PERSONALIZED:
-            return self.rank_by_personalized(posts, keywords or [])
-        elif algorithm == FeedAlgorithm.HYBRID:
-            return self.rank_by_hybrid(posts, keywords or [])
-        return posts
-
-
-class FeedBuilder:
-    """Main feed builder using AI-driven curation."""
+class AttieFeedBuilder:
+    """Main AI-powered feed builder for Bluesky"""
 
     def __init__(self):
-        self.ranker = FeedRanker()
+        self.feeds: Dict[str, FeedConfig] = {}
+        self.posts: List[Post] = []
 
-    def generate_feed_id(self, owner_did: str, feed_name: str) -> str:
-        """Generate unique feed ID."""
-        content = f"{owner_did}:{feed_name}:{datetime.now().isoformat()}"
-        return hashlib.sha256(content.encode()).hexdigest()[:16]
+    def add_feed(self, config: FeedConfig) -> Dict[str, Any]:
+        """Add a new custom feed configuration"""
+        feed_id = self._generate_feed_id(config.name)
+        self.feeds[feed_id] = config
+        return {
+            "success": True,
+            "feed_id": feed_id,
+            "message": f"Feed '{config.name}' created successfully",
+            "config": config.to_dict()
+        }
 
-    def build_feed(
-        self,
-        owner_did: str,
-        feed_name: str,
-        preference: FeedPreference,
-        available_posts: list[Post],
-        limit: int = 50,
-    ) -> CustomFeed:
-        """Build a custom feed based on preferences."""
-        filter_engine = ContentFilter(preference)
-        filtered_posts = filter_engine.filter(available_posts)
-        ranked_posts = self.ranker.rank(
-            filtered_posts, preference.algorithm, preference.keywords
+    def _generate_feed_id(self, name: str) -> str:
+        """Generate unique feed ID"""
+        base = name.lower().replace(" ", "_")
+        random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+        return f"{base}_{random_suffix}"
+
+    def add_posts(self, posts: List[Post]) -> Dict[str, Any]:
+        """Add posts to the builder"""
+        self.posts.extend(posts)
+        for post in posts:
+            post.engagement_score = self._calculate_engagement_score(post)
+        return {
+            "success": True,
+            "posts_added": len(posts),
+            "total_posts": len(self.posts)
+        }
+
+    def _calculate_engagement_score(self, post: Post) -> float:
+        """Calculate engagement score for a post using simple AI logic"""
+        base_score = (post.likes * 0.5) + (post.reposts * 1.0) + (post.replies * 0.75)
+        recency_factor = 1.0
+        try:
+            post_time = datetime.fromisoformat(post.timestamp)
+            age_hours = (datetime.fromisoformat(datetime.now().isoformat()) - post_time).total_seconds() / 3600
+            if age_hours > 0:
+                recency_factor = 1.0 / (1.0 + (age_hours / 24.0))
+        except (ValueError, AttributeError):
+            recency_factor = 0.8
+
+        return base_score * recency_factor
+
+    def generate_smart_rules(self, keywords: List[str], min_engagement: int = 5) -> List[FilterRule]:
+        """Generate smart filter rules based on keywords and engagement"""
+        rules = []
+
+        for keyword in keywords:
+            rules.append(FilterRule(
+                field="content",
+                operator=FilterOperator.CONTAINS,
+                value=keyword,
+                weight=1.0,
+                enabled=True
+            ))
+
+        rules.append(FilterRule(
+            field="likes",
+            operator=FilterOperator.GREATER_THAN,
+            value=min_engagement,
+            weight=0.8,
+            enabled=True
+        ))
+
+        rules.append(FilterRule(
+            field="engagement_score",
+            operator=FilterOperator.GREATER_THAN,
+            value=5.0,
+            weight=0.7,
+            enabled=True
+        ))
+
+        return rules
+
+    def build_feed(self, feed_id: str) -> Optional[Dict[str, Any]]:
+        """Build and compose a feed based on configuration"""
+        if feed_id not in self.feeds:
+            return None
+
+        config = self.feeds[feed_id]
+        if not config.enabled:
+            return {
+                "feed_id": feed_id,
+                "error": "Feed is disabled",
+                "posts": []
+            }
+
+        filtered_posts = self._filter_posts(config)
+
+        sorted_posts = sorted(
+            filtered_posts,
+            key=lambda p: getattr(p, config.sort_by, 0),
+            reverse=True
         )
-        selected_posts = ranked_posts[:limit]
 
-        feed_id = self.generate_feed_id(owner_did, feed_name)
-        now = datetime.now().isoformat()
+        limited_posts = sorted_posts[:config.limit]
 
-        return CustomFeed(
-            feed_id=feed_id,
-            owner_did=owner_did,
-            name=feed_name,
-            preferences=preference,
-            posts=selected_posts,
-            created_at=now,
-            updated_at=now,
-            follower_count=0,
-        )
+        return {
+            "feed_id": feed_id,
+            "feed_name": config.name,
+            "feed_description": config.description,
+            "total_posts": len(limited_posts),
+            "filter_rules_applied": len([r for r in config.rules if r.enabled]),
+            "combination_mode": config.combination_mode,
+            "posts": [post.to_dict() for post in limited_posts],
+            "metadata": {
+                "generated_at": datetime.now().isoformat(),
+                "total_posts_available": len(self.posts),
+                "posts_filtered": len(self.posts) - len(limited_posts)
+            }
+        }
 
-    def refresh_feed(self, feed: CustomFeed, available_posts: list[Post]) -> CustomFeed:
-        """Refresh an existing feed with new posts."""
-        filter_engine = ContentFilter(feed.preferences)
-        filtered_posts = filter_engine.filter(available_posts)
-        ranked_posts = self.ranker.rank(
-            filtered_posts, feed.preferences.algorithm, feed.preferences.keywords
-        )
+    def _filter_posts(self, config: FeedConfig) -> List[Post]:
+        """Apply filter rules to posts"""
+        if not config.rules:
+            return self.posts
 
-        feed.posts = ranked_posts[: len(feed.posts)]
-        feed.updated_at = datetime.now().isoformat()
-        return feed
+        enabled_rules = [r for r in config.rules if r.enabled]
+        if not enabled_rules:
+            return self.posts
+
+        filtered = []
+        for post in self.posts:
+            if config.combination_mode == "all":
+                if all(rule.matches(post) for rule in enabled_rules):
+                    filtered.append(post)
+            elif config.combination_mode == "any":
+                if any(rule.matches(post) for rule in enabled_rules):
+                    filtered.append(post)
+
+        return filtered
+
+    def export_feed_config(self, feed_id: str) -> Optional[str]:
+        """Export feed configuration as JSON"""
+        if feed_id not in self.feeds:
+            return None
+
+        config = self.feeds[feed_id]
+        return json.dumps(config.to_dict(), indent=2)
+
+    def import_feed_config(self, json_str: str) -> Dict[str, Any]:
+        """Import feed configuration from JSON"""
+        try:
+            data = json.loads(json_str)
+            rules = [
+                FilterRule(
+                    field=r["field"],
+                    operator=FilterOperator[r["operator"].upper().replace("-", "_")],
+                    value=r["value"],
+                    weight=r.get("weight", 1.0),
+                    enabled=r.get("enabled", True)
+                )
+                for r in data.get("rules", [])
+            ]
+
+            config = FeedConfig(
+                name=data["name"],
+                description=data["description"],
+                rules=rules,
+                sort_by=data.get("sort_by", "engagement_score"),
+                limit=data.get("limit", 50),
+                combination_mode=data.get("combination_mode", "all"),
+                enabled=data.get("enabled", True)
+            )
+
+            return self.add_feed(config)
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            return {
+                "success": False,
+                "error": f"Import failed: {str(e)}"
+            }
+
+    def get_feed_stats(self, feed_id: str) -> Optional[Dict[str, Any]]:
+        """Get statistics for a feed"""
+        if feed_id not in self.feeds:
+            return None
+
+        config = self.feeds[feed_id]
+        built_feed = self.build_feed(feed_id)
+
+        if not built_feed or "posts" not in built_feed:
+            return None
+
+        posts = built_feed["posts"]
+        if not posts:
+            return {
+                "feed_id": feed_id,
+                "feed_name": config.name,
+                "total_posts": 0,
+                "stats": {}
+            }
+
+        likes = [p["likes"] for p in posts]
+        reposts = [p["reposts"] for p in posts]
+        engagement_scores = [p["engagement_score"] for p in posts]
+
+        return {
+            "feed_id": feed_id,
+            "feed_name": config.name,
+            "total_posts": len(posts),
+            "stats": {
+                "avg_likes": sum(likes) / len(likes) if likes else 0,
+                "max_likes": max(likes) if likes else 0,
+                "avg_reposts": sum(reposts) / len(reposts) if reposts else 0,
+                "max_reposts": max(reposts) if reposts else 0,
+                "avg_engagement_score": sum(engagement_scores) / len(engagement_scores) if engagement_scores else 0,
+                "max_engagement_score": max(engagement_scores) if engagement_scores else 0,
+                "content_types": self._get_content_type_distribution(posts)
+            }
+        }
+
+    def _get_content_type_distribution(self, posts: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Get distribution of content types"""
+        distribution = {}
+        for post in posts:
+            content_type = post.get("content_type", "unknown")
+            distribution[content_type] = distribution.get(content_type, 0) + 1
+        return distribution
+
+    def list_feeds(self) -> Dict[str, Any]:
+        """List all configured feeds"""
+        feeds_list = [
+            {
+                "feed_id": feed_id,
+                "name": config.name,
+                "description": config.description,
+                "enabled": config.enabled,
+                "rule_count": len([r for r in config.rules if r.enabled])
+            }
+            for feed_id, config in self.feeds.items()
+        ]
+
+        return {
+            "total_feeds": len(feeds_list),
+            "feeds": feeds_list
+        }
 
 
-def generate_sample_posts(count: int = 100) -> list[Post]:
-    """Generate sample posts for testing."""
-    topics = [
-        ("AI", ["machine learning", "neural networks", "AI safety"]),
-        ("Web3", ["blockchain", "crypto", "decentralized"]),
-        ("Science", ["physics", "biology", "astronomy"]),
-        ("Tech", ["programming", "startups", "innovation"]),
-        ("Culture", ["art", "music", "film"]),
-    ]
-
-    authors = [
-        "alice",
-        "bob",
-        "charlie",
-        "diana",
-        "eve",
-        "frank",
-        "grace",
-        "henry",
-    ]
-    content_types = list(ContentType)
+def generate_sample_posts(count: int = 20) -> List[Post]:
+    """Generate sample Bluesky posts for testing"""
+    keywords = ["AI", "Bluesky", "atproto", "decentralized", "social", "tech", "feed"]
+    authors = ["alice.bsky.social", "bob.bsky.social", "charlie.bsky.social", "diana.bsky.social"]
+    content_types = [ContentType.TEXT_POST, ContentType.REPOST, ContentType.IMAGE, ContentType.LINK]
 
     posts = []
     for i in range(count):
-        topic, keywords = random.choice(topics)
-        author = random.choice(authors)
-        now = datetime.now()
-        age = timedelta(hours=random.randint(0, 168))
-        created_at = (now - age).isoformat()
+        tags = random.sample(keywords, k=random.randint(1, 3))
+        content_type = random.choice(content_types)
 
         post = Post(
-            did=f"did:plc:{hashlib.md5(author.encode()).hexdigest()[:24]}",
-            uri=f"at://did:plc:example/app.bsky.feed.post/{i}",
-            text=f"{topic} update: {' '.join(random.sample(keywords, min(2, len(keywords))))} - Post #{i}",
-            content_type=random.choice(content_types),
-            created_at=created_at,
-            engagement_score=random.uniform(0.1, 100.0),
+            id=f"post_{hashlib.md5(str(i).encode()).hexdigest()[:12]}",
+            author=random.choice(authors),
+            content=f"Interesting discussion about {random.choice(tags)}. "
+                   f"{'#' + random.choice(tags).lower() if random.random() > 0.5 else ''} "
+                   f"This is sample post {i+1} demonstrating Bluesky's custom feeds.",
+            timestamp=datetime.now().isoformat(),
             likes=random.randint(0, 500),
             reposts=random.randint(0, 200),
-            replies=random.randint(0, 100),
-            keywords=random.sample(keywords, min(2, len(keywords))),
-            author=author,
+            replies=random.randint(0, 150),
+            tags=tags,
+            content_type=content_type,
+            image_urls=[f"https://example.com/image_{i}.jpg"] if content_type == ContentType.IMAGE else None
         )
         posts.append(post)
 
@@ -309,137 +447,104 @@ def generate_sample_posts(count: int = 100) -> list[Post]:
 
 
 def main():
-    """Main entry point."""
+    """Main CLI interface"""
     parser = argparse.ArgumentParser(
-        description="Bluesky Attie Custom Feed Builder - AI-powered feed curation"
+        description="Attie: AI-powered Bluesky custom feed builder",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  Create a feed for AI topics:
+    python solution.py --action create-feed --name "AI News" --keywords AI,ML,LLM --min-engagement 10
+  
+  Build and view a feed:
+    python solution.py --action build-feed --feed-id ai_news_abc123
+  
+  Get feed statistics:
+    python solution.py --action stats --feed-id ai_news_abc123
+  
+  List all feeds:
+    python solution.py --action list-feeds
+        """
     )
+
     parser.add_argument(
-        "--owner-did",
-        type=str,
-        default="did:plc:example123",
-        help="DID of the feed owner",
+        "--action",
+        choices=["create-feed", "build-feed", "list-feeds", "stats", "export-config", "import-config", "demo"],
+        default="demo",
+        help="Action to perform (default: demo)"
     )
+
     parser.add_argument(
-        "--feed-name",
+        "--name",
         type=str,
-        default="My Custom Feed",
-        help="Name of the custom feed",
+        help="Feed name"
     )
+
+    parser.add_argument(
+        "--description",
+        type=str,
+        help="Feed description"
+    )
+
     parser.add_argument(
         "--keywords",
         type=str,
-        default="AI,machine learning",
-        help="Comma-separated keywords to include",
+        help="Comma-separated keywords to filter on"
     )
-    parser.add_argument(
-        "--excluded-keywords",
-        type=str,
-        default="",
-        help="Comma-separated keywords to exclude",
-    )
-    parser.add_argument(
-        "--algorithm",
-        type=str,
-        default="hybrid",
-        choices=[algo.value for algo in FeedAlgorithm],
-        help="Feed ranking algorithm",
-    )
-    parser.add_argument(
-        "--content-types",
-        type=str,
-        default="text,link",
-        help="Comma-separated content types to include",
-    )
+
     parser.add_argument(
         "--min-engagement",
-        type=float,
-        default=5.0,
-        help="Minimum engagement score",
+        type=int,
+        default=5,
+        help="Minimum engagement score threshold (default: 5)"
     )
+
     parser.add_argument(
-        "--limit",
+        "--feed-id",
+        type=str,
+        help="Feed ID to operate on"
+    )
+
+    parser.add_argument(
+        "--config-file",
+        type=str,
+        help="JSON file for import/export operations"
+    )
+
+    parser.add_argument(
+        "--post-count",
         type=int,
         default=20,
-        help="Number of posts to return in feed",
-    )
-    parser.add_argument(
-        "--output-format",
-        type=str,
-        default="json",
-        choices=["json", "summary"],
-        help="Output format",
+        help="Number of sample posts to generate (default: 20)"
     )
 
     args = parser.parse_args()
 
-    keywords = [k.strip() for k in args.keywords.split(",") if k.strip()]
-    excluded = [k.strip() for k in args.excluded_keywords.split(",") if k.strip()]
-    content_types = [
-        ContentType(ct.strip())
-        for ct in args.content_types.split(",")
-        if ct.strip()
-    ]
-    algorithm = FeedAlgorithm(args.algorithm)
+    builder = AttieFeedBuilder()
 
-    preference = FeedPreference(
-        name=args.feed_name,
-        keywords=keywords,
-        excluded_keywords=excluded,
-        min_engagement=args.min_engagement,
-        content_types=content_types,
-        min_followers=0,
-        algorithm=algorithm,
-    )
+    if args.action == "demo":
+        print("=" * 80)
+        print("ATTIE: AI-Powered Bluesky Custom Feed Builder - Demo")
+        print("=" * 80)
+        print()
 
-    sample_posts = generate_sample_posts(100)
-    builder = FeedBuilder()
-    feed = builder.build_feed(
-        owner_did=args.owner_did,
-        feed_name=args.feed_name,
-        preference=preference,
-        available_posts=sample_posts,
-        limit=args.limit,
-    )
+        print("[1] Generating 20 sample Bluesky posts...")
+        sample_posts = generate_sample_posts(20)
+        result = builder.add_posts(sample_posts)
+        print(json.dumps(result, indent=2))
+        print()
 
-    if args.output_format == "json":
-        output = {
-            "feed_id": feed.feed_id,
-            "owner_did": feed.owner_did,
-            "name": feed.name,
-            "algorithm": feed.preferences.algorithm.value,
-            "posts_count": len(feed.posts),
-            "created_at": feed.created_at,
-            "posts": [
-                {
-                    "author": post.author,
-                    "text": post.text,
-                    "engagement_score": post.engagement_score,
-                    "likes": post.likes,
-                    "reposts": post.reposts,
-                    "replies": post.replies,
-                    "content_type": post.content_type.value,
-                    "created_at": post.created_at,
-                }
-                for post in feed.posts
-            ],
-        }
-        print(json.dumps(output, indent=2))
-    else:
-        print(f"Feed: {feed.name}")
-        print(f"Feed ID: {feed.feed_id}")
-        print(f"Owner: {feed.owner_did}")
-        print(f"Algorithm: {feed.preferences.algorithm.value}")
-        print(f"Posts in feed: {len(feed.posts)}")
-        print(f"Keywords: {', '.join(feed.preferences.keywords)}")
-        print(f"Excluded: {', '.join(feed.preferences.excluded_keywords)}")
-        print(f"Min Engagement: {feed.preferences.min_engagement}")
-        print("\nTop Posts:")
-        for i, post in enumerate(feed.posts[:5], 1):
-            print(
-                f"\n{i}. {post.author} (Score: {post.engagement_score:.1f}, Likes: {post.likes})"
-            )
-            print(f"   {post.text[:70]}...")
-
-
-if __name__ == "__main__":
-    main()
+        print("[2] Creating 'AI & Tech' custom feed...")
+        ai_rules = builder.generate_smart_rules(
+            keywords=["AI", "tech", "innovation"],
+            min_engagement=5
+        )
+        ai_feed_config = FeedConfig(
+            name="AI & Tech",
+            description="Custom feed for AI and technology discussions",
+            rules=ai_rules,
+            sort_by="engagement_score",
+            limit=10
+        )
+        ai_result = builder.add_feed(ai_feed_config)
+        ai_feed_id = ai_result["feed_
