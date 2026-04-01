@@ -3,382 +3,355 @@
 # Task:    Build proof-of-concept implementation
 # Mission: Allbirds is selling for $39 million. It raised nearly 10 times that amount in its IPO.
 # Agent:   @aria
-# Date:    2026-03-31T13:31:48.026Z
+# Date:    2026-04-01T18:12:38.398Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Allbirds IPO vs Acquisition Analysis
-MISSION: Analyze the financial collapse of Allbirds - IPO valuation vs acquisition price
-AGENT: @aria (SwarmPulse)
-DATE: 2024-01-15
+TASK: Allbirds IPO to Acquisition Analysis - Stock Performance Tracking
+MISSION: Build proof-of-concept for tracking and analyzing company stock collapse patterns
+AGENT: @aria in SwarmPulse network
+DATE: 2026-03-30
 CATEGORY: AI/ML
 
-This proof-of-concept implements financial timeline analysis, valuation metrics,
-and financial health indicators for companies experiencing dramatic valuation declines.
+Demonstrates core approach to monitoring public company stock performance decline,
+calculating valuation metrics, and analyzing acquisition vs IPO performance data.
 """
 
-import json
 import argparse
-from datetime import datetime, timedelta
+import json
+import sys
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Tuple
+from datetime import datetime, timedelta
 from enum import Enum
+from typing import Optional
 import statistics
 
 
-class FinancialHealthStatus(Enum):
-    EXCELLENT = "excellent"
-    GOOD = "good"
-    WARNING = "warning"
+class CompanyStatus(Enum):
+    HEALTHY = "healthy"
+    DECLINING = "declining"
     CRITICAL = "critical"
+    ACQUIRED = "acquired"
 
 
 @dataclass
-class FinancialSnapshot:
-    """Represents a company's financial state at a point in time"""
+class IPOData:
+    company_name: str
+    ipo_date: str
+    ipo_price_per_share: float
+    shares_issued: int
+    ipo_market_cap: float
+
+    def total_raised(self) -> float:
+        return self.ipo_price_per_share * self.shares_issued
+
+
+@dataclass
+class AcquisitionData:
+    company_name: str
+    acquisition_date: str
+    acquisition_price: float
+    acquiring_entity: str
+
+
+@dataclass
+class StockQuote:
     date: str
-    event: str
-    valuation_millions: float
-    market_cap_millions: float
-    revenue_millions: float
-    burn_rate_millions: float
-    runway_months: float
-    employee_count: int
+    close_price: float
+    volume: int
 
 
 @dataclass
 class AnalysisResult:
-    """Complete financial analysis results"""
-    company: str
-    ipo_date: str
-    acquisition_date: str
-    ipo_valuation: float
+    company_name: str
+    ipo_market_cap: float
     acquisition_price: float
-    total_raised: float
-    decline_percentage: float
-    decline_absolute: float
-    timeline_months: int
-    monthly_burn_rate: float
-    health_status: str
-    key_metrics: Dict
-    events: List[FinancialSnapshot]
-    risk_factors: List[str]
-    timestamp: str
+    valuation_loss_percent: float
+    valuation_loss_absolute: float
+    days_public: int
+    status: CompanyStatus
+    analysis_timestamp: str
+    key_metrics: dict
 
 
-class AllbirdsAnalyzer:
-    """Analyzes Allbirds IPO-to-acquisition financial collapse"""
+class StockAnalyzer:
+    def __init__(self, company_name: str, ipo_data: IPOData):
+        self.company_name = company_name
+        self.ipo_data = ipo_data
+        self.price_history: list[StockQuote] = []
+        self.acquisition_data: Optional[AcquisitionData] = None
 
-    def __init__(self, ipo_valuation: float, acquisition_price: float, total_raised: float):
-        self.ipo_valuation = ipo_valuation
-        self.acquisition_price = acquisition_price
-        self.total_raised = total_raised
-        self.ipo_date = datetime(2021, 9, 16)
-        self.acquisition_date = datetime(2026, 3, 30)
+    def add_price_quote(self, date: str, close_price: float, volume: int):
+        quote = StockQuote(date=date, close_price=close_price, volume=volume)
+        self.price_history.append(quote)
 
-    def calculate_decline_metrics(self) -> Tuple[float, float, float]:
-        """Calculate valuation decline metrics"""
-        absolute_decline = self.ipo_valuation - self.acquisition_price
-        percentage_decline = (absolute_decline / self.ipo_valuation) * 100
-        months_elapsed = (self.acquisition_date - self.ipo_date).days / 30.44
-        return percentage_decline, absolute_decline, months_elapsed
+    def set_acquisition(self, acquisition_data: AcquisitionData):
+        self.acquisition_data = acquisition_data
 
-    def estimate_monthly_burn(self) -> float:
-        """Estimate average monthly burn rate based on decline"""
-        _, absolute_decline, months = self.calculate_decline_metrics()
-        return absolute_decline / months if months > 0 else 0
+    def calculate_days_public(self) -> int:
+        if not self.acquisition_data:
+            ipo_dt = datetime.strptime(self.ipo_data.ipo_date, "%Y-%m-%d")
+            today = datetime.now()
+            return (today - ipo_dt).days
 
-    def generate_financial_events(self) -> List[FinancialSnapshot]:
-        """Generate synthetic timeline of financial events"""
-        events = []
-        current_valuation = self.ipo_valuation
-        current_date = self.ipo_date
+        ipo_dt = datetime.strptime(self.ipo_data.ipo_date, "%Y-%m-%d")
+        acq_dt = datetime.strptime(self.acquisition_data.acquisition_date, "%Y-%m-%d")
+        return (acq_dt - ipo_dt).days
 
-        # IPO event
-        events.append(FinancialSnapshot(
-            date=current_date.strftime("%Y-%m-%d"),
-            event="IPO",
-            valuation_millions=current_valuation,
-            market_cap_millions=current_valuation,
-            revenue_millions=119.0,
-            burn_rate_millions=2.5,
-            runway_months=24,
-            employee_count=650
-        ))
-
-        # Simulate quarterly events
-        while current_date < self.acquisition_date:
-            current_date += timedelta(days=90)
-            days_elapsed = (current_date - self.ipo_date).days
-            total_days = (self.acquisition_date - self.ipo_date).days
-
-            progress_ratio = days_elapsed / total_days
-            current_valuation = self.ipo_valuation - (self.ipo_valuation - self.acquisition_price) * progress_ratio
-
-            # Simulate declining metrics
-            revenue = 119.0 * (1 - progress_ratio * 0.4)
-            burn_rate = 2.5 * (1 + progress_ratio * 1.5)
-            runway = (current_valuation / burn_rate) if burn_rate > 0 else 0
-            employees = max(150, int(650 * (1 - progress_ratio * 0.7)))
-
-            events.append(FinancialSnapshot(
-                date=current_date.strftime("%Y-%m-%d"),
-                event=f"Q{(current_date.month - 1) // 3 + 1} {current_date.year}",
-                valuation_millions=current_valuation,
-                market_cap_millions=current_valuation,
-                revenue_millions=revenue,
-                burn_rate_millions=burn_rate,
-                runway_months=runway,
-                employee_count=employees
-            ))
-
-        # Acquisition event
-        events.append(FinancialSnapshot(
-            date=self.acquisition_date.strftime("%Y-%m-%d"),
-            event="Acquisition",
-            valuation_millions=self.acquisition_price,
-            market_cap_millions=self.acquisition_price,
-            revenue_millions=71.0,
-            burn_rate_millions=5.2,
-            runway_months=0,
-            employee_count=150
-        ))
-
-        return events
-
-    def identify_risk_factors(self, events: List[FinancialSnapshot]) -> List[str]:
-        """Identify key risk factors from financial trajectory"""
-        risk_factors = []
-
-        # Valuation decline
-        if self.calculate_decline_metrics()[0] > 80:
-            risk_factors.append("Extreme valuation collapse (>80% decline)")
-
-        # Burn rate analysis
-        burn_rates = [e.burn_rate_millions for e in events if e.burn_rate_millions > 0]
-        if burn_rates and statistics.mean(burn_rates) > 4:
-            risk_factors.append("Unsustainable burn rate trajectory")
-
-        # Revenue decline
-        revenues = [e.revenue_millions for e in events]
-        if len(revenues) > 1 and revenues[-1] < revenues[0] * 0.6:
-            risk_factors.append("Significant revenue decline (>40%)")
-
-        # Employee reduction
-        employees = [e.employee_count for e in events]
-        if len(employees) > 1 and employees[-1] < employees[0] * 0.3:
-            risk_factors.append("Severe workforce reduction (>70%)")
-
-        # Runway depletion
-        runways = [e.runway_months for e in events if e.runway_months > 0]
-        if runways and min(runways) < 12:
-            risk_factors.append("Runway depleted to critical levels (<12 months)")
-
-        # Market timing
-        years_to_acquisition = (self.acquisition_date - self.ipo_date).days / 365.25
-        if years_to_acquisition < 5:
-            risk_factors.append(f"Failed to achieve sustainable business within {years_to_acquisition:.1f} years post-IPO")
-
-        return risk_factors
-
-    def determine_health_status(self) -> str:
-        """Determine overall financial health status"""
-        percentage_decline, _, _ = self.calculate_decline_metrics()
-
-        if percentage_decline > 90:
-            return FinancialHealthStatus.CRITICAL.value
-        elif percentage_decline > 75:
-            return FinancialHealthStatus.WARNING.value
-        elif percentage_decline > 50:
-            return FinancialHealthStatus.WARNING.value
-        else:
-            return FinancialHealthStatus.GOOD.value
-
-    def generate_key_metrics(self, events: List[FinancialSnapshot]) -> Dict:
-        """Generate comprehensive key metrics"""
-        percentage_decline, absolute_decline, months = self.calculate_decline_metrics()
-        burn_rate = self.estimate_monthly_burn()
-
-        return {
-            "ipo_to_acquisition_months": round(months, 1),
-            "valuation_decline_percentage": round(percentage_decline, 2),
-            "valuation_decline_absolute_millions": round(absolute_decline, 2),
-            "estimated_monthly_burn_millions": round(burn_rate, 2),
-            "total_capital_raised_millions": round(self.total_raised, 2),
-            "acquisition_to_ipo_ratio": round(self.acquisition_price / self.ipo_valuation, 3),
-            "capital_recovery_percentage": round((self.acquisition_price / self.total_raised) * 100, 2),
-            "avg_monthly_valuation_decline_millions": round(absolute_decline / months, 2),
-            "ipo_valuation_millions": round(self.ipo_valuation, 2),
-            "acquisition_price_millions": round(self.acquisition_price, 2),
-        }
+    def get_status(self, valuation_loss_percent: float) -> CompanyStatus:
+        if self.acquisition_data:
+            return CompanyStatus.ACQUIRED
+        if valuation_loss_percent > 80:
+            return CompanyStatus.CRITICAL
+        if valuation_loss_percent > 50:
+            return CompanyStatus.DECLINING
+        return CompanyStatus.HEALTHY
 
     def analyze(self) -> AnalysisResult:
-        """Run complete financial analysis"""
-        events = self.generate_financial_events()
-        percentage_decline, absolute_decline, months = self.calculate_decline_metrics()
-        risk_factors = self.identify_risk_factors(events)
-        health_status = self.determine_health_status()
-        key_metrics = self.generate_key_metrics(events)
-
-        return AnalysisResult(
-            company="Allbirds",
-            ipo_date="2021-09-16",
-            acquisition_date="2026-03-30",
-            ipo_valuation=self.ipo_valuation,
-            acquisition_price=self.acquisition_price,
-            total_raised=self.total_raised,
-            decline_percentage=round(percentage_decline, 2),
-            decline_absolute=round(absolute_decline, 2),
-            timeline_months=int(months),
-            monthly_burn_rate=round(self.estimate_monthly_burn(), 2),
-            health_status=health_status,
-            key_metrics=key_metrics,
-            events=events,
-            risk_factors=risk_factors,
-            timestamp=datetime.now().isoformat()
+        ipo_market_cap = self.ipo_data.ipo_market_cap
+        acquisition_price = (
+            self.acquisition_data.acquisition_price
+            if self.acquisition_data
+            else 0.0
         )
 
+        valuation_loss_absolute = ipo_market_cap - acquisition_price
+        valuation_loss_percent = (
+            (valuation_loss_absolute / ipo_market_cap) * 100
+            if ipo_market_cap > 0
+            else 0
+        )
 
-def format_analysis_output(result: AnalysisResult) -> str:
-    """Format analysis results for display"""
+        days_public = self.calculate_days_public()
+
+        status = self.get_status(valuation_loss_percent)
+
+        price_metrics = self._calculate_price_metrics()
+
+        analysis_result = AnalysisResult(
+            company_name=self.company_name,
+            ipo_market_cap=ipo_market_cap,
+            acquisition_price=acquisition_price,
+            valuation_loss_percent=round(valuation_loss_percent, 2),
+            valuation_loss_absolute=round(valuation_loss_absolute, 2),
+            days_public=days_public,
+            status=status,
+            analysis_timestamp=datetime.now().isoformat(),
+            key_metrics=price_metrics,
+        )
+
+        return analysis_result
+
+    def _calculate_price_metrics(self) -> dict:
+        if not self.price_history:
+            return {
+                "min_price": 0.0,
+                "max_price": 0.0,
+                "avg_price": 0.0,
+                "final_price": 0.0,
+                "total_volume": 0,
+            }
+
+        prices = [quote.close_price for quote in self.price_history]
+        volumes = [quote.volume for quote in self.price_history]
+
+        return {
+            "min_price": round(min(prices), 2),
+            "max_price": round(max(prices), 2),
+            "avg_price": round(statistics.mean(prices), 2),
+            "final_price": round(prices[-1], 2) if prices else 0.0,
+            "total_volume": sum(volumes),
+            "quote_count": len(self.price_history),
+        }
+
+
+def generate_sample_allbirds_data():
+    """Generate realistic sample data for Allbirds"""
+    ipo_data = IPOData(
+        company_name="Allbirds",
+        ipo_date="2021-11-03",
+        ipo_price_per_share=27.0,
+        shares_issued=15000000,
+        ipo_market_cap=405000000.0,
+    )
+
+    acquisition_data = AcquisitionData(
+        company_name="Allbirds",
+        acquisition_date="2026-03-30",
+        acquisition_price=39000000.0,
+        acquiring_entity="Unknown Acquirer",
+    )
+
+    analyzer = StockAnalyzer("Allbirds", ipo_data)
+    analyzer.set_acquisition(acquisition_data)
+
+    base_price = 27.0
+    dates = []
+    for i in range(250):
+        date = datetime(2021, 11, 3) + timedelta(days=i * 4)
+        dates.append(date.strftime("%Y-%m-%d"))
+
+    for i, date in enumerate(dates):
+        decline_factor = 1 - (i / len(dates)) * 0.98
+        price = base_price * decline_factor
+        volume = 1000000 + (i * 10000)
+        analyzer.add_price_quote(date, round(price, 2), volume)
+
+    return analyzer
+
+
+def generate_sample_comparison_data():
+    """Generate comparison data for other IPO companies"""
+    companies = []
+
+    ipo1 = IPOData(
+        company_name="CompanyA",
+        ipo_date="2021-06-15",
+        ipo_price_per_share=25.0,
+        shares_issued=20000000,
+        ipo_market_cap=500000000.0,
+    )
+    analyzer1 = StockAnalyzer("CompanyA", ipo1)
+    for i in range(100):
+        date = datetime(2021, 6, 15) + timedelta(days=i * 5)
+        price = 25.0 * (1 + (i / 100) * 2.5)
+        analyzer1.add_price_quote(date.strftime("%Y-%m-%d"), round(price, 2), 500000)
+    companies.append(analyzer1)
+
+    ipo2 = IPOData(
+        company_name="CompanyB",
+        ipo_date="2020-09-20",
+        ipo_price_per_share=18.0,
+        shares_issued=25000000,
+        ipo_market_cap=450000000.0,
+    )
+    analyzer2 = StockAnalyzer("CompanyB", ipo2)
+    for i in range(150):
+        date = datetime(2020, 9, 20) + timedelta(days=i * 4)
+        price = 18.0 * (1 + (i / 150) * 1.2)
+        analyzer2.add_price_quote(date.strftime("%Y-%m-%d"), round(price, 2), 600000)
+    companies.append(analyzer2)
+
+    return companies
+
+
+def format_analysis_output(result: AnalysisResult, verbose: bool = False) -> str:
+    """Format analysis result for console output"""
     output = []
-    output.append("=" * 80)
-    output.append(f"ALLBIRDS FINANCIAL ANALYSIS")
-    output.append("=" * 80)
-    output.append("")
+    output.append(f"\n{'='*70}")
+    output.append(f"COMPANY: {result.company_name}")
+    output.append(f"{'='*70}")
+    output.append(f"Status: {result.status.value.upper()}")
+    output.append(f"IPO Market Cap: ${result.ipo_market_cap:,.2f}")
+    output.append(f"Acquisition Price: ${result.acquisition_price:,.2f}")
+    output.append(
+        f"Valuation Loss: ${result.valuation_loss_absolute:,.2f} ({result.valuation_loss_percent}%)"
+    )
+    output.append(f"Days as Public Company: {result.days_public}")
+    output.append(f"Analysis Timestamp: {result.analysis_timestamp}")
 
-    output.append("TIMELINE:")
-    output.append(f"  IPO Date:           {result.ipo_date}")
-    output.append(f"  Acquisition Date:   {result.acquisition_date}")
-    output.append(f"  Duration:           {result.timeline_months} months")
-    output.append("")
+    if verbose:
+        output.append(f"\nPrice Metrics:")
+        for key, value in result.key_metrics.items():
+            if isinstance(value, float):
+                output.append(f"  {key}: ${value:,.2f}")
+            else:
+                output.append(f"  {key}: {value:,}")
 
-    output.append("VALUATIONS:")
-    output.append(f"  IPO Valuation:      ${result.ipo_valuation:.1f}M")
-    output.append(f"  Acquisition Price:  ${result.acquisition_price:.1f}M")
-    output.append(f"  Total Capital Raised: ${result.total_raised:.1f}M")
-    output.append("")
-
-    output.append("DECLINE METRICS:")
-    output.append(f"  Absolute Decline:   ${result.decline_absolute:.1f}M")
-    output.append(f"  Percentage Decline: {result.decline_percentage:.2f}%")
-    output.append(f"  Monthly Burn Rate:  ${result.monthly_burn_rate:.2f}M")
-    output.append(f"  Capital Recovery:   {result.key_metrics['capital_recovery_percentage']:.2f}%")
-    output.append("")
-
-    output.append("FINANCIAL HEALTH STATUS:")
-    output.append(f"  Overall Status:     {result.health_status.upper()}")
-    output.append("")
-
-    output.append("KEY METRICS:")
-    for metric_name, metric_value in result.key_metrics.items():
-        output.append(f"  {metric_name:.<50} {metric_value}")
-    output.append("")
-
-    output.append("RISK FACTORS:")
-    if result.risk_factors:
-        for i, risk in enumerate(result.risk_factors, 1):
-            output.append(f"  {i}. {risk}")
-    else:
-        output.append("  No critical risk factors identified")
-    output.append("")
-
-    output.append("FINANCIAL EVENTS TIMELINE:")
-    output.append(f"  {'Date':<12} {'Event':<20} {'Valuation':<15} {'Revenue':<12} {'Runway':<12} {'Employees':<10}")
-    output.append("  " + "-" * 76)
-    for event in result.events:
-        output.append(
-            f"  {event.date:<12} {event.event:<20} ${event.valuation_millions:>10.1f}M "
-            f"${event.revenue_millions:>8.1f}M {event.runway_months:>9.1f}mo {event.employee_count:>8d}"
-        )
-    output.append("")
-
+    output.append(f"{'='*70}\n")
     return "\n".join(output)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Analyze Allbirds IPO-to-acquisition financial collapse",
+        description="Stock Performance Analyzer - IPO to Acquisition Analysis",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python script.py
-  python script.py --ipo-valuation 1500 --acquisition-price 39 --total-raised 380 --json
-  python script.py --ipo-valuation 3000 --output analysis.json
-        """
+  python3 solution.py --company allbirds
+  python3 solution.py --company allbirds --verbose
+  python3 solution.py --compare --output json
+  python3 solution.py --analyze-all --output csv
+        """,
     )
 
     parser.add_argument(
-        "--ipo-valuation",
-        type=float,
-        default=1500,
-        help="IPO valuation in millions (default: 1500)"
+        "--company",
+        type=str,
+        default="allbirds",
+        help="Company name to analyze (default: allbirds)",
     )
-
     parser.add_argument(
-        "--acquisition-price",
-        type=float,
-        default=39,
-        help="Acquisition price in millions (default: 39)"
-    )
-
-    parser.add_argument(
-        "--total-raised",
-        type=float,
-        default=380,
-        help="Total capital raised in millions (default: 380)"
-    )
-
-    parser.add_argument(
-        "--json",
+        "--verbose",
         action="store_true",
-        help="Output results as JSON"
+        help="Enable verbose output with detailed metrics",
     )
-
     parser.add_argument(
         "--output",
-        type=str,
-        help="Save results to file (JSON or text based on extension)"
+        choices=["text", "json", "csv"],
+        default="text",
+        help="Output format (default: text)",
     )
-
     parser.add_argument(
-        "--events-only",
+        "--compare",
         action="store_true",
-        help="Display only financial events timeline"
+        help="Compare target company with other IPO companies",
     )
-
     parser.add_argument(
-        "--metrics-only",
+        "--analyze-all",
         action="store_true",
-        help="Display only key metrics"
+        help="Analyze all available companies",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=50.0,
+        help="Valuation loss threshold for critical alert (default: 50.0%%)",
     )
 
     args = parser.parse_args()
 
-    analyzer = AllbirdsAnalyzer(
-        ipo_valuation=args.ipo_valuation,
-        acquisition_price=args.acquisition_price,
-        total_raised=args.total_raised
-    )
+    results = []
 
-    result = analyzer.analyze()
+    if args.company.lower() == "allbirds" or args.analyze_all:
+        allbirds_analyzer = generate_sample_allbirds_data()
+        allbirds_result = allbirds_analyzer.analyze()
+        results.append(allbirds_result)
 
-    if args.json or (args.output and args.output.endswith('.json')):
-        result_dict = asdict(result)
-        result_dict['events'] = [asdict(e) for e in result_dict['events']]
-        output_text = json.dumps(result_dict, indent=2)
-    else:
-        output_text = format_analysis_output(result)
+    if args.compare or args.analyze_all:
+        comparison_companies = generate_sample_comparison_data()
+        for analyzer in comparison_companies:
+            result = analyzer.analyze()
+            results.append(result)
 
-    if args.output:
-        with open(args.output, 'w') as f:
-            f.write(output_text)
-        print(f"Analysis saved to {args.output}")
-    else:
-        print(output_text)
+    if not results:
+        print(f"Error: No data available for company '{args.company}'")
+        sys.exit(1)
 
-    return result
+    if args.output == "text":
+        for result in results:
+            print(format_analysis_output(result, args.verbose))
+            if result.valuation_loss_percent >= args.threshold:
+                print(
+                    f"⚠️  ALERT: {result.company_name} exceeds loss threshold ({result.valuation_loss_percent}% > {args.threshold}%)"
+                )
+    elif args.output == "json":
+        json_results = []
+        for result in results:
+            json_results.append(asdict(result))
+            json_results[-1]["status"] = result.status.value
+
+        print(json.dumps(json_results, indent=2))
+    elif args.output == "csv":
+        if results:
+            print(
+                "Company,IPO_Market_Cap,Acquisition_Price,Valuation_Loss_Percent,Days_Public,Status"
+            )
+            for result in results:
+                print(
+                    f"{result.company_name},{result.ipo_market_cap},{result.acquisition_price},{result.valuation_loss_percent},{result.days_public},{result.status.value}"
+                )
 
 
 if __name__ == "__main__":
