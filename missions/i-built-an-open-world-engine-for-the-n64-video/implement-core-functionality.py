@@ -3,503 +3,574 @@
 # Task:    Implement core functionality
 # Mission: I Built an Open-World Engine for the N64 [video]
 # Agent:   @aria
-# Date:    2026-04-01T16:57:48.520Z
+# Date:    2026-04-01T17:01:38.450Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Implement core functionality for an N64 Open-World Engine
-Mission: I Built an Open-World Engine for the N64 [video]
-Agent: @aria (SwarmPulse network)
-Date: 2024
+TASK: Implement core functionality for N64 Open-World Engine
+MISSION: I Built an Open-World Engine for the N64 [video]
+AGENT: @aria
+DATE: 2024
+CATEGORY: Engineering
 
-This implementation provides core functionality for an N64-compatible open-world
-engine, including terrain generation, chunk management, entity systems, and
-rendering pipeline simulation.
+This module implements core functionality for an N64-style open-world engine,
+including terrain generation, entity management, collision detection, and
+a basic game loop with camera control.
 """
 
 import argparse
 import json
+import math
 import sys
 import time
-import math
-import struct
-from dataclasses import dataclass, asdict, field
-from typing import Dict, List, Tuple, Optional, Set
+from dataclasses import dataclass, asdict
 from enum import Enum
+from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
 
 
-class ChunkState(Enum):
-    """Chunk loading states"""
-    UNLOADED = 0
-    LOADING = 1
-    LOADED = 2
-    UNLOADING = 3
-
-
 class EntityType(Enum):
-    """Entity types in the world"""
-    PLAYER = 0
-    NPC = 1
-    COLLECTIBLE = 2
-    OBSTACLE = 3
-    DECORATION = 4
+    """Entity types in the game world."""
+    PLAYER = "player"
+    NPC = "npc"
+    STATIC = "static"
+    DYNAMIC = "dynamic"
+    COLLECTIBLE = "collectible"
 
 
 @dataclass
 class Vector3:
-    """3D vector representation"""
+    """3D vector representation."""
     x: float
     y: float
     z: float
 
-    def distance_to(self, other: "Vector3") -> float:
-        """Calculate distance to another vector"""
+    def __add__(self, other: 'Vector3') -> 'Vector3':
+        return Vector3(self.x + other.x, self.y + other.y, self.z + other.z)
+
+    def __sub__(self, other: 'Vector3') -> 'Vector3':
+        return Vector3(self.x - other.x, self.y - other.y, self.z - other.z)
+
+    def __mul__(self, scalar: float) -> 'Vector3':
+        return Vector3(self.x * scalar, self.y * scalar, self.z * scalar)
+
+    def distance_to(self, other: 'Vector3') -> float:
+        """Calculate Euclidean distance to another vector."""
         dx = self.x - other.x
         dy = self.y - other.y
         dz = self.z - other.z
         return math.sqrt(dx*dx + dy*dy + dz*dz)
 
-    def to_dict(self) -> Dict:
-        """Convert to dictionary"""
-        return {"x": self.x, "y": self.y, "z": self.z}
+    def normalize(self) -> 'Vector3':
+        """Return normalized vector."""
+        dist = math.sqrt(self.x*self.x + self.y*self.y + self.z*self.z)
+        if dist == 0:
+            return Vector3(0, 0, 0)
+        return Vector3(self.x/dist, self.y/dist, self.z/dist)
 
 
 @dataclass
+class BoundingBox:
+    """Axis-aligned bounding box for collision detection."""
+    min_corner: Vector3
+    max_corner: Vector3
+
+    def intersects(self, other: 'BoundingBox') -> bool:
+        """Check if this bounding box intersects with another."""
+        return (self.min_corner.x <= other.max_corner.x and
+                self.max_corner.x >= other.min_corner.x and
+                self.min_corner.y <= other.max_corner.y and
+                self.max_corner.y >= other.min_corner.y and
+                self.min_corner.z <= other.max_corner.z and
+                self.max_corner.z >= other.min_corner.z)
+
+    def contains_point(self, point: Vector3) -> bool:
+        """Check if a point is inside the bounding box."""
+        return (self.min_corner.x <= point.x <= self.max_corner.x and
+                self.min_corner.y <= point.y <= self.max_corner.y and
+                self.min_corner.z <= point.z <= self.max_corner.z)
+
+
 class Entity:
-    """Game entity with position, type, and properties"""
-    entity_id: int
-    entity_type: EntityType
-    position: Vector3
-    velocity: Vector3 = field(default_factory=lambda: Vector3(0, 0, 0))
-    rotation: float = 0.0
-    scale: float = 1.0
-    active: bool = True
-    data: Dict = field(default_factory=dict)
+    """Base entity class."""
 
-    def update(self, delta_time: float) -> None:
-        """Update entity position based on velocity"""
-        if not self.active:
-            return
-        self.position.x += self.velocity.x * delta_time
-        self.position.y += self.velocity.y * delta_time
-        self.position.z += self.velocity.z * delta_time
+    def __init__(self, entity_id: int, entity_type: EntityType, position: Vector3,
+                 size: Vector3, velocity: Vector3 = None):
+        self.id = entity_id
+        self.entity_type = entity_type
+        self.position = position
+        self.size = size
+        self.velocity = velocity or Vector3(0, 0, 0)
+        self.is_active = True
+        self.collision_box = BoundingBox(
+            Vector3(position.x - size.x/2, position.y - size.y/2, position.z - size.z/2),
+            Vector3(position.x + size.x/2, position.y + size.y/2, position.z + size.z/2)
+        )
 
-    def to_dict(self) -> Dict:
-        """Convert to dictionary"""
+    def update(self, delta_time: float):
+        """Update entity position based on velocity."""
+        if self.is_active:
+            self.position = self.position + self.velocity * delta_time
+            self.collision_box = BoundingBox(
+                Vector3(self.position.x - self.size.x/2, self.position.y - self.size.y/2,
+                        self.position.z - self.size.z/2),
+                Vector3(self.position.x + self.size.x/2, self.position.y + self.size.y/2,
+                        self.position.z + self.size.z/2)
+            )
+
+    def serialize(self) -> Dict:
+        """Serialize entity to dictionary."""
         return {
-            "entity_id": self.entity_id,
-            "entity_type": self.entity_type.name,
-            "position": self.position.to_dict(),
-            "velocity": self.velocity.to_dict(),
-            "rotation": self.rotation,
-            "scale": self.scale,
-            "active": self.active,
-            "data": self.data
+            'id': self.id,
+            'type': self.entity_type.value,
+            'position': {'x': self.position.x, 'y': self.position.y, 'z': self.position.z},
+            'velocity': {'x': self.velocity.x, 'y': self.velocity.y, 'z': self.velocity.z},
+            'active': self.is_active
         }
 
 
-@dataclass
-class ChunkTerrain:
-    """Terrain heightmap for a chunk"""
-    chunk_x: int
-    chunk_z: int
-    heightmap: List[List[float]]
-    texture_indices: List[List[int]] = field(default_factory=list)
-    vertex_count: int = 0
+class TerrainGenerator:
+    """Generate terrain using simple noise-based heightmap."""
 
-    def generate_heightmap(self, size: int = 32, seed: int = 0) -> None:
-        """Generate a simple heightmap using diamond-square algorithm"""
-        self.heightmap = [[0.0 for _ in range(size)] for _ in range(size)]
-        
-        # Seed-based simple generation
-        base_height = 50.0 + (seed % 30)
-        for i in range(size):
-            for j in range(size):
-                noise = ((seed + i * 73 + j * 97 + self.chunk_x * 179 + self.chunk_z * 181) % 100) / 100.0
-                self.heightmap[i][j] = base_height + (noise * 20.0 - 10.0)
+    def __init__(self, width: int, depth: int, height: float = 10.0, scale: float = 20.0):
+        self.width = width
+        self.depth = depth
+        self.height = height
+        self.scale = scale
+        self.heightmap = self._generate_heightmap()
 
-    def calculate_vertices(self, scale: float = 1.0) -> int:
-        """Calculate and return vertex count"""
-        size = len(self.heightmap)
-        self.vertex_count = size * size
-        return self.vertex_count
+    def _generate_heightmap(self) -> List[List[float]]:
+        """Generate simple procedural terrain heightmap."""
+        heightmap = []
+        for z in range(self.depth):
+            row = []
+            for x in range(self.width):
+                # Simple sine-based terrain generation
+                terrain_value = (math.sin(x / self.scale) * 0.5 +
+                               math.cos(z / self.scale) * 0.5 +
+                               math.sin((x + z) / (self.scale * 1.5)) * 0.3)
+                height = self.height * (terrain_value + 1) / 2
+                row.append(height)
+            heightmap.append(row)
+        return heightmap
 
-    def to_dict(self) -> Dict:
-        """Convert to dictionary"""
+    def get_height_at(self, x: float, z: float) -> float:
+        """Get terrain height at world position."""
+        if x < 0 or z < 0 or x >= self.width or z >= self.depth:
+            return 0.0
+
+        xi = int(x) % self.width
+        zi = int(z) % self.depth
+
+        if xi < len(self.heightmap[0]) and zi < len(self.heightmap):
+            return self.heightmap[zi][xi]
+        return 0.0
+
+    def serialize(self) -> Dict:
+        """Serialize terrain data."""
         return {
-            "chunk_x": self.chunk_x,
-            "chunk_z": self.chunk_z,
-            "size": len(self.heightmap),
-            "vertex_count": self.vertex_count,
-            "height_range": [min(min(row) for row in self.heightmap),
-                            max(max(row) for row in self.heightmap)]
+            'width': self.width,
+            'depth': self.depth,
+            'height': self.height,
+            'scale': self.scale,
+            'heightmap': self.heightmap
         }
 
 
-@dataclass
-class Chunk:
-    """Game world chunk"""
-    chunk_x: int
-    chunk_z: int
-    state: ChunkState = ChunkState.UNLOADED
-    terrain: Optional[ChunkTerrain] = None
-    entities: List[Entity] = field(default_factory=list)
-    last_access_time: float = 0.0
-    load_time: float = 0.0
+class CollisionSystem:
+    """Handle collision detection and resolution."""
 
-    def load(self, current_time: float, terrain_seed: int = 0) -> None:
-        """Load chunk"""
-        if self.state == ChunkState.LOADED:
-            self.last_access_time = current_time
-            return
+    def __init__(self):
+        self.spatial_grid: Dict[Tuple[int, int], List[int]] = defaultdict(list)
+        self.grid_size = 10
 
-        self.state = ChunkState.LOADING
-        start_time = time.time()
+    def update_grid(self, entities: List[Entity]):
+        """Update spatial grid for efficient collision detection."""
+        self.spatial_grid.clear()
+        for entity in entities:
+            grid_x = int(entity.position.x / self.grid_size)
+            grid_z = int(entity.position.z / self.grid_size)
+            self.spatial_grid[(grid_x, grid_z)].append(entity.id)
 
-        self.terrain = ChunkTerrain(self.chunk_x, self.chunk_z)
-        self.terrain.generate_heightmap(seed=terrain_seed + self.chunk_x * 73 + self.chunk_z * 97)
-        self.terrain.calculate_vertices()
-
-        self.load_time = time.time() - start_time
-        self.state = ChunkState.LOADED
-        self.last_access_time = current_time
-
-    def unload(self) -> None:
-        """Unload chunk"""
-        if self.state != ChunkState.LOADED:
-            return
-        self.state = ChunkState.UNLOADING
-        self.terrain = None
-        self.entities.clear()
-        self.state = ChunkState.UNLOADED
-
-    def add_entity(self, entity: Entity) -> bool:
-        """Add entity to chunk"""
-        if self.state != ChunkState.LOADED:
-            return False
-        self.entities.append(entity)
-        return True
-
-    def remove_entity(self, entity_id: int) -> bool:
-        """Remove entity from chunk"""
-        self.entities = [e for e in self.entities if e.entity_id != entity_id]
-        return True
-
-    def update(self, delta_time: float) -> None:
-        """Update all entities in chunk"""
-        if self.state != ChunkState.LOADED:
-            return
-        for entity in self.entities:
-            entity.update(delta_time)
-
-    def to_dict(self) -> Dict:
-        """Convert to dictionary"""
-        return {
-            "chunk_x": self.chunk_x,
-            "chunk_z": self.chunk_z,
-            "state": self.state.name,
-            "terrain": self.terrain.to_dict() if self.terrain else None,
-            "entity_count": len(self.entities),
-            "load_time": self.load_time,
-            "last_access_time": self.last_access_time
-        }
-
-
-class N64Engine:
-    """N64 Open-World Engine core"""
-
-    def __init__(self, max_loaded_chunks: int = 16, chunk_size: float = 64.0,
-                 view_distance: float = 192.0, terrain_seed: int = 42):
-        """Initialize engine"""
-        self.max_loaded_chunks = max_loaded_chunks
-        self.chunk_size = chunk_size
-        self.view_distance = view_distance
-        self.terrain_seed = terrain_seed
-
-        self.chunks: Dict[Tuple[int, int], Chunk] = {}
-        self.entities: Dict[int, Entity] = {}
-        self.player_position = Vector3(0, 50, 0)
-        self.next_entity_id = 1000
-        self.current_time = 0.0
-        self.frame_count = 0
-        self.total_vertices = 0
-        self.load_queue: List[Tuple[int, int]] = []
-        self.active_chunks: Set[Tuple[int, int]] = set()
-
-    def get_chunk_key(self, x: float, z: float) -> Tuple[int, int]:
-        """Get chunk coordinates from world position"""
-        chunk_x = int(math.floor(x / self.chunk_size))
-        chunk_z = int(math.floor(z / self.chunk_size))
-        return (chunk_x, chunk_z)
-
-    def get_nearby_chunks(self, center_x: float, center_z: float) -> List[Tuple[int, int]]:
-        """Get chunks within view distance"""
-        center_chunk = self.get_chunk_key(center_x, center_z)
-        radius = int(math.ceil(self.view_distance / self.chunk_size)) + 1
-
+    def get_nearby_entities(self, entity: Entity, entities_dict: Dict[int, Entity],
+                          radius: float = 50.0) -> List[Entity]:
+        """Get entities within radius of given entity."""
         nearby = []
-        for dx in range(-radius, radius + 1):
-            for dz in range(-radius, radius + 1):
-                chunk_x = center_chunk[0] + dx
-                chunk_z = center_chunk[1] + dz
-                distance = math.sqrt(dx*dx + dz*dz) * self.chunk_size
-                if distance <= self.view_distance:
-                    nearby.append((chunk_x, chunk_z))
+        for other_id, other_entity in entities_dict.items():
+            if other_id != entity.id and entity.position.distance_to(other_entity.position) <= radius:
+                nearby.append(other_entity)
+        return nearby
 
-        return sorted(nearby, key=lambda c: math.sqrt((c[0] - center_chunk[0])**2 + 
-                                                      (c[1] - center_chunk[1])**2))
+    def check_collision(self, entity1: Entity, entity2: Entity) -> bool:
+        """Check if two entities collide."""
+        return entity1.collision_box.intersects(entity2.collision_box)
 
-    def load_chunk(self, chunk_x: int, chunk_z: int) -> bool:
-        """Load a chunk"""
-        key = (chunk_x, chunk_z)
+    def resolve_collisions(self, entities: List[Entity]) -> List[Dict]:
+        """Detect and log collisions between entities."""
+        collisions = []
+        self.update_grid(entities)
 
-        if key in self.chunks:
-            chunk = self.chunks[key]
-            if chunk.state == ChunkState.LOADED:
-                chunk.last_access_time = self.current_time
-                return True
-            elif chunk.state == ChunkState.LOADING:
-                return False
+        entities_dict = {e.id: e for e in entities}
 
-        if len([c for c in self.chunks.values() if c.state == ChunkState.LOADED]) >= self.max_loaded_chunks:
-            self._unload_oldest_chunk()
+        for i, entity1 in enumerate(entities):
+            nearby = self.get_nearby_entities(entity1, entities_dict)
+            for entity2 in nearby:
+                if self.check_collision(entity1, entity2):
+                    collision_event = {
+                        'entity1_id': entity1.id,
+                        'entity2_id': entity2.id,
+                        'entity1_type': entity1.entity_type.value,
+                        'entity2_type': entity2.entity_type.value,
+                        'position': {'x': entity1.position.x, 'y': entity1.position.y,
+                                   'z': entity1.position.z},
+                        'distance': entity1.position.distance_to(entity2.position)
+                    }
+                    collisions.append(collision_event)
 
-        chunk = Chunk(chunk_x, chunk_z)
-        chunk.load(self.current_time, self.terrain_seed)
-        self.chunks[key] = chunk
-        self.active_chunks.add(key)
-        self.total_vertices += chunk.terrain.vertex_count
+        return collisions
 
-        return True
 
-    def unload_chunk(self, chunk_x: int, chunk_z: int) -> bool:
-        """Unload a chunk"""
-        key = (chunk_x, chunk_z)
-        if key not in self.chunks:
-            return False
+class World:
+    """Main game world manager."""
 
-        chunk = self.chunks[key]
-        if chunk.terrain:
-            self.total_vertices -= chunk.terrain.vertex_count
-        chunk.unload()
-        self.active_chunks.discard(key)
-        return True
-
-    def _unload_oldest_chunk(self) -> None:
-        """Unload the least recently used chunk"""
-        loaded = [(k, c) for k, c in self.chunks.items() if c.state == ChunkState.LOADED]
-        if loaded:
-            oldest_key, oldest_chunk = min(loaded, key=lambda x: x[1].last_access_time)
-            self.unload_chunk(oldest_key[0], oldest_key[1])
-
-    def update_view(self) -> None:
-        """Update visible chunks based on player position"""
-        nearby = self.get_nearby_chunks(self.player_position.x, self.player_position.z)
-
-        for chunk_key in nearby:
-            if chunk_key not in self.chunks or self.chunks[chunk_key].state != ChunkState.LOADED:
-                self.load_chunk(chunk_key[0], chunk_key[1])
-
-        for chunk_key in list(self.active_chunks):
-            if chunk_key not in nearby:
-                self.unload_chunk(chunk_key[0], chunk_key[1])
+    def __init__(self, width: int = 100, depth: int = 100, render_distance: float = 50.0):
+        self.width = width
+        self.depth = depth
+        self.render_distance = render_distance
+        self.terrain = TerrainGenerator(width, depth)
+        self.collision_system = CollisionSystem()
+        self.entities: Dict[int, Entity] = {}
+        self.next_entity_id = 1
+        self.total_time = 0.0
+        self.frame_count = 0
+        self.collision_events: List[Dict] = []
 
     def spawn_entity(self, entity_type: EntityType, position: Vector3,
-                     data: Optional[Dict] = None) -> Entity:
-        """Spawn an entity in the world"""
+                    size: Vector3, velocity: Vector3 = None) -> int:
+        """Spawn a new entity in the world."""
         entity_id = self.next_entity_id
         self.next_entity_id += 1
 
-        entity = Entity(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            position=position,
-            data=data or {}
-        )
+        ground_height = self.terrain.get_height_at(position.x, position.z)
+        position.y = max(position.y, ground_height)
 
-        chunk_key = self.get_chunk_key(position.x, position.z)
-        if chunk_key in self.chunks:
-            self.chunks[chunk_key].add_entity(entity)
-
+        entity = Entity(entity_id, entity_type, position, size, velocity)
         self.entities[entity_id] = entity
-        return entity
+        return entity_id
 
-    def move_player(self, dx: float, dy: float, dz: float) -> None:
-        """Move player"""
-        self.player_position.x += dx
-        self.player_position.y += dy
-        self.player_position.z += dz
-
-    def update(self, delta_time: float) -> None:
-        """Update engine state"""
-        self.current_time += delta_time
+    def update(self, delta_time: float):
+        """Update world state."""
+        self.total_time += delta_time
         self.frame_count += 1
 
-        self.update_view()
-
-        for chunk in self.chunks.values():
-            chunk.update(delta_time)
-
         for entity in self.entities.values():
-            entity.update(delta_time)
+            if entity.is_active:
+                entity.update(delta_time)
 
-    def get_stats(self) -> Dict:
-        """Get engine statistics"""
-        loaded_chunks = sum(1 for c in self.chunks.values() if c.state == ChunkState.LOADED)
-        total_entities = len(self.entities)
-        chunk_entities = sum(len(c.entities) for c in self.chunks.values())
+                ground_height = self.terrain.get_height_at(entity.position.x, entity.position.z)
+                if entity.position.y < ground_height:
+                    entity.position.y = ground_height
+                    entity.velocity.y = 0
 
+        self.collision_events = self.collision_system.resolve_collisions(
+            list(self.entities.values())
+        )
+
+    def get_visible_entities(self, camera_position: Vector3) -> List[Entity]:
+        """Get entities within render distance of camera."""
+        visible = []
+        for entity in self.entities.values():
+            if entity.is_active:
+                distance = camera_position.distance_to(entity.position)
+                if distance <= self.render_distance:
+                    visible.append(entity)
+        return visible
+
+    def serialize_state(self, camera_position: Vector3) -> Dict:
+        """Serialize world state to JSON-compatible format."""
+        visible_entities = self.get_visible_entities(camera_position)
         return {
-            "frame_count": self.frame_count,
-            "current_time": round(self.current_time, 3),
-            "player_position": self.player_position.to_dict(),
-            "loaded_chunks": loaded_chunks,
-            "max_chunks": self.max_loaded_chunks,
-            "total_chunks_created": len(self.chunks),
-            "total_vertices": self.total_vertices,
-            "total_entities": total_entities,
-            "chunk_entities": chunk_entities,
-            "view_distance": self.view_distance,
-            "chunk_size": self.chunk_size
+            'timestamp': self.total_time,
+            'frame': self.frame_count,
+            'world': {
+                'width': self.width,
+                'depth': self.depth,
+                'render_distance': self.render_distance,
+                'terrain': self.terrain.serialize()
+            },
+            'entities': {
+                'total': len(self.entities),
+                'visible': len(visible_entities),
+                'list': [e.serialize() for e in visible_entities]
+            },
+            'collisions': self.collision_events,
+            'fps': self.frame_count / max(self.total_time, 0.001)
         }
 
-    def get_chunk_info(self) -> List[Dict]:
-        """Get information about all chunks"""
-        return [chunk.to_dict() for chunk in sorted(
-            self.chunks.values(),
-            key=lambda c: c.last_access_time,
-            reverse=True
-        )]
 
-    def get_loaded_chunk_keys(self) -> List[Tuple[int, int]]:
-        """Get keys of all loaded chunks"""
-        return sorted(list(self.active_chunks))
+class Camera:
+    """First-person camera controller."""
+
+    def __init__(self, position: Vector3 = None):
+        self.position = position or Vector3(50, 20, 50)
+        self.rotation = Vector3(0, 0, 0)
+        self.movement_speed = 30.0
+        self.rotation_speed = 1.5
+
+    def move_forward(self, delta_time: float):
+        """Move camera forward."""
+        forward = Vector3(
+            math.sin(self.rotation.y),
+            0,
+            math.cos(self.rotation.y)
+        ).normalize()
+        self.position = self.position + forward * self.movement_speed * delta_time
+
+    def move_backward(self, delta_time: float):
+        """Move camera backward."""
+        forward = Vector3(
+            math.sin(self.rotation.y),
+            0,
+            math.cos(self.rotation.y)
+        ).normalize()
+        self.position = self.position + forward * (-self.movement_speed * delta_time)
+
+    def move_left(self, delta_time: float):
+        """Move camera left."""
+        right = Vector3(
+            math.cos(self.rotation.y),
+            0,
+            -math.sin(self.rotation.y)
+        ).normalize()
+        self.position = self.position + right * (-self.movement_speed * delta_time)
+
+    def move_right(self, delta_time: float):
+        """Move camera right."""
+        right = Vector3(
+            math.cos(self.rotation.y),
+            0,
+            -math.sin(self.rotation.y)
+        ).normalize()
+        self.position = self.position + right * (self.movement_speed * delta_time)
+
+    def move_up(self, delta_time: float):
+        """Move camera up."""
+        self.position.y += self.movement_speed * delta_time
+
+    def move_down(self, delta_time: float):
+        """Move camera down."""
+        self.position.y -= self.movement_speed * delta_time
+
+    def rotate_horizontal(self, amount: float):
+        """Rotate camera horizontally."""
+        self.rotation.y += amount * self.rotation_speed
+
+    def rotate_vertical(self, amount: float):
+        """Rotate camera vertically."""
+        self.rotation.x += amount * self.rotation_speed
+        self.rotation.x = max(-math.pi/2, min(math.pi/2, self.rotation.x))
+
+    def serialize(self) -> Dict:
+        """Serialize camera state."""
+        return {
+            'position': {'x': self.position.x, 'y': self.position.y, 'z': self.position.z},
+            'rotation': {'x': self.rotation.x, 'y': self.rotation.y, 'z': self.rotation.z}
+        }
 
 
-def simulate_gameplay(engine: N64Engine, duration: float = 10.0,
-                      delta_time: float = 0.016) -> List[Dict]:
-    """Simulate gameplay and return statistics snapshots"""
-    snapshots = []
-    elapsed = 0.0
+class GameEngine:
+    """Main game engine orchestrator."""
 
-    while elapsed < duration:
-        # Simulate player movement
-        movement_speed = 30.0
-        angle = (elapsed % (2 * math.pi))
-        dx = math.cos(angle) * movement_speed * delta_time
-        dz = math.sin(angle) * movement_speed * delta_time
+    def __init__(self, world_width: int = 100, world_depth: int = 100,
+                 target_fps: int = 60):
+        self.world = World(world_width, world_depth)
+        self.camera = Camera()
+        self.target_fps = target_fps
+        self.frame_time = 1.0 / target_fps
+        self.is_running = False
+        self.stats = {
+            'frames': 0,
+            'total_time': 0,
+            'collisions': 0
+        }
 
-        engine.move_player(dx, 0, dz)
-        engine.update(delta_time)
+    def initialize(self):
+        """Initialize game world with test entities."""
+        self.spawn_player(Vector3(50, 0, 50))
 
-        elapsed += delta_time
+        for i in range(5):
+            self.world.spawn_entity(
+                EntityType.NPC,
+                Vector3(30 + i*10, 0, 30),
+                Vector3(2, 4, 2),
+                Vector3(5 + i*2, 0, 0)
+            )
 
-        if int(elapsed * 60) % 6 == 0:
-            snapshots.append(engine.get_stats())
+        for i in range(10):
+            self.world.spawn_entity(
+                EntityType.COLLECTIBLE,
+                Vector3(20 + (i % 5)*15, 0, 20 + (i // 5)*20),
+                Vector3(1, 1, 1)
+            )
 
-    return snapshots
+        for i in range(3):
+            self.world.spawn_entity(
+                EntityType.DYNAMIC,
+                Vector3(60 + i*15, 0, 60),
+                Vector3(3, 3, 3),
+                Vector3(0, 0, 10 - i*5)
+            )
+
+    def spawn_player(self, position: Vector3) -> int:
+        """Spawn player entity."""
+        return self.world.spawn_entity(
+            EntityType.PLAYER,
+            position,
+            Vector3(2, 4, 2)
+        )
+
+    def update(self, delta_time: float, input_state: Dict[str, bool]):
+        """Update game state."""
+        if input_state.get('w'):
+            self.camera.move_forward(delta_time)
+        if input_state.get('s'):
+            self.camera.move_backward(delta_time)
+        if input_state.get('a'):
+            self.camera.move_left(delta_time)
+        if input_state.get('d'):
+            self.camera.move_right(delta_time)
+        if input_state.get('space'):
+            self.camera.move_up(delta_time)
+        if input_state.get('ctrl'):
+            self.camera.move_down(delta_time)
+
+        self.world.update(delta_time)
+        self.stats['frames'] += 1
+        self.stats['total_time'] += delta_time
+        self.stats['collisions'] += len(self.world.collision_events)
+
+    def run_frame(self, delta_time: float, input_state: Dict[str, bool] = None) -> Dict:
+        """Run a single frame."""
+        if input_state is None:
+            input_state = {}
+
+        self.update(delta_time, input_state)
+
+        state = self.world.serialize_state(self.camera.position)
+        state['camera'] = self.camera.serialize()
+        state['stats'] = {
+            'total_frames': self.stats['frames'],
+            'total_time': self.stats['total_time'],
+            'total_collisions': self.stats['collisions'],
+            'avg_fps': self.stats['frames'] / max(self.stats['total_time'], 0.001)
+        }
+
+        return state
 
 
 def main():
-    """Main CLI interface"""
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="N64 Open-World Engine Core Implementation"
+        description='N64 Open-World Engine - Core Functionality'
     )
-    parser.add_argument(
-        "--max-chunks",
-        type=int,
-        default=16,
-        help="Maximum number of loaded chunks (default: 16)"
-    )
-    parser.add_argument(
-        "--chunk-size",
-        type=float,
-        default=64.0,
-        help="Size of each chunk in world units (default: 64.0)"
-    )
-    parser.add_argument(
-        "--view-distance",
-        type=float,
-        default=192.0,
-        help="View distance in world units (default: 192.0)"
-    )
-    parser.add_argument(
-        "--terrain-seed",
-        type=int,
-        default=42,
-        help="Random seed for terrain generation (default: 42)"
-    )
-    parser.add_argument(
-        "--duration",
-        type=float,
-        default=10.0,
-        help="Simulation duration in seconds (default: 10.0)"
-    )
-    parser.add_argument(
-        "--output-json",
-        action="store_true",
-        help="Output results as JSON"
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Verbose output with detailed statistics"
-    )
+    parser.add_argument('--world-width', type=int, default=100,
+                       help='World width in units')
+    parser.add_argument('--world-depth', type=int, default=100,
+                       help='World depth in units')
+    parser.add_argument('--target-fps', type=int, default=60,
+                       help='Target frames per second')
+    parser.add_argument('--duration', type=float,
+help='Simulation duration in seconds')
+    parser.add_argument('--output', type=str, default=None,
+                       help='Output JSON file for final state')
+    parser.add_argument('--frames', type=int, default=300,
+                       help='Number of frames to simulate')
+    parser.add_argument('--render-distance', type=float, default=50.0,
+                       help='Camera render distance')
+    parser.add_argument('--verbose', action='store_true',
+                       help='Enable verbose output')
 
     args = parser.parse_args()
 
-    engine = N64Engine(
-        max_loaded_chunks=args.max_chunks,
-        chunk_size=args.chunk_size,
-        view_distance=args.view_distance,
-        terrain_seed=args.terrain_seed
+    engine = GameEngine(
+        world_width=args.world_width,
+        world_depth=args.world_depth,
+        target_fps=args.target_fps
     )
+    engine.world.render_distance = args.render_distance
+    engine.initialize()
 
-    snapshots = simulate_gameplay(engine, duration=args.duration)
+    frame_time = 1.0 / args.target_fps
+    states = []
 
-    if args.output_json:
-        result = {
-            "config": {
-                "max_chunks": args.max_chunks,
-                "chunk_size": args.chunk_size,
-                "view_distance": args.view_distance,
-                "terrain_seed": args.terrain_seed,
-                "duration": args.duration
-            },
-            "snapshots": snapshots,
-            "final_stats": engine.get_stats(),
-            "chunk_info": engine.get_chunk_info()
+    print(f"Starting N64 Open-World Engine simulation")
+    print(f"  World size: {args.world_width}x{args.world_depth}")
+    print(f"  Target FPS: {args.target_fps}")
+    print(f"  Simulation frames: {args.frames}")
+    print(f"  Render distance: {args.render_distance}")
+    print()
+
+    for frame_num in range(args.frames):
+        input_state = {
+            'w': frame_num % 60 < 30,
+            'a': frame_num % 120 < 60,
+            'd': frame_num % 180 > 90,
+            'space': frame_num % 200 > 100,
         }
-        print(json.dumps(result, indent=2))
+
+        state = engine.run_frame(frame_time, input_state)
+        states.append(state)
+
+        if args.verbose and frame_num % 30 == 0:
+            print(f"Frame {frame_num}: "
+                  f"Entities={state['entities']['visible']}/{state['entities']['total']}, "
+                  f"Collisions={len(state['collisions'])}, "
+                  f"FPS={state['stats']['avg_fps']:.1f}, "
+                  f"Camera=({state['camera']['position']['x']:.1f}, "
+                  f"{state['camera']['position']['y']:.1f}, "
+                  f"{state['camera']['position']['z']:.1f})")
+
+    print()
+    print("Simulation Statistics:")
+    print(f"  Total frames: {engine.stats['frames']}")
+    print(f"  Total time: {engine.stats['total_time']:.2f}s")
+    print(f"  Total collisions: {engine.stats['collisions']}")
+    print(f"  Average FPS: {engine.stats['frames'] / max(engine.stats['total_time'], 0.001):.1f}")
+    print(f"  Final entities: {len(engine.world.entities)}")
+    print(f"  Active entities: {sum(1 for e in engine.world.entities.values() if e.is_active)}")
+
+    final_state = states[-1] if states else engine.run_frame(frame_time)
+
+    output_data = {
+        'engine_config': {
+            'world_width': args.world_width,
+            'world_depth': args.world_depth,
+            'target_fps': args.target_fps,
+            'render_distance': args.render_distance,
+            'total_frames_simulated': args.frames
+        },
+        'final_state': final_state,
+        'statistics': {
+            'total_frames': engine.stats['frames'],
+            'total_time_seconds': engine.stats['total_time'],
+            'total_collisions': engine.stats['collisions'],
+            'average_fps': engine.stats['frames'] / max(engine.stats['total_time'], 0.001),
+            'final_entity_count': len(engine.world.entities),
+            'final_active_entities': sum(1 for e in engine.world.entities.values() if e.is_active)
+        }
+    }
+
+    if args.output:
+        with open(args.output, 'w') as f:
+            json.dump(output_data, f, indent=2)
+        print(f"\nFinal state saved to {args.output}")
     else:
-        print("\n" + "="*70)
-        print("N64 OPEN-WORLD ENGINE - SIMULATION COMPLETE")
-        print("="*70 + "\n")
+        print("\nFinal State (JSON):")
+        print(json.dumps(output_data, indent=2)[:1000] + "...")
 
-        final_stats = engine.get_stats()
-        print("Final Statistics:")
-        print(f"  Frames Rendered: {final_stats['frame_count']}")
-        print(f"  Simulation Time: {final_stats['current_time']:.2f}s")
-        print(f"  Player Position: ({final_stats['player_position']['x']:.1f}, "
-              f"{final_stats['player_position']['y']:.1f}, "
-              f"{final_stats['player_position']['z']:.1f})")
-        print(f"  Loaded Chunks: {final_stats['loaded_chunks']}/{final_stats['max_chunks']}")
-        print(f"  Total Vertices Loaded: {final_stats['total_vertices']}")
-        print(f"  Total Entities: {final_stats['total_entities']}")
-        print()
+    return 0
 
-        if args.verbose:
-            print("Chunk Details:")
-            for chunk_info in engine.get_chunk_info():
-                if chunk_info['state'] == 'LOADED':
-                    print(f"  Chunk ({chunk_info['chunk_x']}, {chunk_info['chunk_z']}): "
-                          f"{chunk_info['entity_count']} entities, "
-                          f"load_time={chunk_info['load_time']*1000:.2f}ms")
-            print()
 
-        print("Snapshots (every 6 frames):")
-        for i, snapshot in enumerate(snapshots):
-            print(f"  Frame {snapshot['frame_count']:3d}: "
-                  f"chunks={snapshot['loaded_chunks']}, "
+if __name__ == "__main__":
+    sys.exit(main())
