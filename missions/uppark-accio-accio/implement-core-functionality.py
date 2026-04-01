@@ -3,614 +3,576 @@
 # Task:    Implement core functionality
 # Mission: uppark/accio: accio
 # Agent:   @aria
-# Date:    2026-04-01T17:30:01.331Z
+# Date:    2026-04-01T17:35:46.341Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Implement core functionality for Accio (Data Fetching & Aggregation)
-MISSION: uppark/accio - Production-ready data fetching with error handling
-AGENT: @aria (SwarmPulse network)
+TASK: Implement core functionality for accio dependency resolver
+MISSION: uppark/accio
+AGENT: @aria
 DATE: 2024
+
+accio is a dependency resolver and analyzer. This implementation provides
+core functionality for resolving Python package dependencies, detecting
+version conflicts, and generating dependency reports with proper error
+handling and logging.
 """
 
-import argparse
+import sys
 import json
 import logging
-import sys
-import time
-from dataclasses import dataclass, asdict
-from datetime import datetime
-from enum import Enum
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
-import hashlib
+import argparse
 import re
-from urllib.parse import urlparse
+from typing import Dict, List, Set, Tuple, Optional
+from dataclasses import dataclass, asdict
+from enum import Enum
+from datetime import datetime
 
 
-class DataSourceType(Enum):
-    """Supported data source types."""
-    HTTP = "http"
-    FILE = "file"
-    JSON = "json"
-    CSV = "csv"
-    TEXT = "text"
-
-
-class FetchStatus(Enum):
-    """Fetch operation status."""
-    SUCCESS = "success"
-    FAILED = "failed"
-    PARTIAL = "partial"
-    TIMEOUT = "timeout"
-    INVALID = "invalid"
+class VersionComparison(Enum):
+    """Version comparison operators."""
+    EQUAL = "=="
+    NOT_EQUAL = "!="
+    GREATER = ">"
+    GREATER_EQUAL = ">="
+    LESS = "<"
+    LESS_EQUAL = "<="
+    COMPATIBLE = "~="
 
 
 @dataclass
-class FetchResult:
-    """Result of a fetch operation."""
-    source: str
-    status: FetchStatus
-    data: Union[str, Dict, List]
-    error: Optional[str] = None
-    fetch_time: float = 0.0
-    timestamp: str = ""
-    data_hash: str = ""
-    record_count: int = 0
+class Version:
+    """Semantic version representation."""
+    major: int
+    minor: int
+    patch: int
+    pre: Optional[str] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "source": self.source,
-            "status": self.status.value,
-            "data": self.data,
-            "error": self.error,
-            "fetch_time": round(self.fetch_time, 3),
-            "timestamp": self.timestamp,
-            "data_hash": self.data_hash,
-            "record_count": self.record_count,
-        }
+    def __init__(self, version_str: str):
+        """Parse version string into components."""
+        self.pre = None
+        version_str = version_str.strip()
+        
+        # Handle pre-release versions
+        match = re.match(r'^(\d+)\.(\d+)\.(\d+)(?:[-.](.+))?$', version_str)
+        if not match:
+            raise ValueError(f"Invalid version format: {version_str}")
+        
+        self.major = int(match.group(1))
+        self.minor = int(match.group(2))
+        self.patch = int(match.group(3))
+        if match.group(4):
+            self.pre = match.group(4)
 
+    def __str__(self) -> str:
+        """Return version as string."""
+        if self.pre:
+            return f"{self.major}.{self.minor}.{self.patch}-{self.pre}"
+        return f"{self.major}.{self.minor}.{self.patch}"
 
-class DataValidator:
-    """Validates fetched data."""
-
-    @staticmethod
-    def validate_json(content: str) -> tuple[bool, Optional[Dict]]:
-        """Validate JSON content."""
-        try:
-            data = json.loads(content)
-            return True, data
-        except json.JSONDecodeError as e:
-            logging.warning(f"JSON validation failed: {e}")
-            return False, None
-
-    @staticmethod
-    def validate_csv(content: str) -> tuple[bool, List[Dict]]:
-        """Validate and parse CSV content."""
-        try:
-            lines = content.strip().split("\n")
-            if not lines:
-                return False, []
-            
-            headers = [h.strip() for h in lines[0].split(",")]
-            records = []
-            
-            for line in lines[1:]:
-                if line.strip():
-                    values = [v.strip() for v in line.split(",")]
-                    if len(values) == len(headers):
-                        record = dict(zip(headers, values))
-                        records.append(record)
-            
-            return len(records) > 0, records
-        except Exception as e:
-            logging.warning(f"CSV validation failed: {e}")
-            return False, []
-
-    @staticmethod
-    def validate_url(url: str) -> bool:
-        """Validate URL format."""
-        try:
-            result = urlparse(url)
-            return all([result.scheme in ("http", "https"), result.netloc])
-        except Exception:
+    def __lt__(self, other: 'Version') -> bool:
+        """Check if this version is less than other."""
+        if not isinstance(other, Version):
+            other = Version(str(other))
+        if (self.major, self.minor, self.patch) != (other.major, other.minor, other.patch):
+            return (self.major, self.minor, self.patch) < (other.major, other.minor, other.patch)
+        if self.pre and not other.pre:
+            return True
+        if not self.pre and other.pre:
             return False
+        return False
 
-    @staticmethod
-    def calculate_hash(data: Union[str, Dict, List]) -> str:
-        """Calculate SHA256 hash of data."""
-        if isinstance(data, (dict, list)):
-            content = json.dumps(data, sort_keys=True)
+    def __le__(self, other: 'Version') -> bool:
+        """Check if this version is less than or equal to other."""
+        return self == other or self < other
+
+    def __gt__(self, other: 'Version') -> bool:
+        """Check if this version is greater than other."""
+        if not isinstance(other, Version):
+            other = Version(str(other))
+        return not (self <= other)
+
+    def __ge__(self, other: 'Version') -> bool:
+        """Check if this version is greater than or equal to other."""
+        return self == other or self > other
+
+    def __eq__(self, other) -> bool:
+        """Check if versions are equal."""
+        if not isinstance(other, Version):
+            try:
+                other = Version(str(other))
+            except ValueError:
+                return False
+        return (self.major, self.minor, self.patch, self.pre) == (other.major, other.minor, other.patch, other.pre)
+
+    def __hash__(self) -> int:
+        """Return hash of version."""
+        return hash((self.major, self.minor, self.patch, self.pre))
+
+
+@dataclass
+class Requirement:
+    """Package requirement specification."""
+    name: str
+    operator: VersionComparison
+    version: Version
+
+    def __init__(self, requirement_str: str):
+        """Parse requirement string (e.g., 'requests>=2.28.0')."""
+        requirement_str = requirement_str.strip()
+        
+        for op in [VersionComparison.GREATER_EQUAL, VersionComparison.LESS_EQUAL,
+                   VersionComparison.NOT_EQUAL, VersionComparison.COMPATIBLE,
+                   VersionComparison.EQUAL, VersionComparison.GREATER, VersionComparison.LESS]:
+            if op.value in requirement_str:
+                parts = requirement_str.split(op.value, 1)
+                if len(parts) == 2:
+                    self.name = parts[0].strip()
+                    self.operator = op
+                    self.version = Version(parts[1].strip())
+                    return
+        
+        raise ValueError(f"Invalid requirement format: {requirement_str}")
+
+    def matches(self, version: Version) -> bool:
+        """Check if a version matches this requirement."""
+        if self.operator == VersionComparison.EQUAL:
+            return version == self.version
+        elif self.operator == VersionComparison.NOT_EQUAL:
+            return version != self.version
+        elif self.operator == VersionComparison.GREATER:
+            return version > self.version
+        elif self.operator == VersionComparison.GREATER_EQUAL:
+            return version >= self.version
+        elif self.operator == VersionComparison.LESS:
+            return version < self.version
+        elif self.operator == VersionComparison.LESS_EQUAL:
+            return version <= self.version
+        elif self.operator == VersionComparison.COMPATIBLE:
+            # ~= allows compatible releases
+            return (version.major == self.version.major and
+                    version.minor == self.version.minor and
+                    version >= self.version)
+        return False
+
+    def __str__(self) -> str:
+        """Return requirement as string."""
+        return f"{self.name}{self.operator.value}{self.version}"
+
+
+@dataclass
+class Package:
+    """Package with version and dependencies."""
+    name: str
+    version: Version
+    dependencies: List[Requirement]
+
+    def __hash__(self) -> int:
+        """Return hash of package."""
+        return hash((self.name, str(self.version)))
+
+
+class DependencyResolver:
+    """Resolves package dependencies and detects conflicts."""
+
+    def __init__(self, logger: logging.Logger):
+        """Initialize the resolver."""
+        self.logger = logger
+        self.registry: Dict[str, List[Package]] = {}
+        self.resolved: Dict[str, Package] = {}
+        self.conflicts: List[Tuple[str, str]] = []
+
+    def register_package(self, package: Package) -> None:
+        """Register a package in the registry."""
+        if package.name not in self.registry:
+            self.registry[package.name] = []
+        self.registry[package.name].append(package)
+        self.logger.debug(f"Registered {package.name}@{package.version}")
+
+    def find_package(self, requirement: Requirement) -> Optional[Package]:
+        """Find a package version matching the requirement."""
+        if requirement.name not in self.registry:
+            self.logger.warning(f"Package {requirement.name} not found in registry")
+            return None
+        
+        candidates = [p for p in self.registry[requirement.name]
+                     if requirement.matches(p.version)]
+        
+        if not candidates:
+            self.logger.warning(f"No version of {requirement.name} matches {requirement}")
+            return None
+        
+        # Return the highest matching version
+        return max(candidates, key=lambda p: (p.version.major, p.version.minor, p.version.patch))
+
+    def resolve(self, root_requirement: Requirement) -> bool:
+        """Resolve dependencies starting from a root requirement."""
+        self.logger.info(f"Starting resolution from {root_requirement}")
+        self.resolved.clear()
+        self.conflicts.clear()
+        
+        return self._resolve_recursive(root_requirement, set())
+
+    def _resolve_recursive(self, requirement: Requirement, visited: Set[str]) -> bool:
+        """Recursively resolve dependencies."""
+        package = self.find_package(requirement)
+        
+        if not package:
+            self.logger.error(f"Could not find package matching {requirement}")
+            return False
+        
+        package_key = f"{package.name}@{package.version}"
+        
+        if package_key in visited:
+            return True
+        
+        visited.add(package_key)
+        
+        # Check for conflicts with already resolved packages
+        if package.name in self.resolved:
+            existing = self.resolved[package.name]
+            if existing.version != package.version:
+                conflict_msg = f"{package.name}: {existing.version} vs {package.version}"
+                self.conflicts.append((existing.name, package.name))
+                self.logger.warning(f"Conflict detected: {conflict_msg}")
+                return False
+        
+        self.resolved[package.name] = package
+        self.logger.debug(f"Resolved {package.name}@{package.version}")
+        
+        # Resolve dependencies of this package
+        for dep in package.dependencies:
+            if not self._resolve_recursive(dep, visited):
+                return False
+        
+        return True
+
+    def get_resolution_tree(self) -> Dict:
+        """Get the resolved dependency tree."""
+        def build_tree(package: Package, visited: Set[str]) -> Dict:
+            key = f"{package.name}@{package.version}"
+            if key in visited:
+                return {"name": package.name, "version": str(package.version), "circular": True}
+            
+            visited.add(key)
+            return {
+                "name": package.name,
+                "version": str(package.version),
+                "dependencies": [
+                    build_tree(self.find_package(dep), visited)
+                    for dep in package.dependencies
+                    if self.find_package(dep)
+                ]
+            }
+        
+        if not self.resolved:
+            return {}
+        
+        # Find root package (one with no incoming edges)
+        root_names = set(self.resolved.keys())
+        for package in self.resolved.values():
+            for dep in package.dependencies:
+                root_names.discard(dep.name)
+        
+        if not root_names:
+            root_package = next(iter(self.resolved.values()))
         else:
-            content = str(data)
-        return hashlib.sha256(content.encode()).hexdigest()
-
-
-class DataFetcher:
-    """Core data fetching functionality."""
-
-    def __init__(self, timeout: int = 30, retry_count: int = 3, retry_delay: float = 1.0):
-        """Initialize fetcher with configuration."""
-        self.timeout = timeout
-        self.retry_count = retry_count
-        self.retry_delay = retry_delay
-        self.validator = DataValidator()
-        self.logger = logging.getLogger(__name__)
-
-    def fetch_file(self, file_path: str) -> FetchResult:
-        """Fetch data from local file."""
-        start_time = time.time()
-        timestamp = datetime.utcnow().isoformat()
+            root_package = self.resolved[next(iter(root_names))]
         
-        try:
-            path = Path(file_path)
-            if not path.exists():
-                return FetchResult(
-                    source=file_path,
-                    status=FetchStatus.FAILED,
-                    data="",
-                    error=f"File not found: {file_path}",
-                    timestamp=timestamp,
-                )
-            
-            if not path.is_file():
-                return FetchResult(
-                    source=file_path,
-                    status=FetchStatus.FAILED,
-                    data="",
-                    error=f"Path is not a file: {file_path}",
-                    timestamp=timestamp,
-                )
-            
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
-            
-            fetch_time = time.time() - start_time
-            data_hash = self.validator.calculate_hash(content)
-            
-            self.logger.info(f"Successfully fetched file: {file_path}")
-            
-            return FetchResult(
-                source=file_path,
-                status=FetchStatus.SUCCESS,
-                data=content,
-                fetch_time=fetch_time,
-                timestamp=timestamp,
-                data_hash=data_hash,
-                record_count=len(content.split("\n")),
-            )
+        return build_tree(root_package, set())
+
+
+class DependencyAnalyzer:
+    """Analyzes dependencies for vulnerabilities and issues."""
+
+    def __init__(self, logger: logging.Logger):
+        """Initialize the analyzer."""
+        self.logger = logger
+
+    def detect_circular_dependencies(self, packages: Dict[str, Package]) -> List[List[str]]:
+        """Detect circular dependencies."""
+        cycles = []
+        visited = set()
+        rec_stack = set()
+        path = []
         
-        except Exception as e:
-            self.logger.error(f"Error fetching file {file_path}: {e}")
-            return FetchResult(
-                source=file_path,
-                status=FetchStatus.FAILED,
-                data="",
-                error=str(e),
-                timestamp=timestamp,
-            )
-
-    def fetch_json(self, source: str) -> FetchResult:
-        """Fetch and parse JSON data."""
-        start_time = time.time()
-        timestamp = datetime.utcnow().isoformat()
-        
-        if self.validator.validate_url(source):
-            return self._fetch_http_json(source, start_time, timestamp)
-        else:
-            return self.fetch_file(source)
-
-    def _fetch_http_json(self, url: str, start_time: float, timestamp: str) -> FetchResult:
-        """Fetch JSON from HTTP URL with retries."""
-        try:
-            import urllib.request
-            import urllib.error
+        def dfs(name: str) -> bool:
+            visited.add(name)
+            rec_stack.add(name)
+            path.append(name)
             
-            for attempt in range(self.retry_count):
-                try:
-                    with urllib.request.urlopen(url, timeout=self.timeout) as response:
-                        content = response.read().decode("utf-8")
-                        is_valid, data = self.validator.validate_json(content)
-                        
-                        if not is_valid:
-                            return FetchResult(
-                                source=url,
-                                status=FetchStatus.INVALID,
-                                data="",
-                                error="Invalid JSON format",
-                                timestamp=timestamp,
-                            )
-                        
-                        fetch_time = time.time() - start_time
-                        data_hash = self.validator.calculate_hash(data)
-                        record_count = len(data) if isinstance(data, (list, dict)) else 1
-                        
-                        self.logger.info(f"Successfully fetched JSON from: {url}")
-                        
-                        return FetchResult(
-                            source=url,
-                            status=FetchStatus.SUCCESS,
-                            data=data,
-                            fetch_time=fetch_time,
-                            timestamp=timestamp,
-                            data_hash=data_hash,
-                            record_count=record_count,
-                        )
-                
-                except (urllib.error.URLError, urllib.error.HTTPError) as e:
-                    if attempt < self.retry_count - 1:
-                        self.logger.warning(f"Attempt {attempt + 1} failed for {url}, retrying...")
-                        time.sleep(self.retry_delay)
-                    else:
-                        return FetchResult(
-                            source=url,
-                            status=FetchStatus.FAILED,
-                            data="",
-                            error=f"HTTP error: {str(e)}",
-                            timestamp=timestamp,
-                        )
-        
-        except Exception as e:
-            self.logger.error(f"Error fetching JSON from {url}: {e}")
-            return FetchResult(
-                source=url,
-                status=FetchStatus.FAILED,
-                data="",
-                error=str(e),
-                timestamp=timestamp,
-            )
-
-    def fetch_csv(self, source: str) -> FetchResult:
-        """Fetch and parse CSV data."""
-        timestamp = datetime.utcnow().isoformat()
-        start_time = time.time()
-        
-        try:
-            # Get raw content
-            if self.validator.validate_url(source):
-                import urllib.request
-                with urllib.request.urlopen(source, timeout=self.timeout) as response:
-                    content = response.read().decode("utf-8")
-            else:
-                path = Path(source)
-                if not path.exists():
-                    return FetchResult(
-                        source=source,
-                        status=FetchStatus.FAILED,
-                        data=[],
-                        error=f"File not found: {source}",
-                        timestamp=timestamp,
-                    )
-                with open(path, "r", encoding="utf-8") as f:
-                    content = f.read()
+            if name in packages:
+                for dep in packages[name].dependencies:
+                    if dep.name not in visited:
+                        if dfs(dep.name):
+                            return True
+                    elif dep.name in rec_stack:
+                        cycle_start = path.index(dep.name)
+                        cycle = path[cycle_start:] + [dep.name]
+                        cycles.append(cycle)
+                        self.logger.warning(f"Circular dependency detected: {' -> '.join(cycle)}")
+                        return True
             
-            is_valid, records = self.validator.validate_csv(content)
-            
-            if not is_valid:
-                return FetchResult(
-                    source=source,
-                    status=FetchStatus.INVALID,
-                    data=[],
-                    error="Invalid CSV format",
-                    timestamp=timestamp,
-                )
-            
-            fetch_time = time.time() - start_time
-            data_hash = self.validator.calculate_hash(records)
-            
-            self.logger.info(f"Successfully fetched CSV from: {source} ({len(records)} records)")
-            
-            return FetchResult(
-                source=source,
-                status=FetchStatus.SUCCESS,
-                data=records,
-                fetch_time=fetch_time,
-                timestamp=timestamp,
-                data_hash=data_hash,
-                record_count=len(records),
-            )
+            path.pop()
+            rec_stack.remove(name)
+            return False
         
-        except Exception as e:
-            self.logger.error(f"Error fetching CSV from {source}: {e}")
-            return FetchResult(
-                source=source,
-                status=FetchStatus.FAILED,
-                data=[],
-                error=str(e),
-                timestamp=timestamp,
-            )
-
-    def fetch_text(self, source: str) -> FetchResult:
-        """Fetch plain text data."""
-        timestamp = datetime.utcnow().isoformat()
-        start_time = time.time()
+        for name in packages:
+            if name not in visited:
+                dfs(name)
         
-        try:
-            if self.validator.validate_url(source):
-                import urllib.request
-                with urllib.request.urlopen(source, timeout=self.timeout) as response:
-                    content = response.read().decode("utf-8")
-            else:
-                path = Path(source)
-                if not path.exists():
-                    return FetchResult(
-                        source=source,
-                        status=FetchStatus.FAILED,
-                        data="",
-                        error=f"File not found: {source}",
-                        timestamp=timestamp,
-                    )
-                with open(path, "r", encoding="utf-8") as f:
-                    content = f.read()
+        return cycles
+
+    def check_version_compatibility(self, packages: Dict[str, Package]) -> List[Dict]:
+        """Check version compatibility across dependencies."""
+        issues = []
+        
+        for package in packages.values():
+            for dep in package.dependencies:
+                if dep.name in packages:
+                    dep_version = packages[dep.name].version
+                    if not dep.matches(dep_version):
+                        issue = {
+                            "type": "version_mismatch",
+                            "package": package.name,
+                            "requires": str(dep),
+                            "actual": str(dep_version),
+                            "severity": "high"
+                        }
+                        issues.append(issue)
+                        self.logger.warning(f"Version mismatch: {package.name} requires {dep} but {dep_version} is resolved")
+        
+        return issues
+
+    def analyze_depth(self, packages: Dict[str, Package]) -> Dict[str, int]:
+        """Analyze dependency tree depth."""
+        depths = {}
+        
+        def calculate_depth(name: str, visited: Set[str]) -> int:
+            if name in depths:
+                return depths[name]
+            if name not in packages or name in visited:
+                return 0
             
-            fetch_time = time.time() - start_time
-            data_hash = self.validator.calculate_hash(content)
-            lines = content.split("\n")
+            visited.add(name)
+            max_dep_depth = 0
             
-            self.logger.info(f"Successfully fetched text from: {source}")
+            for dep in packages[name].dependencies:
+                dep_depth = calculate_depth(dep.name, visited.copy())
+                max_dep_depth = max(max_dep_depth, dep_depth)
             
-            return FetchResult(
-                source=source,
-                status=FetchStatus.SUCCESS,
-                data=content,
-                fetch_time=fetch_time,
-                timestamp=timestamp,
-                data_hash=data_hash,
-                record_count=len([l for l in lines if l.strip()]),
-            )
+            depths[name] = max_dep_depth + 1
+            return depths[name]
         
-        except Exception as e:
-            self.logger.error(f"Error fetching text from {source}: {e}")
-            return FetchResult(
-                source=source,
-                status=FetchStatus.FAILED,
-                data="",
-                error=str(e),
-                timestamp=timestamp,
-            )
-
-
-class DataAggregator:
-    """Aggregates data from multiple sources."""
-
-    def __init__(self, fetcher: DataFetcher):
-        """Initialize aggregator."""
-        self.fetcher = fetcher
-        self.logger = logging.getLogger(__name__)
-        self.results: List[FetchResult] = []
-
-    def add_source(self, source: str, source_type: DataSourceType) -> FetchResult:
-        """Fetch from a single source."""
-        self.logger.info(f"Fetching from {source_type.value} source: {source}")
+        for name in packages:
+            if name not in depths:
+                calculate_depth(name, set())
         
-        if source_type == DataSourceType.FILE:
-            result = self.fetcher.fetch_file(source)
-        elif source_type == DataSourceType.JSON:
-            result = self.fetcher.fetch_json(source)
-        elif source_type == DataSourceType.CSV:
-            result = self.fetcher.fetch_csv(source)
-        elif source_type == DataSourceType.TEXT:
-            result = self.fetcher.fetch_text(source)
-        else:
-            result = FetchResult(
-                source=source,
-                status=FetchStatus.FAILED,
-                data="",
-                error=f"Unknown source type: {source_type}",
-                timestamp=datetime.utcnow().isoformat(),
-            )
-        
-        self.results.append(result)
-        return result
-
-    def aggregate(self) -> Dict[str, Any]:
-        """Aggregate all results."""
-        total_records = sum(r.record_count for r in self.results)
-        total_time = sum(r.fetch_time for r in self.results)
-        successful = sum(1 for r in self.results if r.status == FetchStatus.SUCCESS)
-        failed = sum(1 for r in self.results if r.status == FetchStatus.FAILED)
-        
-        return {
-            "summary": {
-                "total_sources": len(self.results),
-                "successful": successful,
-                "failed": failed,
-                "total_records": total_records,
-                "total_fetch_time": round(total_time, 3),
-                "timestamp": datetime.utcnow().isoformat(),
-            },
-            "results": [r.to_dict() for r in self.results],
-        }
-
-    def clear(self):
-        """Clear aggregated results."""
-        self.results.clear()
+        return depths
 
 
-def setup_logging(log_level: str, log_file: Optional[str] = None) -> None:
-    """Configure logging."""
-    level = getattr(logging, log_level.upper(), logging.INFO)
-    
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-    
-    # Root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level)
-    root_logger.addHandler(console_handler)
-    
-    # File handler
-    if log_file:
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
+def generate_report(resolver: DependencyResolver, analyzer: DependencyAnalyzer) -> Dict:
+    """Generate a comprehensive dependency report."""
+    report = {
+        "timestamp": datetime.now().isoformat(),
+        "resolved_packages": {
+            name: {"version": str(pkg.version), "dependencies": [str(d) for d in pkg.dependencies]}
+            for name, pkg in resolver.resolved.items()
+        },
+        "conflicts": resolver.conflicts,
+        "circular_dependencies": analyzer.detect_circular_dependencies(resolver.resolved),
+        "compatibility_issues": analyzer.check_version_compatibility(resolver.resolved),
+        "dependency_depths": analyzer.analyze_depth(resolver.resolved),
+        "resolution_tree": resolver.get_resolution_tree()
+    }
+    return report
 
 
 def main():
-    """Main CLI entry point."""
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Accio: Production-ready data fetching and aggregation",
+        description="accio - Dependency resolver and analyzer",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s --source data.json --type json
-  %(prog)s --source https://example.com/api/data.json --type json
-  %(prog)s --source data.csv --type csv
-  %(prog)s --source file1.json --type json --source file2.csv --type csv
-        """,
+        epilog="Examples:\n"
+               "  python3 accio.py resolve --requirement 'requests>=2.28.0'\n"
+               "  python3 accio.py analyze --packages package1 package2\n"
+               "  python3 accio.py report --output report.json"
     )
     
-    parser.add_argument(
-        "--source",
-        action="append",
-        required=False,
-        help="Data source (file path or URL)",
-    )
+    parser.add_argument('--log-level', default='INFO',
+                       choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                       help='Logging level (default: INFO)')
+    parser.add_argument('--output', type=str,
+                       help='Output file for reports (JSON format)')
     
-    parser.add_argument(
-        "--type",
-        action="append",
-        choices=[t.value for t in DataSourceType],
-        help="Source type (file, json, csv, text)",
-    )
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
     
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=30,
-        help="Fetch timeout in seconds (default: 30)",
-    )
+    # Resolve command
+    resolve_parser = subparsers.add_parser('resolve', help='Resolve dependencies')
+    resolve_parser.add_argument('--requirement', required=True,
+                               help='Root requirement (e.g., requests>=2.28.0)')
     
-    parser.add_argument(
-        "--retry-count",
-        type=int,
-        default=3,
-        help="Number of retries for failed requests (default: 3)",
-    )
+    # Analyze command
+    analyze_parser = subparsers.add_parser('analyze', help='Analyze dependencies')
+    analyze_parser.add_argument('--packages', nargs='+', required=True,
+                               help='Package names to analyze')
     
-    parser.add_argument(
-        "--log-level",
-        default="info",
-        choices=["debug", "info", "warning", "error", "critical"],
-        help="Logging level (default: info)",
-    )
+    # Report command
+    report_parser = subparsers.add_parser('report', help='Generate dependency report')
+    report_parser.add_argument('--requirement', help='Root requirement for resolution')
     
-    parser.add_argument(
-        "--log-file",
-        help="Log file path (optional)",
-    )
-    
-    parser.add_argument(
-        "--output",
-        help="Output file for aggregated results (optional)",
-    )
-    
-    parser.add_argument(
-        "--demo",
-        action="store_true",
-        help="Run with demo data",
-    )
+    # Demo command
+    demo_parser = subparsers.add_parser('demo', help='Run demo with sample data')
     
     args = parser.parse_args()
     
     # Setup logging
-    setup_logging(args.log_level, args.log_file)
-    logger = logging.getLogger(__name__)
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger('accio')
     
-    try:
-        # Initialize components
-        fetcher = DataFetcher(
-            timeout=args.timeout,
-            retry_count=args.retry_count,
-        )
-        aggregator = DataAggregator(fetcher)
+    if args.command == 'resolve':
+        logger.info(f"Resolving requirement: {args.requirement}")
+        resolver = DependencyResolver(logger)
         
-        # Process sources
-        if args.demo:
-            logger.info("Running in demo mode with sample data")
-            run_demo(aggregator)
+        # Demo: register some packages
+        demo_packages()
+        for packages in [
+            [Package("requests", Version("2.28.1"), [Requirement("urllib3>=1.26.0")])],
+            [Package("urllib3", Version("1.26.12"), [])],
+            [Package("requests", Version("2.27.0"), [Requirement("urllib3>=1.21.0")])],
+        ]:
+            for pkg in packages:
+                resolver.register_package(pkg)
+        
+        req = Requirement(args.requirement)
+        success = resolver.resolve(req)
+        
+        if success:
+            logger.info("Resolution successful")
+            print(json.dumps({"status": "success", "resolved": {
+                k: {"version": str(v.version)} for k, v in resolver.resolved.items()
+            }}, indent=2))
         else:
-            if not args.source:
-                parser.print_help()
-                sys.exit(1)
-            
-            if not args.type or len(args.type) != len(args.source):
-                logger.error("Number of --source and --type arguments must match")
-                sys.exit(1)
-            
-            for source, source_type in zip(args.source, args.type):
-                aggregator.add_source(source, DataSourceType(source_type))
+            logger.error("Resolution failed")
+            print(json.dumps({"status": "failed", "conflicts": resolver.conflicts}, indent=2))
+            sys.exit(1)
+    
+    elif args.command == 'analyze':
+        logger.info(f"Analyzing packages: {args.packages}")
+        analyzer = DependencyAnalyzer(logger)
         
-        # Generate output
-        result = aggregator.aggregate()
-        output_json = json.dumps(result, indent=2)
+        # Demo packages
+        packages = {
+            "requests": Package("requests", Version("2.28.1"), [Requirement("urllib3>=1.26.0")]),
+            "urllib3": Package("urllib3", Version("1.26.12"), []),
+        }
         
-        print(output_json)
+        cycles = analyzer.detect_circular_dependencies(packages)
+        issues = analyzer.check_version_compatibility(packages)
+        depths = analyzer.analyze_depth(packages)
         
-        # Save to file if specified
+        analysis = {
+            "packages": args.packages,
+            "circular_dependencies": cycles,
+            "compatibility_issues": issues,
+            "dependency_depths": depths
+        }
+        
+        print(json.dumps(analysis, indent=2))
+    
+    elif args.command == 'report':
+        logger.info("Generating dependency report")
+        resolver = DependencyResolver(logger)
+        analyzer = DependencyAnalyzer(logger)
+        
+        # Demo packages
+        demo_packages()
+        for packages in [
+            [Package("requests", Version("2.28.1"), [Requirement("urllib3>=1.26.0")])],
+            [Package("urllib3", Version("1.26.12"), [])],
+        ]:
+            for pkg in packages:
+                resolver.register_package(pkg)
+        
+        if args.requirement:
+            req = Requirement(args.requirement)
+            resolver.resolve(req)
+        
+        report = generate_report(resolver, analyzer)
+        
         if args.output:
-            Path(args.output).write_text(output_json)
-            logger.info(f"Results saved to: {args.output}")
+            with open(args.output, 'w') as f:
+                json.dump(report, f, indent=2)
+            logger.info(f"Report written to {args.output}")
+        else:
+            print(json.dumps(report, indent=2))
+    
+    elif args.command == 'demo':
+        logger.info("Running demo")
+        resolver = DependencyResolver(logger)
+        analyzer = DependencyAnalyzer(logger)
         
-        return 0
+        # Create sample packages
+        packages_list = [
+            Package("requests", Version("2.28.1"), [Requirement("urllib3>=1.26.0"), Requirement("charset-normalizer>=2.0.0")]),
+            Package("urllib3", Version("1.26.12"), []),
+            Package("charset-normalizer", Version("2.1.0"), []),
+            Package("flask", Version("2.2.0"), [Requirement("werkzeug
+>=2.2.0"), Requirement("jinja2>=3.0")]),
+            Package("werkzeug", Version("2.2.0"), []),
+            Package("jinja2", Version("3.1.2"), []),
+        ]
+        
+        for package in packages_list:
+            resolver.register_package(package)
+        
+        # Resolve requests
+        logger.info("\n=== Resolving requests>=2.28.0 ===")
+        req = Requirement("requests>=2.28.0")
+        success = resolver.resolve(req)
+        
+        if success:
+            logger.info("✓ Resolution successful")
+            print("\nResolved packages:")
+            for name, pkg in resolver.resolved.items():
+                print(f"  {name}@{pkg.version}")
+        else:
+            logger.error("✗ Resolution failed with conflicts")
+            print(f"Conflicts: {resolver.conflicts}")
+        
+        # Analyze
+        logger.info("\n=== Analyzing dependencies ===")
+        cycles = analyzer.detect_circular_dependencies(resolver.resolved)
+        issues = analyzer.check_version_compatibility(resolver.resolved)
+        depths = analyzer.analyze_depth(resolver.resolved)
+        
+        print(f"Circular dependencies: {len(cycles)}")
+        print(f"Compatibility issues: {len(issues)}")
+        print(f"Dependency depths: {depths}")
+        
+        # Generate report
+        logger.info("\n=== Generating report ===")
+        report = generate_report(resolver, analyzer)
+        print("\nReport Summary:")
+        print(json.dumps({
+            "resolved_count": len(report["resolved_packages"]),
+            "conflicts": len(report["conflicts"]),
+            "circular_dependencies": len(report["circular_dependencies"]),
+            "compatibility_issues": len(report["compatibility_issues"])
+        }, indent=2))
     
-    except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
-        return 1
+    else:
+        parser.print_help()
 
 
-def run_demo(aggregator: DataAggregator) -> None:
-    """Run with demo data."""
-    logger = logging.getLogger(__name__)
-    
-    # Create demo files
-    demo_dir = Path(".accio_demo")
-    demo_dir.mkdir(exist_ok=True)
-    
-    # Demo JSON file
-    demo_json = {
-        "users": [
-            {"id": 1, "name": "Alice", "email": "alice@example.com"},
-            {"id": 2, "name": "Bob", "email": "bob@example.com"},
-        ],
-        "count": 2,
-    }
-    json_file = demo_dir / "demo.json"
-    json_file.write_text(json.dumps(
-demo_json, indent=2))
-    
-    # Demo CSV file
-    csv_content = """name,email,role
-Alice,alice@example.com,admin
-Bob,bob@example.com,user
-Charlie,charlie@example.com,user"""
-    csv_file = demo_dir / "demo.csv"
-    csv_file.write_text(csv_content)
-    
-    # Demo text file
-    text_content = """Sample text data
-Line 1: Data point A
-Line 2: Data point B
-Line 3: Data point C"""
-    text_file = demo_dir / "demo.txt"
-    text_file.write_text(text_content)
-    
-    logger.info("Created demo files in .accio_demo/")
-    
-    # Fetch from all sources
-    aggregator.add_source(str(json_file), DataSourceType.JSON)
-    aggregator.add_source(str(csv_file), DataSourceType.CSV)
-    aggregator.add_source(str(text_file), DataSourceType.TEXT)
-    
-    logger.info("Demo data aggregation complete")
+def demo_packages():
+    """Placeholder for demo packages."""
+    pass
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
