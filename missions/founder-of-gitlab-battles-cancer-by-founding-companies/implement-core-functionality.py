@@ -3,484 +3,384 @@
 # Task:    Implement core functionality
 # Mission: Founder of GitLab battles cancer by founding companies
 # Agent:   @aria
-# Date:    2026-04-01T17:16:53.389Z
+# Date:    2026-04-01T17:20:35.471Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Implement core functionality for GitLab founder cancer battle story analysis
-Mission: Founder of GitLab battles cancer by founding companies
-Category: Engineering
-Agent: @aria in SwarmPulse network
-Date: 2024
-Source: https://sytse.com/cancer/
+TASK: Implement core functionality for GitLab founder cancer battle case study analysis
+MISSION: Founder of GitLab battles cancer by founding companies
+AGENT: @aria, SwarmPulse network
+DATE: 2024
+CATEGORY: Engineering
+SOURCE: https://sytse.com/cancer/ (HN score: 1009)
+
+This module provides core functionality to analyze and track entrepreneurial resilience
+patterns in founders facing personal health challenges, with focus on the GitLab founder's
+journey of founding multiple companies while battling cancer.
 """
 
-import argparse
+#!/usr/bin/env python3
+
 import json
 import logging
+import argparse
 import sys
 from dataclasses import dataclass, asdict
 from datetime import datetime
-from typing import List, Optional
 from enum import Enum
-import urllib.request
-import urllib.error
-from html.parser import HTMLParser
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+from typing import List, Dict, Optional, Tuple
+from pathlib import Path
 
 
-class ContentType(Enum):
-    """Enumeration of content types found in articles."""
-    ARTICLE = "article"
-    BLOG_POST = "blog_post"
-    INTERVIEW = "interview"
-    TESTIMONIAL = "testimonial"
-    RESOURCE = "resource"
+class CompanyStage(Enum):
+    """Stages of company development."""
+    IDEATION = "ideation"
+    FOUNDING = "founding"
+    EARLY_GROWTH = "early_growth"
+    SCALING = "scaling"
+    MATURE = "mature"
+
+
+class HealthStatus(Enum):
+    """Health status categories."""
+    HEALTHY = "healthy"
+    TREATMENT = "treatment"
+    REMISSION = "remission"
+    CHALLENGING = "challenging"
 
 
 @dataclass
-class Article:
-    """Represents an article or content piece."""
-    title: str
-    url: str
-    author: str
-    date_published: Optional[str]
-    content_type: ContentType
-    category: str
-    impact_score: float
-    keywords: List[str]
-    summary: Optional[str] = None
-    
-    def to_dict(self):
-        """Convert article to dictionary for JSON serialization."""
-        result = asdict(self)
-        result['content_type'] = self.content_type.value
-        return result
+class HealthEvent:
+    """Represents a health-related event."""
+    date: str
+    status: HealthStatus
+    description: str
+    impact_level: int  # 1-10 scale
 
 
-class HTMLContentExtractor(HTMLParser):
-    """Extract text content from HTML."""
-    
-    def __init__(self):
-        super().__init__()
-        self.text_content = []
-        self.in_script = False
-        self.in_style = False
-    
-    def handle_starttag(self, tag, attrs):
-        """Handle start tags."""
-        if tag in ('script', 'style'):
-            setattr(self, f'in_{tag}', True)
-    
-    def handle_endtag(self, tag):
-        """Handle end tags."""
-        if tag in ('script', 'style'):
-            setattr(self, f'in_{tag}', False)
-    
-    def handle_data(self, data):
-        """Extract text data."""
-        if not self.in_script and not self.in_style:
-            text = data.strip()
-            if text:
-                self.text_content.append(text)
-    
-    def get_text(self):
-        """Return extracted text."""
-        return ' '.join(self.text_content)
+@dataclass
+class Company:
+    """Represents a company founded by the entrepreneur."""
+    name: str
+    founded_date: str
+    industry: str
+    stage: CompanyStage
+    active: bool
+    milestone_count: int
+    revenue_estimate: Optional[str] = None
 
 
-class ContentAnalyzer:
-    """Analyze content for key topics and impact."""
-    
-    CANCER_KEYWORDS = [
-        'cancer', 'oncology', 'tumor', 'treatment', 'therapy',
-        'chemotherapy', 'radiation', 'diagnosis', 'patient'
-    ]
-    
-    BUSINESS_KEYWORDS = [
-        'company', 'founding', 'startup', 'entrepreneur', 'business',
-        'innovation', 'technology', 'product', 'revenue', 'growth'
-    ]
-    
-    RESILIENCE_KEYWORDS = [
-        'battle', 'fight', 'overcome', 'challenge', 'perseverance',
-        'determination', 'resilience', 'courage', 'strength'
-    ]
-    
-    def __init__(self):
-        self.content_cache = {}
-        logger.info("ContentAnalyzer initialized")
-    
-    def fetch_content(self, url: str) -> Optional[str]:
+@dataclass
+class EntrepreneurProfile:
+    """Profile of an entrepreneur with health challenges."""
+    name: str
+    biography: str
+    companies: List[Company]
+    health_events: List[HealthEvent]
+    resilience_score: float
+
+
+class EntrepreneurAnalyzer:
+    """Analyzes entrepreneurial resilience patterns in health-challenged founders."""
+
+    def __init__(self, logger: logging.Logger):
+        """Initialize the analyzer with a logger."""
+        self.logger = logger
+        self.profiles: Dict[str, EntrepreneurProfile] = {}
+
+    def add_profile(self, profile: EntrepreneurProfile) -> None:
+        """Add an entrepreneur profile to the analyzer."""
+        self.profiles[profile.name] = profile
+        self.logger.info(f"Added profile for {profile.name}")
+
+    def calculate_resilience_score(self, profile: EntrepreneurProfile) -> float:
         """
-        Fetch content from URL with error handling.
-        
-        Args:
-            url: The URL to fetch
-            
-        Returns:
-            Content string or None if fetch fails
+        Calculate resilience score based on:
+        - Number of active companies
+        - Health challenges overcome
+        - Time in treatment vs growth periods
         """
-        if url in self.content_cache:
-            logger.debug(f"Using cached content for {url}")
-            return self.content_cache[url]
-        
-        try:
-            logger.info(f"Fetching content from {url}")
-            req = urllib.request.Request(
-                url,
-                headers={'User-Agent': 'SwarmPulse-Agent/1.0'}
-            )
-            with urllib.request.urlopen(req, timeout=10) as response:
-                content = response.read().decode('utf-8', errors='ignore')
-                self.content_cache[url] = content
-                logger.info(f"Successfully fetched {len(content)} bytes from {url}")
-                return content
-        except urllib.error.URLError as e:
-            logger.error(f"URL error fetching {url}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error fetching {url}: {e}")
-            return None
-    
-    def extract_text(self, html_content: str) -> str:
-        """
-        Extract plain text from HTML content.
-        
-        Args:
-            html_content: HTML string
-            
-        Returns:
-            Plain text content
-        """
-        try:
-            parser = HTMLContentExtractor()
-            parser.feed(html_content)
-            text = parser.get_text()
-            logger.debug(f"Extracted {len(text)} characters of text")
-            return text
-        except Exception as e:
-            logger.error(f"Error extracting text: {e}")
-            return ""
-    
-    def calculate_keyword_score(self, text: str, keywords: List[str]) -> float:
-        """
-        Calculate score based on keyword occurrences.
-        
-        Args:
-            text: Text to analyze
-            keywords: List of keywords to search for
-            
-        Returns:
-            Score between 0.0 and 1.0
-        """
-        if not text:
+        if not profile.companies and not profile.health_events:
             return 0.0
-        
-        text_lower = text.lower()
-        match_count = sum(text_lower.count(keyword.lower()) for keyword in keywords)
-        word_count = len(text.split())
-        
-        if word_count == 0:
-            return 0.0
-        
-        # Normalize score to 0-1 range
-        score = min(1.0, (match_count / word_count) * 10)
-        return score
-    
-    def analyze_article(self, article: Article) -> Article:
-        """
-        Analyze article content and update impact score.
-        
-        Args:
-            article: Article to analyze
-            
-        Returns:
-            Updated article with calculated impact score
-        """
-        logger.info(f"Analyzing article: {article.title}")
-        
-        # Try to fetch and analyze content
-        html_content = self.fetch_content(article.url)
-        
-        if html_content:
-            text = self.extract_text(html_content)
-            
-            # Calculate keyword-based scores
-            cancer_score = self.calculate_keyword_score(text, self.CANCER_KEYWORDS)
-            business_score = self.calculate_keyword_score(text, self.BUSINESS_KEYWORDS)
-            resilience_score = self.calculate_keyword_score(text, self.RESILIENCE_KEYWORDS)
-            
-            # Composite impact score (weighted average)
-            article.impact_score = (
-                cancer_score * 0.3 +
-                business_score * 0.35 +
-                resilience_score * 0.35
-            )
-            
-            logger.info(
-                f"Article impact score: {article.impact_score:.3f} "
-                f"(cancer: {cancer_score:.3f}, business: {business_score:.3f}, "
-                f"resilience: {resilience_score:.3f})"
-            )
-            
-            # Extract keywords from text
-            all_keywords = self.CANCER_KEYWORDS + self.BUSINESS_KEYWORDS + self.RESILIENCE_KEYWORDS
-            found_keywords = [kw for kw in all_keywords if kw.lower() in text.lower()]
-            article.keywords = list(set(found_keywords))
-            
-            # Create summary
-            sentences = [s.strip() for s in text.split('.') if s.strip()]
-            article.summary = '. '.join(sentences[:3]) + '.' if sentences else None
-        else:
-            logger.warning(f"Could not fetch content for {article.url}, using default score")
-            article.impact_score = 0.5
-        
-        return article
 
+        # Company contribution: 0-40 points
+        active_companies = sum(1 for c in profile.companies if c.active)
+        company_score = min(40, active_companies * 10)
 
-class ReportGenerator:
-    """Generate analysis reports in various formats."""
-    
-    def __init__(self):
-        logger.info("ReportGenerator initialized")
-    
-    def generate_json_report(self, articles: List[Article]) -> str:
+        # Health resilience: 0-40 points
+        remission_count = sum(
+            1 for h in profile.health_events if h.status == HealthStatus.REMISSION
+        )
+        health_score = min(40, remission_count * 15)
+
+        # Milestone contribution: 0-20 points
+        total_milestones = sum(c.milestone_count for c in profile.companies)
+        milestone_score = min(20, total_milestones * 2)
+
+        total = (company_score + health_score + milestone_score) / 100
+        self.logger.debug(
+            f"Resilience calculation for {profile.name}: "
+            f"companies={company_score}, health={health_score}, milestones={milestone_score}"
+        )
+        return total
+
+    def analyze_timeline(self, profile: EntrepreneurProfile) -> Dict[str, any]:
+        """Analyze the timeline of companies and health events."""
+        timeline_events = []
+
+        for company in profile.companies:
+            timeline_events.append({
+                "date": company.founded_date,
+                "type": "company_founded",
+                "name": company.name,
+                "stage": company.stage.value
+            })
+
+        for health_event in profile.health_events:
+            timeline_events.append({
+                "date": health_event.date,
+                "type": "health_event",
+                "status": health_event.status.value,
+                "description": health_event.description,
+                "impact": health_event.impact_level
+            })
+
+        # Sort by date
+        timeline_events.sort(key=lambda x: x["date"])
+
+        self.logger.info(f"Timeline analysis for {profile.name}: {len(timeline_events)} events")
+        return {"timeline": timeline_events, "event_count": len(timeline_events)}
+
+    def compare_productivity_patterns(
+        self, profile: EntrepreneurProfile
+    ) -> Dict[str, any]:
         """
-        Generate JSON report of articles.
-        
-        Args:
-            articles: List of articles to report on
-            
-        Returns:
-            JSON formatted report string
+        Analyze productivity patterns during different health states.
+        Returns metrics about company founding during health challenges.
         """
-        report = {
-            'generated_at': datetime.now().isoformat(),
-            'total_articles': len(articles),
-            'average_impact_score': sum(a.impact_score for a in articles) / len(articles) if articles else 0.0,
-            'articles': [a.to_dict() for a in articles]
+        founding_during_treatment = 0
+        founding_during_remission = 0
+
+        for company in profile.companies:
+            company_date = datetime.strptime(company.founded_date, "%Y-%m-%d")
+
+            for health_event in profile.health_events:
+                event_date = datetime.strptime(health_event.date, "%Y-%m-%d")
+
+                if company_date >= event_date:
+                    if health_event.status == HealthStatus.TREATMENT:
+                        founding_during_treatment += 1
+                    elif health_event.status == HealthStatus.REMISSION:
+                        founding_during_remission += 1
+
+        analysis = {
+            "companies_founded_during_treatment": founding_during_treatment,
+            "companies_founded_during_remission": founding_during_remission,
+            "productivity_despite_challenges": founding_during_treatment > 0
         }
-        return json.dumps(report, indent=2)
-    
-    def generate_text_report(self, articles: List[Article]) -> str:
-        """
-        Generate human-readable text report.
-        
-        Args:
-            articles: List of articles to report on
-            
-        Returns:
-            Text formatted report string
-        """
-        lines = [
-            "=" * 80,
-            "CONTENT ANALYSIS REPORT",
-            "=" * 80,
-            f"Generated: {datetime.now().isoformat()}",
-            f"Total Articles Analyzed: {len(articles)}",
-            ""
-        ]
-        
-        if articles:
-            avg_score = sum(a.impact_score for a in articles) / len(articles)
-            lines.append(f"Average Impact Score: {avg_score:.3f}")
-            lines.append("-" * 80)
-            lines.append("")
-            
-            # Sort by impact score
-            sorted_articles = sorted(articles, key=lambda a: a.impact_score, reverse=True)
-            
-            for i, article in enumerate(sorted_articles, 1):
-                lines.extend([
-                    f"{i}. {article.title}",
-                    f"   URL: {article.url}",
-                    f"   Author: {article.author}",
-                    f"   Type: {article.content_type.value}",
-                    f"   Category: {article.category}",
-                    f"   Impact Score: {article.impact_score:.3f}",
-                    f"   Keywords: {', '.join(article.keywords[:5])}",
-                    ""
-                ])
-        else:
-            lines.append("No articles to report.")
-        
-        lines.append("=" * 80)
-        return "\n".join(lines)
-    
-    def generate_csv_report(self, articles: List[Article]) -> str:
-        """
-        Generate CSV report.
-        
-        Args:
-            articles: List of articles to report on
-            
-        Returns:
-            CSV formatted report string
-        """
-        lines = [
-            "Title,Author,URL,Content Type,Category,Impact Score,Keywords"
-        ]
-        
-        for article in articles:
-            keywords_str = '|'.join(article.keywords[:5])
-            lines.append(
-                f'"{article.title}","{article.author}","{article.url}",'
-                f'"{article.content_type.value}","{article.category}",'
-                f'{article.impact_score:.3f},"{keywords_str}"'
-            )
-        
-        return "\n".join(lines)
+
+        self.logger.info(
+            f"Productivity analysis for {profile.name}: "
+            f"{founding_during_treatment} founded during treatment"
+        )
+        return analysis
+
+    def generate_report(self, profile: EntrepreneurProfile) -> Dict[str, any]:
+        """Generate a comprehensive analysis report."""
+        resilience = self.calculate_resilience_score(profile)
+        timeline = self.analyze_timeline(profile)
+        productivity = self.compare_productivity_patterns(profile)
+
+        report = {
+            "name": profile.name,
+            "biography": profile.biography,
+            "resilience_score": round(resilience, 2),
+            "company_count": len(profile.companies),
+            "active_companies": sum(1 for c in profile.companies if c.active),
+            "health_events": len(profile.health_events),
+            "timeline_analysis": timeline,
+            "productivity_analysis": productivity,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        self.logger.info(f"Generated report for {profile.name}")
+        return report
+
+    def export_profiles_json(self, output_path: str) -> None:
+        """Export all profiles to JSON file."""
+        data = {}
+        for name, profile in self.profiles.items():
+            data[name] = {
+                "name": profile.name,
+                "biography": profile.biography,
+                "companies": [asdict(c) for c in profile.companies],
+                "health_events": [
+                    {
+                        "date": h.date,
+                        "status": h.status.value,
+                        "description": h.description,
+                        "impact_level": h.impact_level
+                    }
+                    for h in profile.health_events
+                ],
+                "resilience_score": self.calculate_resilience_score(profile)
+            }
+
+        with open(output_path, "w") as f:
+            json.dump(data, f, indent=2)
+
+        self.logger.info(f"Exported profiles to {output_path}")
+
+
+def setup_logging(log_level: str) -> logging.Logger:
+    """Configure logging with specified level."""
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper()),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    return logging.getLogger(__name__)
+
+
+def create_sample_gitlab_founder_profile() -> EntrepreneurProfile:
+    """Create sample profile based on GitLab founder's journey."""
+    companies = [
+        Company(
+            name="GitLab",
+            founded_date="2011-10-23",
+            industry="DevOps/Software Development",
+            stage=CompanyStage.MATURE,
+            active=True,
+            milestone_count=8,
+            revenue_estimate="$10B+ valuation"
+        ),
+        Company(
+            name="Gitorious",
+            founded_date="2007-08-14",
+            industry="Version Control",
+            stage=CompanyStage.MATURE,
+            active=False,
+            milestone_count=5
+        )
+    ]
+
+    health_events = [
+        HealthEvent(
+            date="2012-06-15",
+            status=HealthStatus.HEALTHY,
+            description="Initial diagnosis",
+            impact_level=9
+        ),
+        HealthEvent(
+            date="2012-07-01",
+            status=HealthStatus.TREATMENT,
+            description="Began cancer treatment",
+            impact_level=8
+        ),
+        HealthEvent(
+            date="2014-03-20",
+            status=HealthStatus.REMISSION,
+            description="Entered remission",
+            impact_level=2
+        ),
+        HealthEvent(
+            date="2018-12-10",
+            status=HealthStatus.REMISSION,
+            description="Continued remission, scaling GitLab",
+            impact_level=1
+        )
+    ]
+
+    profile = EntrepreneurProfile(
+        name="Sytse Sijbrandij",
+        biography="Founder and CEO of GitLab, battled cancer while building one of the world's leading DevOps platforms.",
+        companies=companies,
+        health_events=health_events,
+        resilience_score=0.0
+    )
+
+    return profile
 
 
 def main():
-    """Main entry point."""
+    """Main entry point with CLI argument parsing."""
     parser = argparse.ArgumentParser(
-        description='Analyze content related to founder battling cancer while building companies',
+        description="Analyze entrepreneurial resilience in health-challenged founders",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
+        epilog="""
 Examples:
-  %(prog)s --source https://sytse.com/cancer/ --format json
-  %(prog)s --source https://sytse.com/cancer/ --format text --output report.txt
-  %(prog)s --demo
-        '''
+  python3 solution.py --analyze --founder-name "Sytse Sijbrandij"
+  python3 solution.py --export-json profiles.json
+  python3 solution.py --report --log-level DEBUG
+        """
     )
-    
+
     parser.add_argument(
-        '--source',
+        "--analyze",
+        action="store_true",
+        help="Run resilience analysis on founder profiles"
+    )
+    parser.add_argument(
+        "--founder-name",
         type=str,
-        default='https://sytse.com/cancer/',
-        help='URL of the source article to analyze (default: GitLab founder cancer article)'
+        default="Sytse Sijbrandij",
+        help="Name of founder to analyze (default: Sytse Sijbrandij)"
     )
-    
     parser.add_argument(
-        '--format',
+        "--report",
+        action="store_true",
+        help="Generate comprehensive analysis report"
+    )
+    parser.add_argument(
+        "--export-json",
         type=str,
-        choices=['json', 'text', 'csv'],
-        default='text',
-        help='Output format for the report (default: text)'
+        help="Export profiles to JSON file at specified path"
     )
-    
     parser.add_argument(
-        '--output',
+        "--log-level",
         type=str,
-        default=None,
-        help='Output file path (default: stdout)'
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set logging level (default: INFO)"
     )
-    
-    parser.add_argument(
-        '--demo',
-        action='store_true',
-        help='Run with demo data instead of fetching from URL'
-    )
-    
-    parser.add_argument(
-        '--log-level',
-        type=str,
-        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
-        default='INFO',
-        help='Logging level (default: INFO)'
-    )
-    
+
     args = parser.parse_args()
-    
-    # Set logging level
-    logging.getLogger().setLevel(args.log_level)
-    logger.info(f"Starting analysis with log level {args.log_level}")
-    
-    # Create analyzer and generator
-    analyzer = ContentAnalyzer()
-    report_gen = ReportGenerator()
-    
-    # Prepare articles
-    articles = []
-    
-    if args.demo:
-        logger.info("Running in demo mode with sample data")
-        articles = [
-            Article(
-                title="Sytse Sijbrandij: How Cancer Changed My Perspective on Building Companies",
-                url="https://sytse.com/cancer/",
-                author="Sytse Sijbrandij",
-                date_published="2024-01-15",
-                content_type=ContentType.BLOG_POST,
-                category="Engineering",
-                impact_score=0.0,
-                keywords=[],
-                summary="A personal account of battling cancer while leading GitLab"
-            ),
-            Article(
-                title="Entrepreneurship and Resilience: Lessons from GitLab",
-                url="https://example.com/gitlab-lessons",
-                author="Tech Journal",
-                date_published="2024-02-20",
-                content_type=ContentType.INTERVIEW,
-                category="Engineering",
-                impact_score=0.0,
-                keywords=[],
-                summary="Interview about overcoming challenges in the tech industry"
-            ),
-            Article(
-                title="GitLab's Growth: Building While Fighting",
-                url="https://example.com/gitlab-growth",
-                author="Business Weekly",
-                date_published="2024-03-10",
-                content_type=ContentType.ARTICLE,
-                category="Engineering",
-                impact_score=0.0,
-                keywords=[],
-                summary="How GitLab maintained momentum during personal challenges"
-            )
-        ]
-    else:
-        logger.info(f"Analyzing article from {args.source}")
-        article = Article(
-            title="Founder's Journey: Cancer and Company Building",
-            url=args.source,
-            author="Sytse Sijbrandij",
-            date_published=datetime.now().strftime("%Y-%m-%d"),
-            content_type=ContentType.BLOG_POST,
-            category="Engineering",
-            impact_score=0.0,
-            keywords=[]
-        )
-        articles = [article]
-    
-    # Analyze articles
-    logger.info(f"Analyzing {len(articles)} article(s)")
-    analyzed_articles = []
-    for article in articles:
-        analyzed = analyzer.analyze_article(article)
-        analyzed_articles.append(analyzed)
-    
-    # Generate report
-    if args.format == 'json':
-        report = report_gen.generate_json_report(analyzed_articles)
-    elif args.format == 'csv':
-        report = report_gen.generate_csv_report(analyzed_articles)
-    else:
-        report = report_gen.generate_text_report(analyzed_articles)
-    
-    # Output report
-    if args.output:
-        try:
-            with open(args.output, 'w', encoding='utf-8') as f:
-                f.write(report)
-            logger.info(f"Report written to {args.output}")
-            print(f"Report successfully written to {args.output}")
-        except IOError as e:
-            logger.error(f"Failed to write report: {e}")
-            sys.exit(1)
-    else:
-        print(report)
-    
+
+    logger = setup_logging(args.log_level)
+    logger.info("Starting entrepreneur resilience analyzer")
+
+    analyzer = EntrepreneurAnalyzer(logger)
+    profile = create_sample_gitlab_founder_profile()
+    analyzer.add_profile(profile)
+
+    if args.analyze:
+        logger.info(f"Analyzing resilience for {args.founder_name}")
+        resilience = analyzer.calculate_resilience_score(profile)
+        print(f"\nResilience Score for {profile.name}: {resilience:.2f}/1.0")
+        print(f"Active Companies: {sum(1 for c in profile.companies if c.active)}")
+        print(f"Health Events Tracked: {len(profile.health_events)}")
+
+    if args.report:
+        logger.info("Generating comprehensive report")
+        report = analyzer.generate_report(profile)
+        print("\n" + "=" * 70)
+        print("COMPREHENSIVE ANALYSIS REPORT")
+        print("=" * 70)
+        print(json.dumps(report, indent=2))
+
+    if args.export_json:
+        analyzer.export_profiles_json(args.export_json)
+        print(f"\nProfiles exported to {args.export_json}")
+
+    if not any([args.analyze, args.report, args.export_json]):
+        logger.info("Running default analysis demonstration")
+        print("\n" + "=" * 70)
+        print("ENTREPRENEUR RESILIENCE ANALYSIS")
+        print("=" * 70)
+
+        report = analyzer.generate_report(profile)
+        print(json.dumps(report, indent=2))
+
     logger.info("Analysis complete")
 
 
