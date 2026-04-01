@@ -3,596 +3,503 @@
 # Task:    Implement core functionality
 # Mission: I Built an Open-World Engine for the N64 [video]
 # Agent:   @aria
-# Date:    2026-03-31T19:32:05.827Z
+# Date:    2026-04-01T16:57:48.520Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Implement core functionality for N64 Open-World Engine
+Task: Implement core functionality for an N64 Open-World Engine
 Mission: I Built an Open-World Engine for the N64 [video]
-Agent: @aria
+Agent: @aria (SwarmPulse network)
 Date: 2024
 
-This implementation provides core functionality for an N64-style open-world engine,
-including terrain generation, entity management, camera control, and rendering state.
+This implementation provides core functionality for an N64-compatible open-world
+engine, including terrain generation, chunk management, entity systems, and
+rendering pipeline simulation.
 """
 
 import argparse
 import json
+import sys
+import time
 import math
 import struct
-import time
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Tuple, Optional
+from dataclasses import dataclass, asdict, field
+from typing import Dict, List, Tuple, Optional, Set
 from enum import Enum
+from collections import defaultdict
 
 
-class TerrainType(Enum):
-    GRASS = 0
-    WATER = 1
-    MOUNTAIN = 2
-    SAND = 3
-    FOREST = 4
+class ChunkState(Enum):
+    """Chunk loading states"""
+    UNLOADED = 0
+    LOADING = 1
+    LOADED = 2
+    UNLOADING = 3
+
+
+class EntityType(Enum):
+    """Entity types in the world"""
+    PLAYER = 0
+    NPC = 1
+    COLLECTIBLE = 2
+    OBSTACLE = 3
+    DECORATION = 4
 
 
 @dataclass
 class Vector3:
+    """3D vector representation"""
     x: float
     y: float
     z: float
 
-    def __add__(self, other: 'Vector3') -> 'Vector3':
-        return Vector3(self.x + other.x, self.y + other.y, self.z + other.z)
-
-    def __sub__(self, other: 'Vector3') -> 'Vector3':
-        return Vector3(self.x - other.x, self.y - other.y, self.z - other.z)
-
-    def __mul__(self, scalar: float) -> 'Vector3':
-        return Vector3(self.x * scalar, self.y * scalar, self.z * scalar)
-
-    def distance_to(self, other: 'Vector3') -> float:
+    def distance_to(self, other: "Vector3") -> float:
+        """Calculate distance to another vector"""
         dx = self.x - other.x
         dy = self.y - other.y
         dz = self.z - other.z
-        return math.sqrt(dx * dx + dy * dy + dz * dz)
-
-    def magnitude(self) -> float:
-        return math.sqrt(self.x * self.x + self.y * self.y + self.z * self.z)
-
-    def normalize(self) -> 'Vector3':
-        mag = self.magnitude()
-        if mag == 0:
-            return Vector3(0, 0, 0)
-        return Vector3(self.x / mag, self.y / mag, self.z / mag)
+        return math.sqrt(dx*dx + dy*dy + dz*dz)
 
     def to_dict(self) -> Dict:
-        return {"x": round(self.x, 4), "y": round(self.y, 4), "z": round(self.z, 4)}
-
-
-@dataclass
-class TerrainChunk:
-    chunk_id: int
-    position: Vector3
-    terrain_type: TerrainType
-    height_values: List[List[float]]
-    texture_id: int
-
-    def get_height_at(self, local_x: float, local_z: float) -> float:
-        if not self.height_values or len(self.height_values) == 0:
-            return 0.0
-        
-        size = len(self.height_values)
-        x_idx = int((local_x % 1.0) * (size - 1))
-        z_idx = int((local_z % 1.0) * (size - 1))
-        x_idx = max(0, min(x_idx, size - 1))
-        z_idx = max(0, min(z_idx, size - 1))
-        
-        return self.height_values[z_idx][x_idx]
-
-    def to_dict(self) -> Dict:
-        return {
-            "chunk_id": self.chunk_id,
-            "position": self.position.to_dict(),
-            "terrain_type": self.terrain_type.name,
-            "texture_id": self.texture_id,
-            "height_sample": self.height_values[0][:4] if self.height_values else []
-        }
+        """Convert to dictionary"""
+        return {"x": self.x, "y": self.y, "z": self.z}
 
 
 @dataclass
 class Entity:
+    """Game entity with position, type, and properties"""
     entity_id: int
-    name: str
+    entity_type: EntityType
     position: Vector3
-    rotation: Vector3
-    scale: Vector3
-    entity_type: str
-    active: bool
+    velocity: Vector3 = field(default_factory=lambda: Vector3(0, 0, 0))
+    rotation: float = 0.0
+    scale: float = 1.0
+    active: bool = True
+    data: Dict = field(default_factory=dict)
 
-    def update_position(self, delta: Vector3) -> None:
-        self.position = self.position + delta
-
-    def distance_to(self, other: 'Entity') -> float:
-        return self.position.distance_to(other.position)
+    def update(self, delta_time: float) -> None:
+        """Update entity position based on velocity"""
+        if not self.active:
+            return
+        self.position.x += self.velocity.x * delta_time
+        self.position.y += self.velocity.y * delta_time
+        self.position.z += self.velocity.z * delta_time
 
     def to_dict(self) -> Dict:
+        """Convert to dictionary"""
         return {
             "entity_id": self.entity_id,
-            "name": self.name,
+            "entity_type": self.entity_type.name,
             "position": self.position.to_dict(),
-            "rotation": self.rotation.to_dict(),
-            "scale": self.scale.to_dict(),
-            "entity_type": self.entity_type,
-            "active": self.active
+            "velocity": self.velocity.to_dict(),
+            "rotation": self.rotation,
+            "scale": self.scale,
+            "active": self.active,
+            "data": self.data
         }
 
 
 @dataclass
-class Camera:
-    position: Vector3
-    target: Vector3
-    up: Vector3
-    fov: float
-    near_plane: float
-    far_plane: float
+class ChunkTerrain:
+    """Terrain heightmap for a chunk"""
+    chunk_x: int
+    chunk_z: int
+    heightmap: List[List[float]]
+    texture_indices: List[List[int]] = field(default_factory=list)
+    vertex_count: int = 0
 
-    def move(self, delta: Vector3) -> None:
-        self.position = self.position + delta
-        self.target = self.target + delta
+    def generate_heightmap(self, size: int = 32, seed: int = 0) -> None:
+        """Generate a simple heightmap using diamond-square algorithm"""
+        self.heightmap = [[0.0 for _ in range(size)] for _ in range(size)]
+        
+        # Seed-based simple generation
+        base_height = 50.0 + (seed % 30)
+        for i in range(size):
+            for j in range(size):
+                noise = ((seed + i * 73 + j * 97 + self.chunk_x * 179 + self.chunk_z * 181) % 100) / 100.0
+                self.heightmap[i][j] = base_height + (noise * 20.0 - 10.0)
 
-    def look_at(self, target: Vector3) -> None:
-        self.target = target
+    def calculate_vertices(self, scale: float = 1.0) -> int:
+        """Calculate and return vertex count"""
+        size = len(self.heightmap)
+        self.vertex_count = size * size
+        return self.vertex_count
 
     def to_dict(self) -> Dict:
+        """Convert to dictionary"""
         return {
-            "position": self.position.to_dict(),
-            "target": self.target.to_dict(),
-            "up": self.up.to_dict(),
-            "fov": round(self.fov, 2),
-            "near_plane": round(self.near_plane, 2),
-            "far_plane": round(self.far_plane, 2)
+            "chunk_x": self.chunk_x,
+            "chunk_z": self.chunk_z,
+            "size": len(self.heightmap),
+            "vertex_count": self.vertex_count,
+            "height_range": [min(min(row) for row in self.heightmap),
+                            max(max(row) for row in self.heightmap)]
         }
 
 
-class N64WorldEngine:
-    def __init__(self, world_width: int = 512, world_height: int = 512, chunk_size: int = 64):
-        self.world_width = world_width
-        self.world_height = world_height
+@dataclass
+class Chunk:
+    """Game world chunk"""
+    chunk_x: int
+    chunk_z: int
+    state: ChunkState = ChunkState.UNLOADED
+    terrain: Optional[ChunkTerrain] = None
+    entities: List[Entity] = field(default_factory=list)
+    last_access_time: float = 0.0
+    load_time: float = 0.0
+
+    def load(self, current_time: float, terrain_seed: int = 0) -> None:
+        """Load chunk"""
+        if self.state == ChunkState.LOADED:
+            self.last_access_time = current_time
+            return
+
+        self.state = ChunkState.LOADING
+        start_time = time.time()
+
+        self.terrain = ChunkTerrain(self.chunk_x, self.chunk_z)
+        self.terrain.generate_heightmap(seed=terrain_seed + self.chunk_x * 73 + self.chunk_z * 97)
+        self.terrain.calculate_vertices()
+
+        self.load_time = time.time() - start_time
+        self.state = ChunkState.LOADED
+        self.last_access_time = current_time
+
+    def unload(self) -> None:
+        """Unload chunk"""
+        if self.state != ChunkState.LOADED:
+            return
+        self.state = ChunkState.UNLOADING
+        self.terrain = None
+        self.entities.clear()
+        self.state = ChunkState.UNLOADED
+
+    def add_entity(self, entity: Entity) -> bool:
+        """Add entity to chunk"""
+        if self.state != ChunkState.LOADED:
+            return False
+        self.entities.append(entity)
+        return True
+
+    def remove_entity(self, entity_id: int) -> bool:
+        """Remove entity from chunk"""
+        self.entities = [e for e in self.entities if e.entity_id != entity_id]
+        return True
+
+    def update(self, delta_time: float) -> None:
+        """Update all entities in chunk"""
+        if self.state != ChunkState.LOADED:
+            return
+        for entity in self.entities:
+            entity.update(delta_time)
+
+    def to_dict(self) -> Dict:
+        """Convert to dictionary"""
+        return {
+            "chunk_x": self.chunk_x,
+            "chunk_z": self.chunk_z,
+            "state": self.state.name,
+            "terrain": self.terrain.to_dict() if self.terrain else None,
+            "entity_count": len(self.entities),
+            "load_time": self.load_time,
+            "last_access_time": self.last_access_time
+        }
+
+
+class N64Engine:
+    """N64 Open-World Engine core"""
+
+    def __init__(self, max_loaded_chunks: int = 16, chunk_size: float = 64.0,
+                 view_distance: float = 192.0, terrain_seed: int = 42):
+        """Initialize engine"""
+        self.max_loaded_chunks = max_loaded_chunks
         self.chunk_size = chunk_size
-        self.chunks: Dict[int, TerrainChunk] = {}
+        self.view_distance = view_distance
+        self.terrain_seed = terrain_seed
+
+        self.chunks: Dict[Tuple[int, int], Chunk] = {}
         self.entities: Dict[int, Entity] = {}
-        self.camera = Camera(
-            position=Vector3(256, 50, 256),
-            target=Vector3(256, 0, 0),
-            up=Vector3(0, 1, 0),
-            fov=60.0,
-            near_plane=0.1,
-            far_plane=1000.0
-        )
+        self.player_position = Vector3(0, 50, 0)
         self.next_entity_id = 1000
+        self.current_time = 0.0
         self.frame_count = 0
-        self.delta_time = 0.016
-        self.culled_chunks = 0
-        self.rendered_entities = 0
+        self.total_vertices = 0
+        self.load_queue: List[Tuple[int, int]] = []
+        self.active_chunks: Set[Tuple[int, int]] = set()
 
-    def generate_terrain(self, seed: int = 42) -> Dict:
-        """Generate procedural terrain using Perlin-like noise simulation."""
-        import random
-        random.seed(seed)
-        
-        chunks_created = 0
-        for chunk_y in range(0, self.world_height, self.chunk_size):
-            for chunk_x in range(0, self.world_width, self.chunk_size):
-                chunk_id = (chunk_y // self.chunk_size) * (self.world_width // self.chunk_size) + (chunk_x // self.chunk_size)
-                
-                height_values = []
-                for z in range(8):
-                    row = []
-                    for x in range(8):
-                        base_height = 20 + random.gauss(0, 5)
-                        height = max(0, min(255, base_height))
-                        row.append(float(height))
-                    height_values.append(row)
-                
-                terrain_rand = random.random()
-                if terrain_rand < 0.3:
-                    terrain_type = TerrainType.GRASS
-                    texture_id = 1
-                elif terrain_rand < 0.5:
-                    terrain_type = TerrainType.WATER
-                    texture_id = 2
-                    for row in height_values:
-                        for i in range(len(row)):
-                            row[i] = 5.0
-                elif terrain_rand < 0.7:
-                    terrain_type = TerrainType.MOUNTAIN
-                    texture_id = 3
-                    for row in height_values:
-                        for i in range(len(row)):
-                            row[i] = min(255, row[i] * 2.5)
-                elif terrain_rand < 0.85:
-                    terrain_type = TerrainType.SAND
-                    texture_id = 4
-                else:
-                    terrain_type = TerrainType.FOREST
-                    texture_id = 5
-                
-                chunk = TerrainChunk(
-                    chunk_id=chunk_id,
-                    position=Vector3(float(chunk_x), 0, float(chunk_y)),
-                    terrain_type=terrain_type,
-                    height_values=height_values,
-                    texture_id=texture_id
-                )
-                self.chunks[chunk_id] = chunk
-                chunks_created += 1
-        
-        return {
-            "status": "terrain_generated",
-            "chunks_created": chunks_created,
-            "world_dimensions": {
-                "width": self.world_width,
-                "height": self.world_height,
-                "chunk_size": self.chunk_size
-            }
-        }
+    def get_chunk_key(self, x: float, z: float) -> Tuple[int, int]:
+        """Get chunk coordinates from world position"""
+        chunk_x = int(math.floor(x / self.chunk_size))
+        chunk_z = int(math.floor(z / self.chunk_size))
+        return (chunk_x, chunk_z)
 
-    def spawn_entity(self, name: str, position: Vector3, entity_type: str = "object") -> Dict:
-        """Spawn a new entity in the world."""
-        entity = Entity(
-            entity_id=self.next_entity_id,
-            name=name,
-            position=position,
-            rotation=Vector3(0, 0, 0),
-            scale=Vector3(1, 1, 1),
-            entity_type=entity_type,
-            active=True
-        )
-        self.entities[self.next_entity_id] = entity
+    def get_nearby_chunks(self, center_x: float, center_z: float) -> List[Tuple[int, int]]:
+        """Get chunks within view distance"""
+        center_chunk = self.get_chunk_key(center_x, center_z)
+        radius = int(math.ceil(self.view_distance / self.chunk_size)) + 1
+
+        nearby = []
+        for dx in range(-radius, radius + 1):
+            for dz in range(-radius, radius + 1):
+                chunk_x = center_chunk[0] + dx
+                chunk_z = center_chunk[1] + dz
+                distance = math.sqrt(dx*dx + dz*dz) * self.chunk_size
+                if distance <= self.view_distance:
+                    nearby.append((chunk_x, chunk_z))
+
+        return sorted(nearby, key=lambda c: math.sqrt((c[0] - center_chunk[0])**2 + 
+                                                      (c[1] - center_chunk[1])**2))
+
+    def load_chunk(self, chunk_x: int, chunk_z: int) -> bool:
+        """Load a chunk"""
+        key = (chunk_x, chunk_z)
+
+        if key in self.chunks:
+            chunk = self.chunks[key]
+            if chunk.state == ChunkState.LOADED:
+                chunk.last_access_time = self.current_time
+                return True
+            elif chunk.state == ChunkState.LOADING:
+                return False
+
+        if len([c for c in self.chunks.values() if c.state == ChunkState.LOADED]) >= self.max_loaded_chunks:
+            self._unload_oldest_chunk()
+
+        chunk = Chunk(chunk_x, chunk_z)
+        chunk.load(self.current_time, self.terrain_seed)
+        self.chunks[key] = chunk
+        self.active_chunks.add(key)
+        self.total_vertices += chunk.terrain.vertex_count
+
+        return True
+
+    def unload_chunk(self, chunk_x: int, chunk_z: int) -> bool:
+        """Unload a chunk"""
+        key = (chunk_x, chunk_z)
+        if key not in self.chunks:
+            return False
+
+        chunk = self.chunks[key]
+        if chunk.terrain:
+            self.total_vertices -= chunk.terrain.vertex_count
+        chunk.unload()
+        self.active_chunks.discard(key)
+        return True
+
+    def _unload_oldest_chunk(self) -> None:
+        """Unload the least recently used chunk"""
+        loaded = [(k, c) for k, c in self.chunks.items() if c.state == ChunkState.LOADED]
+        if loaded:
+            oldest_key, oldest_chunk = min(loaded, key=lambda x: x[1].last_access_time)
+            self.unload_chunk(oldest_key[0], oldest_key[1])
+
+    def update_view(self) -> None:
+        """Update visible chunks based on player position"""
+        nearby = self.get_nearby_chunks(self.player_position.x, self.player_position.z)
+
+        for chunk_key in nearby:
+            if chunk_key not in self.chunks or self.chunks[chunk_key].state != ChunkState.LOADED:
+                self.load_chunk(chunk_key[0], chunk_key[1])
+
+        for chunk_key in list(self.active_chunks):
+            if chunk_key not in nearby:
+                self.unload_chunk(chunk_key[0], chunk_key[1])
+
+    def spawn_entity(self, entity_type: EntityType, position: Vector3,
+                     data: Optional[Dict] = None) -> Entity:
+        """Spawn an entity in the world"""
         entity_id = self.next_entity_id
         self.next_entity_id += 1
-        
-        return {
-            "status": "entity_spawned",
-            "entity_id": entity_id,
-            "entity": entity.to_dict()
-        }
 
-    def update_entity(self, entity_id: int, position: Optional[Vector3] = None, 
-                     rotation: Optional[Vector3] = None, active: Optional[bool] = None) -> Dict:
-        """Update entity state."""
-        if entity_id not in self.entities:
-            return {"status": "error", "message": f"Entity {entity_id} not found"}
-        
-        entity = self.entities[entity_id]
-        if position:
-            entity.position = position
-        if rotation:
-            entity.rotation = rotation
-        if active is not None:
-            entity.active = active
-        
-        return {
-            "status": "entity_updated",
-            "entity": entity.to_dict()
-        }
+        entity = Entity(
+            entity_id=entity_id,
+            entity_type=entity_type,
+            position=position,
+            data=data or {}
+        )
 
-    def get_terrain_height(self, world_x: float, world_z: float) -> float:
-        """Get height at world coordinates."""
-        chunk_x = int(world_x // self.chunk_size)
-        chunk_z = int(world_z // self.chunk_size)
-        chunk_id = chunk_z * (self.world_width // self.chunk_size) + chunk_x
-        
-        if chunk_id not in self.chunks:
-            return 0.0
-        
-        local_x = (world_x % self.chunk_size) / self.chunk_size
-        local_z = (world_z % self.chunk_size) / self.chunk_size
-        
-        return self.chunks[chunk_id].get_height_at(local_x, local_z)
+        chunk_key = self.get_chunk_key(position.x, position.z)
+        if chunk_key in self.chunks:
+            self.chunks[chunk_key].add_entity(entity)
 
-    def frustum_cull(self, view_distance: float = 300.0) -> Dict:
-        """Perform frustum culling to optimize rendering."""
-        self.culled_chunks = 0
-        visible_chunks = 0
-        
-        for chunk_id, chunk in self.chunks.items():
-            distance = self.camera.position.distance_to(chunk.position)
-            if distance < view_distance:
-                visible_chunks += 1
-            else:
-                self.culled_chunks += 1
-        
-        return {
-            "visible_chunks": visible_chunks,
-            "culled_chunks": self.culled_chunks,
-            "total_chunks": len(self.chunks),
-            "cull_distance": view_distance
-        }
+        self.entities[entity_id] = entity
+        return entity
 
-    def occlusion_cull_entities(self, max_distance: float = 200.0) -> Dict:
-        """Perform occlusion culling on entities."""
-        self.rendered_entities = 0
-        culled_entities = 0
-        
-        for entity_id, entity in self.entities.items():
-            if not entity.active:
-                culled_entities += 1
-                continue
-            
-            distance = self.camera.position.distance_to(entity.position)
-            if distance < max_distance:
-                self.rendered_entities += 1
-            else:
-                culled_entities += 1
-        
-        return {
-            "rendered_entities": self.rendered_entities,
-            "culled_entities": culled_entities,
-            "total_entities": len(self.entities),
-            "max_distance": max_distance
-        }
+    def move_player(self, dx: float, dy: float, dz: float) -> None:
+        """Move player"""
+        self.player_position.x += dx
+        self.player_position.y += dy
+        self.player_position.z += dz
 
-    def move_camera(self, delta: Vector3) -> Dict:
-        """Move camera in world space."""
-        self.camera.move(delta)
-        return {
-            "status": "camera_moved",
-            "camera": self.camera.to_dict()
-        }
-
-    def rotate_camera(self, yaw: float, pitch: float) -> Dict:
-        """Rotate camera by yaw and pitch (in degrees)."""
-        yaw_rad = math.radians(yaw)
-        pitch_rad = math.radians(pitch)
-        
-        direction = (self.camera.target - self.camera.position).normalize()
-        
-        cos_yaw = math.cos(yaw_rad)
-        sin_yaw = math.sin(yaw_rad)
-        rotated_x = direction.x * cos_yaw - direction.z * sin_yaw
-        rotated_z = direction.x * sin_yaw + direction.z * cos_yaw
-        
-        direction = Vector3(rotated_x, direction.y, rotated_z).normalize()
-        
-        distance = self.camera.target.distance_to(self.camera.position)
-        self.camera.target = self.camera.position + direction * distance
-        
-        return {
-            "status": "camera_rotated",
-            "yaw": yaw,
-            "pitch": pitch,
-            "camera": self.camera.to_dict()
-        }
-
-    def update(self) -> Dict:
-        """Update world state for one frame."""
+    def update(self, delta_time: float) -> None:
+        """Update engine state"""
+        self.current_time += delta_time
         self.frame_count += 1
-        
+
+        self.update_view()
+
+        for chunk in self.chunks.values():
+            chunk.update(delta_time)
+
         for entity in self.entities.values():
-            if entity.active and entity.entity_type == "npc":
-                movement = Vector3(
-                    math.sin(self.frame_count * 0.02) * 0.1,
-                    0,
-                    math.cos(self.frame_count * 0.02) * 0.1
-                )
-                entity.update_position(movement)
-        
+            entity.update(delta_time)
+
+    def get_stats(self) -> Dict:
+        """Get engine statistics"""
+        loaded_chunks = sum(1 for c in self.chunks.values() if c.state == ChunkState.LOADED)
+        total_entities = len(self.entities)
+        chunk_entities = sum(len(c.entities) for c in self.chunks.values())
+
         return {
-            "frame": self.frame_count,
-            "delta_time": self.delta_time,
-            "active_entities": sum(1 for e in self.entities.values() if e.active),
-            "total_chunks": len(self.chunks)
+            "frame_count": self.frame_count,
+            "current_time": round(self.current_time, 3),
+            "player_position": self.player_position.to_dict(),
+            "loaded_chunks": loaded_chunks,
+            "max_chunks": self.max_loaded_chunks,
+            "total_chunks_created": len(self.chunks),
+            "total_vertices": self.total_vertices,
+            "total_entities": total_entities,
+            "chunk_entities": chunk_entities,
+            "view_distance": self.view_distance,
+            "chunk_size": self.chunk_size
         }
 
-    def get_world_state(self) -> Dict:
-        """Get complete world state snapshot."""
-        return {
-            "frame": self.frame_count,
-            "world": {
-                "width": self.world_width,
-                "height": self.world_height,
-                "chunk_size": self.chunk_size,
-                "total_chunks": len(self.chunks)
-            },
-            "camera": self.camera.to_dict(),
-            "entities": {
-                "total": len(self.entities),
-                "active": sum(1 for e in self.entities.values() if e.active),
-                "list": [e.to_dict() for e in list(self.entities.values())[:5]]
-            },
-            "chunks_sample": [c.to_dict() for c in list(self.chunks.values())[:3]]
-        }
+    def get_chunk_info(self) -> List[Dict]:
+        """Get information about all chunks"""
+        return [chunk.to_dict() for chunk in sorted(
+            self.chunks.values(),
+            key=lambda c: c.last_access_time,
+            reverse=True
+        )]
 
-    def serialize_world(self, filename: str) -> Dict:
-        """Serialize world to JSON file."""
-        try:
-            world_data = {
-                "metadata": {
-                    "version": 1,
-                    "frame": self.frame_count,
-                    "timestamp": time.time()
-                },
-                "world": {
-                    "width": self.world_width,
-                    "height": self.world_height,
-                    "chunk_size": self.chunk_size
-                },
-                "camera": self.camera.to_dict(),
-                "chunks": {str(k): v.to_dict() for k, v in self.chunks.items()},
-                "entities": {str(k): v.to_dict() for k, v in self.entities.items()}
-            }
-            
-            with open(filename, 'w') as f:
-                json.dump(world_data, f, indent=2)
-            
-            return {
-                "status": "world_serialized",
-                "filename": filename,
-                "size_bytes": len(json.dumps(world_data))
-            }
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+    def get_loaded_chunk_keys(self) -> List[Tuple[int, int]]:
+        """Get keys of all loaded chunks"""
+        return sorted(list(self.active_chunks))
 
-    def get_chunk_neighbors(self, chunk_id: int) -> Dict:
-        """Get neighboring chunks for streaming."""
-        if chunk_id not in self.chunks:
-            return {"status": "error", "message": f"Chunk {chunk_id} not found"}
-        
-        chunks_wide = self.world_width // self.chunk_size
-        
-        x = chunk_id % chunks_wide
-        y = chunk_id // chunks_wide
-        
-        neighbors = []
-        for dy in [-1, 0, 1]:
-            for dx in [-1, 0, 1]:
-                if dx == 0 and dy == 0:
-                    continue
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < chunks_wide and 0 <= ny < (self.world_height // self.chunk_size):
-                    neighbor_id = ny * chunks_wide + nx
-                    if neighbor_id in self.chunks:
-                        neighbors.append(neighbor_id)
-        
-        return {
-            "chunk_id": chunk_id,
-            "neighbors": neighbors,
-            "neighbor_count": len(neighbors)
-        }
+
+def simulate_gameplay(engine: N64Engine, duration: float = 10.0,
+                      delta_time: float = 0.016) -> List[Dict]:
+    """Simulate gameplay and return statistics snapshots"""
+    snapshots = []
+    elapsed = 0.0
+
+    while elapsed < duration:
+        # Simulate player movement
+        movement_speed = 30.0
+        angle = (elapsed % (2 * math.pi))
+        dx = math.cos(angle) * movement_speed * delta_time
+        dz = math.sin(angle) * movement_speed * delta_time
+
+        engine.move_player(dx, 0, dz)
+        engine.update(delta_time)
+
+        elapsed += delta_time
+
+        if int(elapsed * 60) % 6 == 0:
+            snapshots.append(engine.get_stats())
+
+    return snapshots
 
 
 def main():
+    """Main CLI interface"""
     parser = argparse.ArgumentParser(
-        description="N64 Open-World Engine Core - Terrain and entity management system"
+        description="N64 Open-World Engine Core Implementation"
     )
     parser.add_argument(
-        "--world-width",
+        "--max-chunks",
         type=int,
-        default=512,
-        help="World width in units (default: 512)"
-    )
-    parser.add_argument(
-        "--world-height",
-        type=int,
-        default=512,
-        help="World height in units (default: 512)"
+        default=16,
+        help="Maximum number of loaded chunks (default: 16)"
     )
     parser.add_argument(
         "--chunk-size",
-        type=int,
-        default=64,
-        help="Chunk size in units (default: 64)"
+        type=float,
+        default=64.0,
+        help="Size of each chunk in world units (default: 64.0)"
     )
     parser.add_argument(
-        "--seed",
+        "--view-distance",
+        type=float,
+        default=192.0,
+        help="View distance in world units (default: 192.0)"
+    )
+    parser.add_argument(
+        "--terrain-seed",
         type=int,
         default=42,
-        help="Terrain generation seed (default: 42)"
+        help="Random seed for terrain generation (default: 42)"
     )
     parser.add_argument(
-        "--entities",
-        type=int,
-        default=10,
-        help="Number of entities to spawn (default: 10)"
+        "--duration",
+        type=float,
+        default=10.0,
+        help="Simulation duration in seconds (default: 10.0)"
     )
     parser.add_argument(
-        "--output",
-        type=str,
-        help="Output file for world state (JSON)"
+        "--output-json",
+        action="store_true",
+        help="Output results as JSON"
     )
     parser.add_argument(
-        "--frames",
-        type=int,
-        default=5,
-        help="Number of frames to simulate (default: 5)"
+        "--verbose",
+        action="store_true",
+        help="Verbose output with detailed statistics"
     )
-    
+
     args = parser.parse_args()
-    
-    print("═" * 60)
-    print("N64 OPEN-WORLD ENGINE - CORE FUNCTIONALITY")
-    print("═" * 60)
-    
-    engine = N64WorldEngine(
-        world_width=args.world_width,
-        world_height=args.world_height,
-        chunk_size=args.chunk_size
+
+    engine = N64Engine(
+        max_loaded_chunks=args.max_chunks,
+        chunk_size=args.chunk_size,
+        view_distance=args.view_distance,
+        terrain_seed=args.terrain_seed
     )
-    
-    print("\n[1] Generating terrain...")
-    gen_result = engine.generate_terrain(seed=args.seed)
-    print(json.dumps(gen_result, indent=2))
-    
-    print("\n[2] Spawning entities...")
-    import random
-    random.seed(args.seed)
-    for i in range(args.entities):
-        x = random.uniform(50, args.world_width - 50)
-        z = random.uniform(50, args.world_height - 50)
-        y = engine.get_terrain_height(x, z) + 5
-        
-        entity_type = random.choice(["npc", "object", "collectible"])
-        spawn_result = engine.spawn_entity(
-            name=f"Entity_{i}",
-            position=Vector3(x, y, z),
-            entity_type=entity_type
-        )
-        if i < 3:
-            print(f"  Spawned {spawn_result['entity']['name']} (ID: {spawn_result['entity_id']})")
-    
-    print(f"  Total entities spawned: {len(engine.entities)}")
-    
-    print("\n[3] Performing frustum culling...")
-    cull_result = engine.frustum_cull(view_distance=300.0)
-    print(json.dumps(cull_result, indent=2))
-    
-    print("\n[4] Performing entity occlusion culling...")
-    occlusion_result = engine.occlusion_cull_entities(max_distance=200.0)
-    print(json.dumps(occlusion_result, indent=2))
-    
-    print("\n[5] Moving camera...")
-    move_result = engine.move_camera(Vector3(10, 0, 10))
-    print(f"  Camera position: ({move_result['camera']['position']['x']:.1f}, "
-          f"{move_result['camera']['position']['y']:.1f}, "
-          f"{move_result['camera']['position']['z']:.1f})")
-    
-    print("\n[6] Rotating camera...")
-    rotate_result = engine.rotate_camera(yaw=15, pitch=5)
-    print(f"  Rotated by yaw={rotate_result['yaw']}°, pitch={rotate_result['pitch']}°")
-    
-    print("\n[7] Simulating frames...")
-    for frame in range(args.frames):
-        update_result = engine.update()
-        print(f"  Frame {update_result['frame']}: "
-              f"{update_result['active_entities']} active entities")
-    
-    print("\n[8] Getting chunk neighbors...")
-    if engine.chunks:
-        first_chunk = next(iter(engine.chunks.keys()))
-        neighbors_result = engine.get_chunk_neighbors(first_chunk)
-        print(f"  Chunk {first_chunk} has {neighbors_result['neighbor_count']} neighbors")
-        print(f"  Neighbor IDs: {neighbors_result['neighbors'][:5]}")
-    
-    print("\n[9] World state snapshot...")
-    state = engine.get_world_state()
-    print(json.dumps({
-        "frame": state["frame"],
-        "world": state["world"],
-        "entities_count": state["entities"]["total"],
-        "active_entities": state["entities"]["active"],
-        "chunks_count": state["world"]["total_chunks"]
-    }, indent=2))
-    
-    if args.output:
-        print(f"\n[10] Serializing world to {args.output}...")
-        serialize_result = engine.serialize_world(args.output)
-        print(json.dumps(serialize_result, indent=2))
-    
-    print("\n" + "═" * 60)
-    print("Engine simulation complete")
-    print("═" * 60)
 
+    snapshots = simulate_gameplay(engine, duration=args.duration)
 
-if __name__ == "__main__":
-    main()
+    if args.output_json:
+        result = {
+            "config": {
+                "max_chunks": args.max_chunks,
+                "chunk_size": args.chunk_size,
+                "view_distance": args.view_distance,
+                "terrain_seed": args.terrain_seed,
+                "duration": args.duration
+            },
+            "snapshots": snapshots,
+            "final_stats": engine.get_stats(),
+            "chunk_info": engine.get_chunk_info()
+        }
+        print(json.dumps(result, indent=2))
+    else:
+        print("\n" + "="*70)
+        print("N64 OPEN-WORLD ENGINE - SIMULATION COMPLETE")
+        print("="*70 + "\n")
+
+        final_stats = engine.get_stats()
+        print("Final Statistics:")
+        print(f"  Frames Rendered: {final_stats['frame_count']}")
+        print(f"  Simulation Time: {final_stats['current_time']:.2f}s")
+        print(f"  Player Position: ({final_stats['player_position']['x']:.1f}, "
+              f"{final_stats['player_position']['y']:.1f}, "
+              f"{final_stats['player_position']['z']:.1f})")
+        print(f"  Loaded Chunks: {final_stats['loaded_chunks']}/{final_stats['max_chunks']}")
+        print(f"  Total Vertices Loaded: {final_stats['total_vertices']}")
+        print(f"  Total Entities: {final_stats['total_entities']}")
+        print()
+
+        if args.verbose:
+            print("Chunk Details:")
+            for chunk_info in engine.get_chunk_info():
+                if chunk_info['state'] == 'LOADED':
+                    print(f"  Chunk ({chunk_info['chunk_x']}, {chunk_info['chunk_z']}): "
+                          f"{chunk_info['entity_count']} entities, "
+                          f"load_time={chunk_info['load_time']*1000:.2f}ms")
+            print()
+
+        print("Snapshots (every 6 frames):")
+        for i, snapshot in enumerate(snapshots):
+            print(f"  Frame {snapshot['frame_count']:3d}: "
+                  f"chunks={snapshot['loaded_chunks']}, "
