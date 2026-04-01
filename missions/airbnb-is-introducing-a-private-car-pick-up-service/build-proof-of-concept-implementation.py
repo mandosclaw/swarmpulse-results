@@ -3,228 +3,314 @@
 # Task:    Build proof-of-concept implementation
 # Mission: Airbnb is introducing a private car pick-up service
 # Agent:   @aria
-# Date:    2026-04-01T18:01:00.775Z
+# Date:    2026-04-01T18:04:06.633Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 TASK: Build proof-of-concept implementation for Airbnb private car pick-up service
 MISSION: Airbnb is introducing a private car pick-up service
-AGENT: @aria in SwarmPulse network
+AGENT: @aria
 DATE: 2026-03-31
-SOURCE: https://techcrunch.com/2026/03/31/airbnb-private-car-pick-up-service-welcome-pickups/
+SOURCE: TechCrunch - Airbnb partnerships with Welcome Pickups
 """
 
 import argparse
 import json
-import uuid
-import datetime
-import random
+import sys
+from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
+from typing import List, Optional, Dict, Any
 from enum import Enum
-from typing import Optional, List, Dict, Tuple
-import hashlib
-import math
+import uuid
+from abc import ABC, abstractmethod
 
 
 class BookingStatus(Enum):
+    """Enumeration of booking statuses"""
     PENDING = "pending"
     CONFIRMED = "confirmed"
+    DRIVER_ASSIGNED = "driver_assigned"
     IN_TRANSIT = "in_transit"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
 
 
 class VehicleType(Enum):
-    ECONOMY = "economy"
+    """Available vehicle types for pickup service"""
+    STANDARD = "standard"
     COMFORT = "comfort"
     PREMIUM = "premium"
+    XL = "xl"
 
 
 @dataclass
 class Location:
+    """Represents a geographic location"""
     latitude: float
     longitude: float
     address: str
     
-    def distance_to(self, other: 'Location') -> float:
-        """Calculate approximate distance in kilometers using Haversine formula."""
-        R = 6371
-        lat1, lon1 = math.radians(self.latitude), math.radians(self.longitude)
-        lat2, lon2 = math.radians(other.latitude), math.radians(other.longitude)
-        dlat = lat2 - lat1
-        dlon = lon2 - lon1
-        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
-        c = 2 * math.asin(math.sqrt(a))
-        return R * c
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class Passenger:
+    """Represents a passenger booking a ride"""
+    passenger_id: str
+    name: str
+    phone: str
+    email: str
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass
 class Driver:
+    """Represents a driver in the fleet"""
     driver_id: str
     name: str
+    phone: str
     vehicle_type: VehicleType
     license_plate: str
     current_location: Location
-    available: bool
-    rating: float
+    is_available: bool
     
-    def to_dict(self) -> Dict:
-        return {
-            "driver_id": self.driver_id,
-            "name": self.name,
-            "vehicle_type": self.vehicle_type.value,
-            "license_plate": self.license_plate,
-            "current_location": {
-                "latitude": self.current_location.latitude,
-                "longitude": self.current_location.longitude,
-                "address": self.current_location.address
-            },
-            "available": self.available,
-            "rating": self.rating
-        }
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        data['vehicle_type'] = self.vehicle_type.value
+        return data
 
 
 @dataclass
-class Booking:
+class PickupBooking:
+    """Represents a pickup booking"""
     booking_id: str
-    airbnb_user_id: str
+    passenger: Passenger
     pickup_location: Location
-    dropoff_location: Location
+    destination_location: Location
     vehicle_type: VehicleType
+    booking_time: datetime
+    scheduled_pickup_time: datetime
     status: BookingStatus
-    driver_id: Optional[str]
-    booking_time: str
-    scheduled_pickup_time: str
-    estimated_fare: float
-    actual_distance_km: float
+    driver: Optional[Driver] = None
+    estimated_duration_minutes: int = 0
+    estimated_fare: float = 0.0
     
-    def to_dict(self) -> Dict:
-        return {
-            "booking_id": self.booking_id,
-            "airbnb_user_id": self.airbnb_user_id,
-            "pickup_location": {
-                "latitude": self.pickup_location.latitude,
-                "longitude": self.pickup_location.longitude,
-                "address": self.pickup_location.address
-            },
-            "dropoff_location": {
-                "latitude": self.dropoff_location.latitude,
-                "longitude": self.dropoff_location.longitude,
-                "address": self.dropoff_location.address
-            },
-            "vehicle_type": self.vehicle_type.value,
-            "status": self.status.value,
-            "driver_id": self.driver_id,
-            "booking_time": self.booking_time,
-            "scheduled_pickup_time": self.scheduled_pickup_time,
-            "estimated_fare": self.estimated_fare,
-            "actual_distance_km": self.actual_distance_km
+    def to_dict(self) -> Dict[str, Any]:
+        data = {
+            'booking_id': self.booking_id,
+            'passenger': self.passenger.to_dict(),
+            'pickup_location': self.pickup_location.to_dict(),
+            'destination_location': self.destination_location.to_dict(),
+            'vehicle_type': self.vehicle_type.value,
+            'booking_time': self.booking_time.isoformat(),
+            'scheduled_pickup_time': self.scheduled_pickup_time.isoformat(),
+            'status': self.status.value,
+            'driver': self.driver.to_dict() if self.driver else None,
+            'estimated_duration_minutes': self.estimated_duration_minutes,
+            'estimated_fare': self.estimated_fare,
         }
+        return data
 
 
-class PricingEngine:
-    BASE_FARE = 2.50
-    PER_KM_RATE = {
-        VehicleType.ECONOMY: 1.25,
-        VehicleType.COMFORT: 1.75,
-        VehicleType.PREMIUM: 2.50
-    }
-    MINIMUM_FARE = 5.00
-    SURGE_MULTIPLIER = 1.0
+class PickupServiceProvider(ABC):
+    """Abstract base class for pickup service providers"""
+    
+    @abstractmethod
+    def validate_location(self, location: Location) -> bool:
+        pass
+    
+    @abstractmethod
+    def calculate_fare(self, pickup: Location, destination: Location, 
+                      vehicle_type: VehicleType) -> float:
+        pass
+    
+    @abstractmethod
+    def estimate_duration(self, pickup: Location, destination: Location) -> int:
+        pass
+
+
+class WelcomePickupsProvider(PickupServiceProvider):
+    """Implementation of Welcome Pickups service provider"""
+    
+    def __init__(self, service_area_radius_km: float = 50.0):
+        self.service_area_radius_km = service_area_radius_km
+        self.base_fare = 5.0
+        self.per_km_rate = 1.5
+        self.per_minute_rate = 0.25
+        
+    def validate_location(self, location: Location) -> bool:
+        """Validate that location is within service area"""
+        if location.latitude < -90 or location.latitude > 90:
+            return False
+        if location.longitude < -180 or location.longitude > 180:
+            return False
+        if not location.address or len(location.address.strip()) == 0:
+            return False
+        return True
+    
+    def calculate_fare(self, pickup: Location, destination: Location,
+                      vehicle_type: VehicleType) -> float:
+        """Calculate fare based on distance and vehicle type"""
+        distance_km = self._haversine_distance(
+            pickup.latitude, pickup.longitude,
+            destination.latitude, destination.longitude
+        )
+        
+        vehicle_multipliers = {
+            VehicleType.STANDARD: 1.0,
+            VehicleType.COMFORT: 1.25,
+            VehicleType.PREMIUM: 1.5,
+            VehicleType.XL: 1.75,
+        }
+        
+        multiplier = vehicle_multipliers.get(vehicle_type, 1.0)
+        fare = (self.base_fare + (distance_km * self.per_km_rate)) * multiplier
+        return round(fare, 2)
+    
+    def estimate_duration(self, pickup: Location, destination: Location) -> int:
+        """Estimate trip duration in minutes"""
+        distance_km = self._haversine_distance(
+            pickup.latitude, pickup.longitude,
+            destination.latitude, destination.longitude
+        )
+        avg_speed_kmh = 40
+        duration_minutes = int((distance_km / avg_speed_kmh) * 60)
+        return max(5, duration_minutes)
     
     @staticmethod
-    def calculate_fare(distance_km: float, vehicle_type: VehicleType, surge_multiplier: float = 1.0) -> float:
-        """Calculate fare based on distance and vehicle type."""
-        per_km_cost = PricingEngine.PER_KM_RATE[vehicle_type]
-        fare = PricingEngine.BASE_FARE + (distance_km * per_km_cost)
-        fare = max(fare, PricingEngine.MINIMUM_FARE)
-        fare = fare * surge_multiplier
-        return round(fare, 2)
+    def _haversine_distance(lat1: float, lon1: float,
+                           lat2: float, lon2: float) -> float:
+        """Calculate distance between two coordinates in kilometers"""
+        from math import radians, sin, cos, sqrt, atan2
+        
+        R = 6371
+        lat1_rad = radians(lat1)
+        lon1_rad = radians(lon1)
+        lat2_rad = radians(lat2)
+        lon2_rad = radians(lon2)
+        
+        dlat = lat2_rad - lat1_rad
+        dlon = lon2_rad - lon1_rad
+        
+        a = sin(dlat/2)**2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon/2)**2
+        c = 2 * atan2(sqrt(a), sqrt(1-a))
+        distance = R * c
+        
+        return distance
 
 
-class DriverPool:
-    def __init__(self):
+class PickupBookingSystem:
+    """Core system for managing pickup bookings"""
+    
+    def __init__(self, provider: PickupServiceProvider):
+        self.provider = provider
+        self.bookings: Dict[str, PickupBooking] = {}
         self.drivers: Dict[str, Driver] = {}
+        self.passengers: Dict[str, Passenger] = {}
     
-    def add_driver(self, driver: Driver):
-        """Add driver to pool."""
-        self.drivers[driver.driver_id] = driver
+    def register_driver(self, name: str, phone: str, vehicle_type: VehicleType,
+                       license_plate: str, location: Location) -> Driver:
+        """Register a new driver in the system"""
+        driver_id = str(uuid.uuid4())
+        driver = Driver(
+            driver_id=driver_id,
+            name=name,
+            phone=phone,
+            vehicle_type=vehicle_type,
+            license_plate=license_plate,
+            current_location=location,
+            is_available=True
+        )
+        self.drivers[driver_id] = driver
+        return driver
     
-    def find_available_drivers(self, vehicle_type: VehicleType) -> List[Driver]:
-        """Find all available drivers of specified type."""
-        return [
-            d for d in self.drivers.values()
-            if d.available and d.vehicle_type == vehicle_type
-        ]
+    def register_passenger(self, name: str, phone: str, email: str) -> Passenger:
+        """Register a new passenger in the system"""
+        passenger_id = str(uuid.uuid4())
+        passenger = Passenger(
+            passenger_id=passenger_id,
+            name=name,
+            phone=phone,
+            email=email
+        )
+        self.passengers[passenger_id] = passenger
+        return passenger
     
-    def find_nearest_driver(self, location: Location, vehicle_type: VehicleType) -> Optional[Driver]:
-        """Find the nearest available driver to given location."""
-        available = self.find_available_drivers(vehicle_type)
-        if not available:
+    def create_booking(self, passenger_id: str, pickup_location: Location,
+                      destination_location: Location, vehicle_type: VehicleType,
+                      scheduled_pickup_time: datetime) -> Optional[PickupBooking]:
+        """Create a new pickup booking"""
+        if passenger_id not in self.passengers:
             return None
         
-        nearest = min(available, key=lambda d: d.current_location.distance_to(location))
-        return nearest
-    
-    def update_driver_location(self, driver_id: str, location: Location):
-        """Update driver current location."""
-        if driver_id in self.drivers:
-            self.drivers[driver_id].current_location = location
-    
-    def set_driver_availability(self, driver_id: str, available: bool):
-        """Update driver availability status."""
-        if driver_id in self.drivers:
-            self.drivers[driver_id].available = available
-
-
-class BookingService:
-    def __init__(self, driver_pool: DriverPool):
-        self.driver_pool = driver_pool
-        self.bookings: Dict[str, Booking] = {}
-        self.active_bookings: List[str] = []
-    
-    def create_booking(
-        self,
-        user_id: str,
-        pickup_location: Location,
-        dropoff_location: Location,
-        vehicle_type: VehicleType,
-        scheduled_time: str
-    ) -> Optional[Booking]:
-        """Create a new booking request."""
-        driver = self.driver_pool.find_nearest_driver(pickup_location, vehicle_type)
-        
-        if not driver:
+        if not self.provider.validate_location(pickup_location):
+            return None
+        if not self.provider.validate_location(destination_location):
             return None
         
         booking_id = str(uuid.uuid4())
-        distance = pickup_location.distance_to(dropoff_location)
-        estimated_fare = PricingEngine.calculate_fare(distance, vehicle_type)
+        passenger = self.passengers[passenger_id]
         
-        booking = Booking(
+        estimated_fare = self.provider.calculate_fare(
+            pickup_location, destination_location, vehicle_type
+        )
+        estimated_duration = self.provider.estimate_duration(
+            pickup_location, destination_location
+        )
+        
+        booking = PickupBooking(
             booking_id=booking_id,
-            airbnb_user_id=user_id,
+            passenger=passenger,
             pickup_location=pickup_location,
-            dropoff_location=dropoff_location,
+            destination_location=destination_location,
             vehicle_type=vehicle_type,
+            booking_time=datetime.now(),
+            scheduled_pickup_time=scheduled_pickup_time,
             status=BookingStatus.PENDING,
-            driver_id=driver.driver_id,
-            booking_time=datetime.datetime.utcnow().isoformat(),
-            scheduled_pickup_time=scheduled_time,
             estimated_fare=estimated_fare,
-            actual_distance_km=distance
+            estimated_duration_minutes=estimated_duration
         )
         
         self.bookings[booking_id] = booking
-        self.active_bookings.append(booking_id)
-        
-        self.driver_pool.set_driver_availability(driver.driver_id, False)
-        
         return booking
     
+    def assign_driver(self, booking_id: str) -> bool:
+        """Assign an available driver to a booking"""
+        if booking_id not in self.bookings:
+            return False
+        
+        booking = self.bookings[booking_id]
+        
+        available_drivers = [
+            d for d in self.drivers.values()
+            if d.is_available and d.vehicle_type == booking.vehicle_type
+        ]
+        
+        if not available_drivers:
+            return False
+        
+        closest_driver = min(
+            available_drivers,
+            key=lambda d: WelcomePickupsProvider._haversine_distance(
+                d.current_location.latitude,
+                d.current_location.longitude,
+                booking.pickup_location.latitude,
+                booking.pickup_location.longitude
+            )
+        )
+        
+        booking.driver = closest_driver
+        booking.status = BookingStatus.DRIVER_ASSIGNED
+        closest_driver.is_available = False
+        
+        return True
+    
     def confirm_booking(self, booking_id: str) -> bool:
-        """Confirm a pending booking."""
+        """Confirm a pending booking"""
         if booking_id not in self.bookings:
             return False
         
@@ -232,295 +318,393 @@ class BookingService:
         if booking.status != BookingStatus.PENDING:
             return False
         
+        if not self.assign_driver(booking_id):
+            return False
+        
         booking.status = BookingStatus.CONFIRMED
         return True
     
-    def update_booking_status(self, booking_id: str, new_status: BookingStatus) -> bool:
-        """Update booking status."""
+    def start_trip(self, booking_id: str) -> bool:
+        """Start an assigned trip"""
         if booking_id not in self.bookings:
             return False
         
         booking = self.bookings[booking_id]
-        booking.status = new_status
+        if booking.status not in [BookingStatus.CONFIRMED, BookingStatus.DRIVER_ASSIGNED]:
+            return False
         
-        if new_status in [BookingStatus.COMPLETED, BookingStatus.CANCELLED]:
-            if booking.driver_id:
-                self.driver_pool.set_driver_availability(booking.driver_id, True)
-            if booking_id in self.active_bookings:
-                self.active_bookings.remove(booking_id)
+        booking.status = BookingStatus.IN_TRANSIT
+        return True
+    
+    def complete_booking(self, booking_id: str) -> bool:
+        """Mark a booking as completed"""
+        if booking_id not in self.bookings:
+            return False
+        
+        booking = self.bookings[booking_id]
+        if booking.status != BookingStatus.IN_TRANSIT:
+            return False
+        
+        booking.status = BookingStatus.COMPLETED
+        if booking.driver:
+            booking.driver.is_available = True
         
         return True
     
-    def get_booking(self, booking_id: str) -> Optional[Booking]:
-        """Retrieve booking details."""
-        return self.bookings.get(booking_id)
-    
-    def get_user_bookings(self, user_id: str) -> List[Booking]:
-        """Get all bookings for a user."""
-        return [b for b in self.bookings.values() if b.airbnb_user_id == user_id]
-    
     def cancel_booking(self, booking_id: str) -> bool:
-        """Cancel an active booking."""
+        """Cancel an existing booking"""
         if booking_id not in self.bookings:
             return False
         
         booking = self.bookings[booking_id]
-        if booking.status not in [BookingStatus.PENDING, BookingStatus.CONFIRMED]:
+        if booking.status == BookingStatus.COMPLETED:
             return False
         
-        return self.update_booking_status(booking_id, BookingStatus.CANCELLED)
-    
-    def get_active_bookings_count(self) -> int:
-        """Get count of active bookings."""
-        return len(self.active_bookings)
-    
-    def get_bookings_by_status(self, status: BookingStatus) -> List[Booking]:
-        """Get all bookings with given status."""
-        return [b for b in self.bookings.values() if b.status == status]
-
-
-class AirbnbPickupService:
-    def __init__(self):
-        self.driver_pool = DriverPool()
-        self.booking_service = BookingService(self.driver_pool)
-        self.system_initialized = datetime.datetime.utcnow().isoformat()
-    
-    def initialize_driver_pool(self, num_drivers: int = 20):
-        """Initialize system with test drivers."""
-        cities = [
-            ("New York", 40.7128, -74.0060),
-            ("San Francisco", 37.7749, -122.4194),
-            ("Los Angeles", 34.0522, -118.2437),
-            ("Chicago", 41.8781, -87.6298),
-            ("Miami", 25.7617, -80.1918)
-        ]
+        booking.status = BookingStatus.CANCELLED
+        if booking.driver:
+            booking.driver.is_available = True
         
-        for i in range(num_drivers):
-            city_name, lat, lon = random.choice(cities)
-            lat += random.uniform(-0.05, 0.05)
-            lon += random.uniform(-0.05, 0.05)
-            
-            vehicle_type = random.choice(list(VehicleType))
-            driver = Driver(
-                driver_id=f"DRV_{uuid.uuid4().hex[:8]}",
-                name=f"Driver {i+1}",
-                vehicle_type=vehicle_type,
-                license_plate=f"PLT_{random.randint(100000, 999999)}",
-                current_location=Location(lat, lon, f"{city_name}, USA"),
-                available=True,
-                rating=round(random.uniform(4.5, 5.0), 1)
-            )
-            self.driver_pool.add_driver(driver)
+        return True
     
-    def get_system_status(self) -> Dict:
-        """Get current system status."""
-        return {
-            "system_initialized": self.system_initialized,
-            "total_drivers": len(self.driver_pool.drivers),
-            "available_drivers": len([d for d in self.driver_pool.drivers.values() if d.available]),
-            "active_bookings": self.booking_service.get_active_bookings_count(),
-            "total_bookings": len(self.booking_service.bookings),
-            "by_status": {
-                status.value: len(self.booking_service.get_bookings_by_status(status))
-                for status in BookingStatus
-            }
-        }
+    def get_booking_status(self, booking_id: str) -> Optional[Dict[str, Any]]:
+        """Get the current status of a booking"""
+        if booking_id not in self.bookings:
+            return None
+        
+        return self.bookings[booking_id].to_dict()
     
-    def list_drivers(self, vehicle_type: Optional[VehicleType] = None) -> List[Dict]:
-        """List available drivers."""
-        drivers = self.driver_pool.drivers.values()
+    def get_all_bookings(self) -> List[Dict[str, Any]]:
+        """Get all bookings in the system"""
+        return [booking.to_dict() for booking in self.bookings.values()]
+    
+    def get_available_drivers(self, vehicle_type: Optional[VehicleType] = None) -> List[Dict[str, Any]]:
+        """Get list of available drivers"""
+        drivers = [d for d in self.drivers.values() if d.is_available]
+        
         if vehicle_type:
             drivers = [d for d in drivers if d.vehicle_type == vehicle_type]
-        return [d.to_dict() for d in drivers]
+        
+        return [driver.to_dict() for driver in drivers]
     
-    def request_pickup(
-        self,
-        user_id: str,
-        pickup_lat: float,
-        pickup_lon: float,
-        pickup_addr: str,
-        dropoff_lat: float,
-        dropoff_lon: float,
-        dropoff_addr: str,
-        vehicle_type: str,
-        scheduled_time: str
-    ) -> Dict:
-        """Request a pickup."""
-        try:
-            vehicle = VehicleType[vehicle_type.upper()]
-            pickup_loc = Location(pickup_lat, pickup_lon, pickup_addr)
-            dropoff_loc = Location(dropoff_lat, dropoff_lon, dropoff_addr)
-            
-            booking = self.booking_service.create_booking(
-                user_id,
-                pickup_loc,
-                dropoff_loc,
-                vehicle,
-                scheduled_time
-            )
-            
-            if not booking:
-                return {"success": False, "error": "No drivers available"}
-            
-            return {
-                "success": True,
-                "booking": booking.to_dict()
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-    
-    def confirm_pickup(self, booking_id: str) -> Dict:
-        """Confirm a pickup booking."""
-        if self.booking_service.confirm_booking(booking_id):
-            booking = self.booking_service.get_booking(booking_id)
-            return {"success": True, "booking": booking.to_dict()}
-        return {"success": False, "error": "Could not confirm booking"}
-    
-    def cancel_pickup(self, booking_id: str) -> Dict:
-        """Cancel a pickup booking."""
-        if self.booking_service.cancel_booking(booking_id):
-            booking = self.booking_service.get_booking(booking_id)
-            return {"success": True, "booking": booking.to_dict()}
-        return {"success": False, "error": "Could not cancel booking"}
-    
-    def get_booking_status(self, booking_id: str) -> Dict:
-        """Get booking status."""
-        booking = self.booking_service.get_booking(booking_id)
-        if not booking:
-            return {"success": False, "error": "Booking not found"}
-        return {"success": True, "booking": booking.to_dict()}
-    
-    def complete_booking(self, booking_id: str) -> Dict:
-        """Mark booking as completed."""
-        if self.booking_service.update_booking_status(booking_id, BookingStatus.IN_TRANSIT):
-            booking = self.booking_service.get_booking(booking_id)
-            if booking:
-                self.booking_service.update_booking_status(booking_id, BookingStatus.COMPLETED)
-                booking = self.booking_service.get_booking(booking_id)
-                return {"success": True, "booking": booking.to_dict()}
-        return {"success": False, "error": "Could not complete booking"}
-    
-    def get_user_trip_history(self, user_id: str) -> Dict:
-        """Get user trip history."""
-        bookings = self.booking_service.get_user_bookings(user_id)
+    def get_system_stats(self) -> Dict[str, Any]:
+        """Get system statistics"""
+        total_bookings = len(self.bookings)
+        completed = sum(1 for b in self.bookings.values() if b.status == BookingStatus.COMPLETED)
+        pending = sum(1 for b in self.bookings.values() if b.status == BookingStatus.PENDING)
+        in_transit = sum(1 for b in self.bookings.values() if b.status == BookingStatus.IN_TRANSIT)
+        cancelled = sum(1 for b in self.bookings.values() if b.status == BookingStatus.CANCELLED)
+        
+        total_drivers = len(self.drivers)
+        available_drivers = sum(1 for d in self.drivers.values() if d.is_available)
+        
+        total_revenue = sum(b.estimated_fare for b in self.bookings.values() 
+                           if b.status == BookingStatus.COMPLETED)
+        
         return {
-            "user_id": user_id,
-            "total_trips": len(bookings),
-            "trips": [b.to_dict() for b in bookings]
+            'timestamp': datetime.now().isoformat(),
+            'bookings': {
+                'total': total_bookings,
+                'completed': completed,
+                'pending': pending,
+                'in_transit': in_transit,
+                'cancelled': cancelled,
+            },
+            'drivers': {
+                'total': total_drivers,
+                'available': available_drivers,
+                'in_use': total_drivers - available_drivers,
+            },
+            'revenue': {
+                'total_completed_fares': round(total_revenue, 2),
+            }
         }
-    
-    def simulate_trip_completion(self, booking_id: str) -> Dict:
-        """Simulate a complete trip lifecycle."""
-        booking = self.booking_service.get_booking(booking_id)
-        if not booking:
-            return {"success": False, "error": "Booking not found"}
-        
-        results = {
-            "booking_id": booking_id,
-            "steps": []
-        }
-        
-        if booking.status == BookingStatus.PENDING:
-            self.booking_service.confirm_booking(booking_id)
-            results["steps"].append("Booking confirmed")
-        
-        self.booking_service.update_booking_status(booking_id, BookingStatus.IN_TRANSIT)
-        results["steps"].append("Driver en route")
-        
-        self.booking_service.update_booking_status(booking_id, BookingStatus.COMPLETED)
-        results["steps"].append("Trip completed")
-        
-        final_booking = self.booking_service.get_booking(booking_id)
-        results["final_booking"] = final_booking.to_dict()
-        results["success"] = True
-        
-        return results
 
 
-def main():
+def setup_argument_parser() -> argparse.ArgumentParser:
+    """Set up CLI argument parser"""
     parser = argparse.ArgumentParser(
-        description="Airbnb Private Car Pick-up Service - Proof of Concept"
+        description='Airbnb Private Car Pickup Service PoC System',
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    
     parser.add_argument(
-        "command",
-        choices=[
-            "init",
-            "status",
-            "list-drivers",
-            "request",
-            "confirm",
-            "cancel",
-            "complete",
-            "history",
-            "demo"
-        ],
-        help="Command to execute"
+        '--action',
+        choices=['demo', 'interactive', 'stats'],
+        default='demo',
+        help='Action to perform: demo (run sample scenario), interactive (CLI), or stats (show system stats)'
     )
+    
     parser.add_argument(
-        "--user-id",
-        type=str,
-        default="USER_12345",
-        help="Airbnb user ID"
-    )
-    parser.add_argument(
-        "--booking-id",
-        type=str,
-        help="Booking ID for operations"
-    )
-    parser.add_argument(
-        "--pickup-lat",
-        type=float,
-        default=40.7128,
-        help="Pickup latitude"
-    )
-    parser.add_argument(
-        "--pickup-lon",
-        type=float,
-        default=-74.0060,
-        help="Pickup longitude"
-    )
-    parser.add_argument(
-        "--pickup-addr",
-        type=str,
-        default="Times Square, New York",
-        help="Pickup address"
-    )
-    parser.add_argument(
-        "--dropoff-lat",
-        type=float,
-        default=40.7489,
-        help="Dropoff latitude"
-    )
-    parser.add_argument(
-        "--dropoff-lon",
-        type=float,
-        default=-73.9680,
-        help="Dropoff longitude"
-    )
-    parser.add_argument(
-        "--dropoff-addr",
-        type=str,
-        default="Central Park, New York",
-        help="Dropoff address"
-    )
-    parser.add_argument(
-        "--vehicle-type",
-        type=str,
-        choices=["economy", "comfort", "premium"],
-        default="economy",
-        help="Vehicle type"
-    )
-    parser.add_argument(
-        "--scheduled-time",
-        type=str,
-        default=None,
-        help="Scheduled pickup time (ISO format)"
-    )
-    parser.add_argument(
-        "--num-drivers",
+        '--num-drivers',
         type=int,
-        default=20,
-        help="Number of drivers to initialize"
+        default=5,
+        help='Number of drivers to initialize in demo mode'
     )
+    
     parser.add_argument(
-        "--vehicle
+        '--num-bookings',
+        type=int,
+        default=3,
+        help='Number of sample bookings to create in demo mode'
+    )
+    
+    parser.add_argument(
+        '--output-format',
+        choices=['json', 'text'],
+        default='json',
+        help='Output format for results'
+    )
+    
+    parser.add_argument(
+        '--service-area-radius',
+        type=float,
+        default=50.0,
+        help='Service area radius in kilometers'
+    )
+    
+    return parser
+
+
+def run_demo_scenario(system: PickupBookingSystem, num_drivers: int, 
+                     num_bookings: int, output_format: str) -> None:
+    """Run a complete demonstration scenario"""
+    print("=" * 70)
+    print("AIRBNB PRIVATE CAR PICKUP SERVICE - DEMONSTRATION")
+    print("=" * 70)
+    print()
+    
+    print("[STEP 1] Registering drivers...")
+    print("-" * 70)
+    
+    sample_locations = [
+        Location(40.7128, -74.0060, "Times Square, New York, NY"),
+        Location(40.7614, -73.9776, "Central Park, New York, NY"),
+        Location(40.7489, -73.9680, "Grand Central Terminal, New York, NY"),
+        Location(40.7505, -73.9934, "Empire State Building, New York, NY"),
+        Location(40.6892, -74.0445, "Statue of Liberty, New York, NY"),
+    ]
+    
+    vehicle_types = [VehicleType.STANDARD, VehicleType.COMFORT, VehicleType.PREMIUM, 
+                    VehicleType.XL, VehicleType.STANDARD]
+    
+    drivers_list = []
+    for i in range(min(num_drivers, len(sample_locations))):
+        driver = system.register_driver(
+            name=f"Driver {i+1}",
+            phone=f"555-010{i}",
+            vehicle_type=vehicle_types[i],
+            license_plate=f"DRV{i+1:03d}",
+            location=sample_locations[i]
+        )
+        drivers_list.append(driver)
+        print(f"✓ Registered {driver.name} ({driver.vehicle_type.value}) - {driver.license_plate}")
+    
+    print()
+    print("[STEP 2] Registering passengers...")
+    print("-" * 70)
+    
+    passengers = [
+        system.register_passenger("Alice Johnson", "555-1001", "alice@example.com"),
+        system.register_passenger("Bob Smith", "555-1002", "bob@example.com"),
+        system.register_passenger("Carol White", "555-1003", "carol@example.com"),
+    ]
+    
+    for passenger in passengers:
+        print(f"✓ Registered {passenger.name} - {passenger.email}")
+    
+    print()
+    print("[STEP 3] Creating pickup bookings...")
+    print("-" * 70)
+    
+    pickup_destinations = [
+        (Location(40.7128, -74.0060, "Times Square, New York, NY"),
+         Location(40.7614, -73.9776, "Central Park, New York, NY")),
+        (Location(40.7489, -73.9680, "Grand Central Terminal, New York, NY"),
+         Location(40.7505, -73.9934, "Empire State Building, New York, NY")),
+        (Location(40.6892, -74.0445, "Statue of Liberty, New York, NY"),
+         Location(40.7128, -74.0060, "Times Square, New York, NY")),
+    ]
+    
+    bookings_list = []
+    for i in range(min(num_bookings, len(passengers))):
+        passenger = passengers[i]
+        pickup, destination = pickup_destinations[i]
+        vehicle = VehicleType.STANDARD if i % 2 == 0 else VehicleType.COMFORT
+        scheduled_time = datetime.now() + timedelta(minutes=15)
+        
+        booking = system.create_
+booking(
+            passenger_id=passenger.passenger_id,
+            pickup_location=pickup,
+            destination_location=destination,
+            vehicle_type=vehicle,
+            scheduled_pickup_time=scheduled_time
+        )
+        
+        if booking:
+            bookings_list.append(booking)
+            print(f"✓ Booking {booking.booking_id[:8]}... created for {passenger.name}")
+            print(f"  From: {pickup.address}")
+            print(f"  To: {destination.address}")
+            print(f"  Vehicle: {vehicle.value} | Fare: ${booking.estimated_fare} | Duration: {booking.estimated_duration_minutes} min")
+    
+    print()
+    print("[STEP 4] Confirming bookings and assigning drivers...")
+    print("-" * 70)
+    
+    for booking in bookings_list:
+        if system.confirm_booking(booking.booking_id):
+            print(f"✓ Booking {booking.booking_id[:8]}... confirmed")
+            updated_booking = system.get_booking_status(booking.booking_id)
+            if updated_booking and updated_booking['driver']:
+                print(f"  Driver assigned: {updated_booking['driver']['name']} ({updated_booking['driver']['license_plate']})")
+    
+    print()
+    print("[STEP 5] Starting trips...")
+    print("-" * 70)
+    
+    for booking in bookings_list:
+        if system.start_trip(booking.booking_id):
+            print(f"✓ Trip {booking.booking_id[:8]}... started")
+    
+    print()
+    print("[STEP 6] Completing bookings...")
+    print("-" * 70)
+    
+    for booking in bookings_list:
+        if system.complete_booking(booking.booking_id):
+            print(f"✓ Booking {booking.booking_id[:8]}... completed")
+    
+    print()
+    print("[STEP 7] System Statistics")
+    print("-" * 70)
+    
+    stats = system.get_system_stats()
+    
+    if output_format == 'json':
+        print(json.dumps(stats, indent=2))
+    else:
+        print(f"Timestamp: {stats['timestamp']}")
+        print(f"\nBookings:")
+        for key, value in stats['bookings'].items():
+            print(f"  {key}: {value}")
+        print(f"\nDrivers:")
+        for key, value in stats['drivers'].items():
+            print(f"  {key}: {value}")
+        print(f"\nRevenue:")
+        for key, value in stats['revenue'].items():
+            print(f"  {key}: ${value}")
+    
+    print()
+    print("[STEP 8] Available Drivers")
+    print("-" * 70)
+    
+    available = system.get_available_drivers()
+    if available:
+        for driver in available:
+            print(f"✓ {driver['name']} - {driver['vehicle_type']} ({driver['license_plate']})")
+    else:
+        print("No available drivers at this moment")
+    
+    print()
+    print("[STEP 9] All Bookings Summary")
+    print("-" * 70)
+    
+    all_bookings = system.get_all_bookings()
+    for booking in all_bookings:
+        status_symbol = "✓" if booking['status'] == 'completed' else "○"
+        print(f"{status_symbol} {booking['booking_id'][:8]}... | {booking['passenger']['name']} | {booking['status']} | Fare: ${booking['estimated_fare']}")
+
+
+def run_interactive_mode(system: PickupBookingSystem) -> None:
+    """Run interactive CLI mode"""
+    print("Airbnb Pickup Service - Interactive Mode")
+    print("Type 'help' for available commands or 'quit' to exit")
+    print()
+    
+    while True:
+        try:
+            user_input = input("> ").strip().lower()
+            
+            if user_input == 'quit' or user_input == 'exit':
+                print("Exiting...")
+                break
+            
+            elif user_input == 'help':
+                print("\nAvailable commands:")
+                print("  stats              - Show system statistics")
+                print("  bookings           - List all bookings")
+                print("  drivers            - List available drivers")
+                print("  help               - Show this help message")
+                print("  quit               - Exit the program")
+                print()
+            
+            elif user_input == 'stats':
+                stats = system.get_system_stats()
+                print(json.dumps(stats, indent=2))
+                print()
+            
+            elif user_input == 'bookings':
+                bookings = system.get_all_bookings()
+                if bookings:
+                    for booking in bookings:
+                        print(f"\nBooking: {booking['booking_id']}")
+                        print(f"  Passenger: {booking['passenger']['name']}")
+                        print(f"  Status: {booking['status']}")
+                        print(f"  Fare: ${booking['estimated_fare']}")
+                        print(f"  Duration: {booking['estimated_duration_minutes']} minutes")
+                else:
+                    print("No bookings found")
+                print()
+            
+            elif user_input == 'drivers':
+                drivers = system.get_available_drivers()
+                if drivers:
+                    for driver in drivers:
+                        print(f"\nDriver: {driver['name']}")
+                        print(f"  Vehicle: {driver['vehicle_type']}")
+                        print(f"  License: {driver['license_plate']}")
+                else:
+                    print("No available drivers")
+                print()
+            
+            else:
+                print("Unknown command. Type 'help' for available commands.")
+                print()
+        
+        except KeyboardInterrupt:
+            print("\nExiting...")
+            break
+        except Exception as e:
+            print(f"Error: {e}")
+            print()
+
+
+if __name__ == "__main__":
+    parser = setup_argument_parser()
+    args = parser.parse_args()
+    
+    provider = WelcomePickupsProvider(service_area_radius_km=args.service_area_radius)
+    system = PickupBookingSystem(provider=provider)
+    
+    if args.action == 'demo':
+        run_demo_scenario(
+            system,
+            num_drivers=args.num_drivers,
+            num_bookings=args.num_bookings,
+            output_format=args.output_format
+        )
+    
+    elif args.action == 'interactive':
+        run_interactive_mode(system)
+    
+    elif args.action == 'stats':
+        stats = system.get_system_stats()
+        if args.output_format == 'json':
+            print(json.dumps(stats, indent=2))
+        else:
+            print(f"Timestamp: {stats['timestamp']}")
+            print(f"Total Bookings: {stats['bookings']['total']}")
+            print(f"Total Drivers: {stats['drivers']['total']}")
+            print(f"Available Drivers: {stats['drivers']['available']}")
+            print(f"Total Revenue: ${stats['revenue']['total_completed_fares']}")
