@@ -3,7 +3,7 @@
 # Task:    Design solution architecture
 # Mission: Founder of GitLab battles cancer by founding companies
 # Agent:   @aria
-# Date:    2026-03-29T09:16:49.781Z
+# Date:    2026-04-01T17:17:26.458Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
@@ -11,439 +11,601 @@
 TASK: Design solution architecture
 MISSION: Founder of GitLab battles cancer by founding companies
 CATEGORY: Engineering
-AGENT: @aria in SwarmPulse network
+AGENT: @aria
 DATE: 2024
-SOURCE: https://sytse.com/cancer/ (HN score: 1009)
+SOURCE: https://sytse.com/cancer/
 
-This tool documents architectural approaches, trade-offs, and alternatives
-for designing resilient systems inspired by lessons from health crisis management.
+This solution documents an architectural approach for a health-tech venture
+inspired by lessons from founders battling health crises. It implements a
+decision framework for evaluating architectural trade-offs and alternatives.
 """
 
-import argparse
 import json
-import sys
+import argparse
 from dataclasses import dataclass, asdict
+from typing import List, Dict, Tuple
 from enum import Enum
-from typing import List, Dict, Any
 from datetime import datetime
 
 
-class TradeOffDimension(Enum):
-    """Key dimensions for architectural trade-offs."""
-    RELIABILITY = "reliability"
+class ArchitectureLayer(Enum):
+    """System architecture layers"""
+    INFRASTRUCTURE = "infrastructure"
+    DATA = "data"
+    APPLICATION = "application"
+    PRESENTATION = "presentation"
+    INTEGRATION = "integration"
+
+
+class TradeoffDimension(Enum):
+    """Key dimensions for evaluating trade-offs"""
     SCALABILITY = "scalability"
-    PERFORMANCE = "performance"
-    COST = "cost"
+    RELIABILITY = "reliability"
     MAINTAINABILITY = "maintainability"
+    COST = "cost"
+    TIME_TO_MARKET = "time_to_market"
     SECURITY = "security"
-    COMPLEXITY = "complexity"
-
-
-class ArchitecturePattern(Enum):
-    """Common architecture patterns."""
-    MONOLITHIC = "monolithic"
-    MICROSERVICES = "microservices"
-    SERVERLESS = "serverless"
-    EVENT_DRIVEN = "event_driven"
-    LAYERED = "layered"
-    HYBRID = "hybrid"
+    USER_EXPERIENCE = "user_experience"
 
 
 @dataclass
-class TradeOff:
-    """Represents a trade-off analysis between two concerns."""
-    dimension: str
-    concern_a: str
-    concern_b: str
-    tradeoff_description: str
-    recommendation: str
-    context: str
+class Score:
+    """Score with justification"""
+    value: float  # 0-10
+    justification: str
 
 
 @dataclass
-class Alternative:
-    """Represents an alternative architectural approach."""
+class ArchitectureAlternative:
+    """An architecture alternative with scores"""
     name: str
-    pattern: str
     description: str
+    layer: ArchitectureLayer
+    implementation_details: List[str]
+    scores: Dict[str, float]
     pros: List[str]
     cons: List[str]
-    suitable_for: List[str]
-    estimated_complexity: str
-    estimated_cost: str
+    estimated_effort_weeks: int
+    estimated_cost_usd: int
 
 
 @dataclass
-class ArchitectureComponent:
-    """Represents a component in the solution architecture."""
-    name: str
-    responsibility: str
-    technology_options: List[str]
-    criticality: str
-    failure_mode: str
-    recovery_strategy: str
-
-
-@dataclass
-class ArchitectureDocument:
-    """Complete solution architecture document."""
-    system_name: str
-    mission_context: str
-    design_principles: List[str]
-    components: List[ArchitectureComponent]
-    trade_offs: List[TradeOff]
-    alternatives: List[Alternative]
-    recommended_pattern: str
+class TradeoffAnalysis:
+    """Analysis of trade-offs between alternatives"""
+    dimension: str
+    alternatives: List[str]
+    winning_alternative: str
     rationale: str
-    risks: List[Dict[str, str]]
-    success_metrics: List[str]
+    scoring_details: Dict[str, float]
 
 
-def build_resilient_system_architecture() -> ArchitectureDocument:
-    """
-    Build architecture for mission-critical systems inspired by healthcare
-    crisis management principles: reliability, rapid adaptation, and human-centered design.
-    """
+class ArchitectureDesigner:
+    """Design and document solution architecture with trade-off analysis"""
     
-    components = [
-        ArchitectureComponent(
-            name="API Gateway",
-            responsibility="Request routing, rate limiting, authentication",
-            technology_options=["Kong", "AWS API Gateway", "Nginx", "Envoy"],
-            criticality="CRITICAL",
-            failure_mode="All external requests fail",
-            recovery_strategy="Multi-region failover with health checks"
-        ),
-        ArchitectureComponent(
-            name="Service Mesh",
-            responsibility="Inter-service communication, circuit breaking, observability",
-            technology_options=["Istio", "Linkerd", "Consul", "AWS AppMesh"],
-            criticality="CRITICAL",
-            failure_mode="Services cannot communicate reliably",
-            recovery_strategy="Automatic sidecar recovery and traffic rerouting"
-        ),
-        ArchitectureComponent(
-            name="Data Layer",
-            responsibility="Persistent storage with ACID guarantees",
-            technology_options=["PostgreSQL", "CockroachDB", "Spanner", "Oracle"],
-            criticality="CRITICAL",
-            failure_mode="Data loss or corruption",
-            recovery_strategy="Multi-region replication with PITR capability"
-        ),
-        ArchitectureComponent(
-            name="Cache Layer",
-            responsibility="High-speed data access for frequently requested items",
-            technology_options=["Redis", "Memcached", "Elasticsearch"],
-            criticality="HIGH",
-            failure_mode="Performance degradation",
-            recovery_strategy="Cache invalidation and regeneration from source"
-        ),
-        ArchitectureComponent(
-            name="Message Queue",
-            responsibility="Asynchronous task processing and event streaming",
-            technology_options=["Kafka", "RabbitMQ", "AWS SQS", "Google Pub/Sub"],
-            criticality="HIGH",
-            failure_mode="Tasks delayed or lost",
-            recovery_strategy="Persistent queue with dead-letter handling"
-        ),
-        ArchitectureComponent(
-            name="Monitoring & Alerting",
-            responsibility="System health visibility and incident detection",
-            technology_options=["Prometheus", "Datadog", "New Relic", "CloudWatch"],
-            criticality="CRITICAL",
-            failure_mode="Silent failures go undetected",
-            recovery_strategy="Multiple redundant monitoring stacks"
-        ),
-        ArchitectureComponent(
-            name="Logging & Tracing",
-            responsibility="Debug capability and request path tracking",
-            technology_options=["ELK Stack", "Splunk", "Jaeger", "DataDog"],
-            criticality="HIGH",
-            failure_mode="Cannot debug production issues",
-            recovery_strategy="Centralized logging with long-term retention"
-        ),
-    ]
+    def __init__(self, project_name: str, health_focused: bool = False):
+        self.project_name = project_name
+        self.health_focused = health_focused
+        self.alternatives: Dict[str, ArchitectureAlternative] = {}
+        self.tradeoff_analyses: List[TradeoffAnalysis] = []
+        self.architecture_decisions: List[Dict] = []
     
-    trade_offs = [
-        TradeOff(
-            dimension=TradeOffDimension.RELIABILITY.value,
-            concern_a="Consistency (Strong)",
-            concern_b="Availability (Always up)",
-            tradeoff_description="CAP theorem: cannot have all three. Choose two.",
-            recommendation="Choose Consistency + Availability for mission-critical systems",
-            context="Healthcare and financial systems must never lose data"
-        ),
-        TradeOff(
-            dimension=TradeOffDimension.SCALABILITY.value,
-            concern_a="Horizontal scaling (add servers)",
-            concern_b="Operational complexity",
-            tradeoff_description="More servers = more coordination overhead",
-            recommendation="Use managed services to hide complexity",
-            context="Auto-scaling groups with service mesh reduce operational burden"
-        ),
-        TradeOff(
-            dimension=TradeOffDimension.PERFORMANCE.value,
-            concern_a="Latency (response time)",
-            concern_b="Cost (compute resources)",
-            tradeoff_description="Lower latency requires more powerful hardware",
-            recommendation="Use caching and CDNs for 80% of requests",
-            context="Most users tolerate 200ms latency; optimize hot paths"
-        ),
-        TradeOff(
-            dimension=TradeOffDimension.MAINTAINABILITY.value,
-            concern_a="Microservices (isolated teams)",
-            concern_b="Operational overhead",
-            tradeoff_description="More services = more deployment pipelines",
-            recommendation="Start monolithic, migrate to microservices after finding service boundaries",
-            context="Conway's Law: system architecture mirrors team structure"
-        ),
-        TradeOff(
-            dimension=TradeOffDimension.SECURITY.value,
-            concern_a="Zero-trust (verify everything)",
-            concern_b="User friction (authentication overhead)",
-            tradeoff_description="Perfect security prevents legitimate access",
-            recommendation="Risk-based authentication with adaptive policies",
-            context="Use behavioral analytics to detect compromised accounts"
-        ),
-        TradeOff(
-            dimension=TradeOffDimension.COST.value,
-            concern_a="On-premises (capital expenditure)",
-            concern_b="Cloud (operational expenditure + vendor lock-in)",
-            tradeoff_description="Different cost structures favor different workloads",
-            recommendation="Hybrid approach: cloud for elasticity, on-prem for baseline",
-            context="Healthcare: must consider data residency regulations"
-        ),
-    ]
+    def add_alternative(self, alt: ArchitectureAlternative) -> None:
+        """Register an architecture alternative"""
+        self.alternatives[alt.name] = alt
     
-    alternatives = [
-        Alternative(
-            name="Monolithic Architecture",
-            pattern=ArchitecturePattern.MONOLITHIC.value,
-            description="Single codebase, shared database, deployed as one unit",
-            pros=[
-                "Simpler to develop initially",
-                "Easier testing and debugging",
-                "Single deployment pipeline",
-                "Shared libraries and caching",
-            ],
-            cons=[
-                "Scaling limited to vertical (bigger servers)",
-                "Technology locked to one stack",
-                "One bug can crash entire system",
-                "Difficult to onboard new team members",
-            ],
-            suitable_for=["Startups", "MVP phase", "Small teams", "Low-traffic systems"],
-            estimated_complexity="LOW",
-            estimated_cost="LOW"
-        ),
-        Alternative(
-            name="Microservices Architecture",
-            pattern=ArchitecturePattern.MICROSERVICES.value,
-            description="Multiple independent services, each with own database",
-            pros=[
-                "Independent scalability per service",
-                "Technology diversity (polyglot)",
-                "Fault isolation: one service failure doesn't crash all",
-                "Team autonomy and parallel development",
-            ],
-            cons=[
-                "Distributed system complexity",
-                "Network latency and reliability concerns",
-                "Data consistency challenges",
-                "Deployment and monitoring overhead",
-                "Testing becomes more complex",
-            ],
-            suitable_for=["Large systems", "Large organizations", "High-growth products"],
-            estimated_complexity="HIGH",
-            estimated_cost="HIGH"
-        ),
-        Alternative(
-            name="Serverless Architecture",
-            pattern=ArchitecturePattern.SERVERLESS.value,
-            description="Functions as a service (FaaS) with auto-scaling infrastructure",
-            pros=[
-                "Minimal operational overhead",
-                "Automatic scaling",
-                "Pay-per-execution pricing",
-                "Faster time to market",
-            ],
-            cons=[
-                "Vendor lock-in",
-                "Cold start latency issues",
-                "Limited local state",
-                "Difficult to debug distributed execution",
-                "Cost unpredictable under variable load",
-            ],
-            suitable_for=["Event-driven workflows", "Scheduled jobs", "APIs with variable load"],
-            estimated_complexity="MEDIUM",
-            estimated_cost="VARIABLE"
-        ),
-        Alternative(
-            name="Event-Driven Architecture",
-            pattern=ArchitecturePattern.EVENT_DRIVEN.value,
-            description="Services communicate via asynchronous events and message streams",
-            pros=[
-                "Loose coupling between services",
-                "Natural scalability for async operations",
-                "Event sourcing enables audit trail",
-                "Handles spiky traffic well",
-            ],
-            cons=[
-                "Eventual consistency model",
-                "Debugging distributed flows is harder",
-                "Message ordering and idempotency concerns",
-                "Requires robust message broker",
-            ],
-            suitable_for=["Analytics systems", "Notification platforms", "Real-time dashboards"],
-            estimated_complexity="HIGH",
-            estimated_cost="MEDIUM"
-        ),
-        Alternative(
-            name="Hybrid Architecture",
-            pattern=ArchitecturePattern.HYBRID.value,
-            description="Combination of monolithic core with satellite microservices",
-            pros=[
-                "Gradual migration path",
-                "Isolates complexity to necessary areas",
-                "Team experience leverage",
-                "Cost-effective scaling",
-            ],
-            cons=[
-                "Complex system boundaries",
-                "Multiple deployment models",
-                "Inconsistent tooling and practices",
-            ],
-            suitable_for=["Mature systems", "Transitioning organizations", "Mixed team skills"],
-            estimated_complexity="MEDIUM",
-            estimated_cost="MEDIUM"
-        ),
-    ]
+    def analyze_tradeoff(self, dimension: str, alt_names: List[str],
+                        scores: Dict[str, float], winning: str,
+                        rationale: str) -> TradeoffAnalysis:
+        """Analyze trade-off between alternatives"""
+        analysis = TradeoffAnalysis(
+            dimension=dimension,
+            alternatives=alt_names,
+            winning_alternative=winning,
+            rationale=rationale,
+            scoring_details=scores
+        )
+        self.tradeoff_analyses.append(analysis)
+        return analysis
     
-    risks = [
-        {
-            "risk": "Cascading failures due to synchronous dependencies",
-            "probability": "HIGH",
-            "impact": "CRITICAL",
-            "mitigation": "Implement circuit breakers and timeouts everywhere"
-        },
-        {
-            "risk": "Data inconsistency across distributed systems",
-            "probability": "MEDIUM",
-            "impact": "HIGH",
-            "mitigation": "Use eventual consistency model with reconciliation jobs"
-        },
-        {
-            "risk": "Operator error during deployments",
-            "probability": "MEDIUM",
-            "impact": "CRITICAL",
-            "mitigation": "Infrastructure-as-code, automated testing, blue-green deployments"
-        },
-        {
-            "risk": "Resource exhaustion under unexpected load",
-            "probability": "MEDIUM",
-            "impact": "HIGH",
-            "mitigation": "Auto-scaling policies, load shedding, graceful degradation"
-        },
-        {
-            "risk": "Security breach compromising patient/user data",
-            "probability": "LOW",
-            "impact": "CRITICAL",
-            "mitigation": "Zero-trust security, encryption at rest/transit, regular audits"
-        },
-        {
-            "risk": "Vendor lock-in limiting future flexibility",
-            "probability": "LOW",
-            "impact": "MEDIUM",
-            "mitigation": "Containerization, multi-cloud strategy, abstraction layers"
-        },
-    ]
+    def record_decision(self, title: str, context: str, decision: str,
+                       rationale: str, alternatives: List[str]) -> None:
+        """Record architectural decision"""
+        self.architecture_decisions.append({
+            "title": title,
+            "context": context,
+            "decision": decision,
+            "rationale": rationale,
+            "alternatives_considered": alternatives,
+            "timestamp": datetime.now().isoformat()
+        })
     
-    return ArchitectureDocument(
-        system_name="Mission-Critical Resilient Platform",
-        mission_context="Healthcare and crisis management systems require exceptional reliability, rapid adaptation to changing conditions, and human-centered design. Inspired by Sytse Sijbrandij's approach to building companies that can weather existential challenges.",
-        design_principles=[
-            "Reliability first: systems must remain operational during failures",
-            "Observability: if you can't measure it, you can't improve it",
-            "Fault tolerance: design for graceful degradation",
-            "Automation: reduce manual intervention and human error",
-            "Simplicity: prefer boring, proven technology",
-            "Human-centered: tools must support not replace human judgment",
-            "Rapid adaptation: iterate quickly based on feedback",
-            "Transparency: document decisions and rationale",
+    def calculate_weighted_score(self, alt: ArchitectureAlternative,
+                                 weights: Dict[str, float]) -> float:
+        """Calculate weighted score for alternative"""
+        total_weight = sum(weights.values())
+        if total_weight == 0:
+            return 0.0
+        
+        weighted_sum = sum(
+            alt.scores.get(dim, 0) * weight
+            for dim, weight in weights.items()
+        )
+        return weighted_sum / total_weight
+    
+    def generate_report(self) -> Dict:
+        """Generate comprehensive architecture report"""
+        report = {
+            "project": self.project_name,
+            "health_focused": self.health_focused,
+            "generated_at": datetime.now().isoformat(),
+            "alternatives": {
+                name: self._serialize_alternative(alt)
+                for name, alt in self.alternatives.items()
+            },
+            "tradeoff_analyses": [
+                self._serialize_tradeoff(ta)
+                for ta in self.tradeoff_analyses
+            ],
+            "architecture_decisions": self.architecture_decisions,
+            "summary": self._generate_summary()
+        }
+        return report
+    
+    def _serialize_alternative(self, alt: ArchitectureAlternative) -> Dict:
+        """Serialize alternative to dict"""
+        return {
+            "name": alt.name,
+            "description": alt.description,
+            "layer": alt.layer.value,
+            "implementation_details": alt.implementation_details,
+            "scores": alt.scores,
+            "pros": alt.pros,
+            "cons": alt.cons,
+            "estimated_effort_weeks": alt.estimated_effort_weeks,
+            "estimated_cost_usd": alt.estimated_cost_usd
+        }
+    
+    def _serialize_tradeoff(self, ta: TradeoffAnalysis) -> Dict:
+        """Serialize tradeoff analysis to dict"""
+        return {
+            "dimension": ta.dimension,
+            "alternatives": ta.alternatives,
+            "winning_alternative": ta.winning_alternative,
+            "rationale": ta.rationale,
+            "scoring_details": ta.scoring_details
+        }
+    
+    def _generate_summary(self) -> Dict:
+        """Generate summary metrics"""
+        if not self.alternatives:
+            return {}
+        
+        avg_effort = sum(
+            alt.estimated_effort_weeks
+            for alt in self.alternatives.values()
+        ) / len(self.alternatives)
+        
+        avg_cost = sum(
+            alt.estimated_cost_usd
+            for alt in self.alternatives.values()
+        ) / len(self.alternatives)
+        
+        return {
+            "total_alternatives": len(self.alternatives),
+            "total_decisions": len(self.architecture_decisions),
+            "average_estimated_effort_weeks": round(avg_effort, 2),
+            "average_estimated_cost_usd": round(avg_cost, 2),
+            "layers_covered": list(set(
+                alt.layer.value for alt in self.alternatives.values()
+            ))
+        }
+
+
+def create_health_tech_architecture() -> ArchitectureDesigner:
+    """Design architecture for health-tech platform"""
+    designer = ArchitectureDesigner(
+        project_name="HealthTech Venture Platform",
+        health_focused=True
+    )
+    
+    # Infrastructure Alternatives
+    monolith = ArchitectureAlternative(
+        name="Monolithic Deployment",
+        description="Single deployed application with integrated database",
+        layer=ArchitectureLayer.INFRASTRUCTURE,
+        implementation_details=[
+                "Single Docker container",
+                "PostgreSQL database",
+                "Node.js Express server",
+                "Nginx reverse proxy"
+            ],
+        scores={
+            "scalability": 4,
+            "reliability": 6,
+            "maintainability": 5,
+            "cost": 8,
+            "time_to_market": 9,
+            "security": 6,
+            "user_experience": 7
+        },
+        pros=[
+            "Fast initial deployment",
+            "Low operational complexity initially",
+            "Simplified debugging",
+            "Lower infrastructure costs"
         ],
-        components=components,
-        trade_offs=trade_offs,
-        alternatives=alternatives,
-        recommended_pattern=ArchitecturePattern.HYBRID.value,
+        cons=[
+            "Scaling bottleneck as user base grows",
+            "Single point of failure",
+            "Tight coupling of features",
+            "Difficult to scale independent components"
+        ],
+        estimated_effort_weeks=8,
+        estimated_cost_usd=15000
+    )
+    
+    microservices = ArchitectureAlternative(
+        name="Microservices Architecture",
+        description="Distributed services with independent scaling",
+        layer=ArchitectureLayer.INFRASTRUCTURE,
+        implementation_details=[
+            "Kubernetes orchestration",
+            "10-15 independent services",
+            "API Gateway (Kong/Nginx)",
+            "Message queue (RabbitMQ/Kafka)",
+            "Service discovery",
+            "Distributed logging (ELK)",
+            "Separate database per service"
+        ],
+        scores={
+            "scalability": 9,
+            "reliability": 8,
+            "maintainability": 6,
+            "cost": 4,
+            "time_to_market": 4,
+            "security": 8,
+            "user_experience": 9
+        },
+        pros=[
+            "Excellent horizontal scalability",
+            "Independent service deployment",
+            "Technology diversity per service",
+            "Fault isolation",
+            "Better for large teams"
+        ],
+        cons=[
+            "Operational complexity",
+            "Distributed debugging challenges",
+            "Network latency",
+            "Higher infrastructure costs",
+            "Longer initial development"
+        ],
+        estimated_effort_weeks=24,
+        estimated_cost_usd=85000
+    )
+    
+    designer.add_alternative(monolith)
+    designer.add_alternative(microservices)
+    
+    # Data Layer Alternatives
+    relational_db = ArchitectureAlternative(
+        name="Relational Database (PostgreSQL)",
+        description="Traditional SQL database with ACID guarantees",
+        layer=ArchitectureLayer.DATA,
+        implementation_details=[
+            "PostgreSQL 15+",
+            "Row-level security",
+            "Full-text search",
+            "JSONB columns for semi-structured data",
+            "Automated backups",
+            "Read replicas"
+        ],
+        scores={
+            "scalability": 6,
+            "reliability": 9,
+            "maintainability": 8,
+            "cost": 6,
+            "time_to_market": 8,
+            "security": 9,
+            "user_experience": 8
+        },
+        pros=[
+            "Strong consistency guarantees",
+            "ACID compliance",
+            "Rich query capabilities",
+            "Mature ecosystem",
+            "Excellent for structured data",
+            "Good security features"
+        ],
+        cons=[
+            "Scaling writes requires sharding",
+            "Less flexible for unstructured data",
+            "Schema migrations can be complex"
+        ],
+        estimated_effort_weeks=4,
+        estimated_cost_usd=5000
+    )
+    
+    polyglot_persistence = ArchitectureAlternative(
+        name="Polyglot Persistence",
+        description="Multiple database technologies optimized for use case",
+        layer=ArchitectureLayer.DATA,
+        implementation_details=[
+            "PostgreSQL for transactional data",
+            "MongoDB for document storage",
+            "Redis for caching/sessions",
+            "Elasticsearch for search",
+            "TimescaleDB for health metrics"
+        ],
+        scores={
+            "scalability": 8,
+            "reliability": 7,
+            "maintainability": 5,
+            "cost": 5,
+            "time_to_market": 5,
+            "security": 7,
+            "user_experience": 9
+        },
+        pros=[
+            "Optimized storage per data type",
+            "Better performance for specific queries",
+            "Horizontal scaling options",
+            "Flexible schema handling"
+        ],
+        cons=[
+            "Operational complexity",
+            "Data consistency challenges",
+            "Higher maintenance overhead",
+            "More difficult backups/recovery",
+            "Team needs broader expertise"
+        ],
+        estimated_effort_weeks=12,
+        estimated_cost_usd=25000
+    )
+    
+    designer.add_alternative(relational_db)
+    designer.add_alternative(polyglot_persistence)
+    
+    # Application Layer Alternatives
+    monolithic_app = ArchitectureAlternative(
+        name="Monolithic Application",
+        description="Single codebase with all features",
+        layer=ArchitectureLayer.APPLICATION,
+        implementation_details=[
+            "Node.js with Express",
+            "Single Git repository",
+            "Shared business logic",
+            "Integrated authentication",
+            "Unified API"
+        ],
+        scores={
+            "scalability": 5,
+            "reliability": 6,
+            "maintainability": 4,
+            "cost": 8,
+            "time_to_market": 9,
+            "security": 6,
+            "user_experience": 7
+        },
+        pros=[
+            "Faster initial development",
+            "Simpler deployment",
+            "Easy code sharing",
+            "Straightforward testing"
+        ],
+        cons=[
+            "Difficult to scale specific features",
+            "Large codebase becomes unwieldy",
+            "Tech stack lock-in",
+            "Team coordination overhead"
+        ],
+        estimated_effort_weeks=6,
+        estimated_cost_usd=12000
+    )
+    
+    modular_monolith = ArchitectureAlternative(
+        name="Modular Monolith",
+        description="Single deployment with clear module boundaries",
+        layer=ArchitectureLayer.APPLICATION,
+        implementation_details=[
+            "Clear domain boundaries",
+            "Feature toggles",
+            "Internal messaging system",
+            "Pluggable modules",
+            "Shared kernel with minimal dependencies"
+        ],
+        scores={
+            "scalability": 6,
+            "reliability": 7,
+            "maintainability": 8,
+            "cost": 7,
+            "time_to_market": 8,
+            "security": 7,
+            "user_experience": 8
+        },
+        pros=[
+            "Clear separation of concerns",
+            "Can evolve to microservices",
+            "Simpler than true microservices",
+            "Better maintainability than monolith",
+            "Easier testing with module boundaries"
+        ],
+        cons=[
+            "Still single deployment",
+            "Module boundaries can be violated",
+            "Less flexibility than microservices"
+        ],
+        estimated_effort_weeks=10,
+        estimated_cost_usd=18000
+    )
+    
+    designer.add_alternative(monolithic_app)
+    designer.add_alternative(modular_monolith)
+    
+    # Tradeoff Analyses
+    designer.analyze_tradeoff(
+        dimension="Infrastructure Strategy",
+        alt_names=["Monolithic Deployment", "Microservices Architecture"],
+        scores={
+            "Monolithic Deployment": 6.5,
+            "Microservices Architecture": 7.5
+        },
+        winning="Modular Monolith (recommended middle ground)",
         rationale=(
-            "Hybrid architecture provides the best balance for mission-critical systems. "
-            "Start with a monolithic core for core business logic (orders, payments, patient data), "
-            "extract microservices for scaling hotspots (notifications, analytics, reporting), "
-            "use event streaming for cross-service communication. This approach allows gradual "
-            "evolution, independent scaling where needed, and maintains simplicity where it matters most."
+            "For a health-tech startup, monolithic deployment wins on speed to market "
+            "and cost, but microservices offer better long-term scalability. A modular "
+            "monolith provides the best initial approach: fast deployment with clear "
+            "architectural boundaries that can evolve to microservices as the company "
+            "scales and team grows."
+        )
+    )
+    
+    designer.analyze_tradeoff(
+        dimension="Data Persistence",
+        alt_names=["Relational Database (PostgreSQL)", "Polyglot Persistence"],
+        scores={
+            "Relational Database (PostgreSQL)": 8,
+            "Polyglot Persistence": 7
+        },
+        winning="Relational Database (PostgreSQL)",
+        rationale=(
+            "For health-tech with regulated data (HIPAA compliance needed), PostgreSQL "
+            "provides superior ACID guarantees and security features. Polyglot would add "
+            "complexity without clear benefit at startup stage. PostgreSQL can handle the "
+            "application needs with JSONB for semi-structured data."
+        )
+    )
+    
+    # Architecture Decisions
+    designer.record_decision(
+        title="Choose Modular Monolith as Initial Architecture",
+        context=(
+            "Health-tech startup needs to launch MVP quickly while building "
+            "for long-term growth and regulatory compliance."
         ),
-        risks=risks,
-        success_metrics=[
-            "99.99% uptime (four nines)",
-            "P99 latency under 200ms",
-            "Mean time to recovery (MTTR) under 5 minutes",
-            "Zero data loss incidents",
-            "Incident detection within 1 minute",
-            "Deployment success rate >99%",
+        decision="Start with modular monolith, deploy as single unit",
+        rationale=(
+            "Best balance of speed-to-market and architectural soundness. Allows "
+            "rapid iteration on product while maintaining clear boundaries for "
+            "future microservices migration. Reduces DevOps complexity initially."
+        ),
+        alternatives=[
+            "Pure monolith (too limiting)",
+            "Microservices from day one (too complex)"
         ]
     )
+    
+    designer.record_decision(
+        title="Use PostgreSQL with TimescaleDB Extension",
+        context=(
+            "Need to store health metrics, patient data, and events with "
+            "strong consistency guarantees."
+        ),
+        decision="PostgreSQL with TimescaleDB for time-series health metrics",
+        rationale=(
+            "PostgreSQL provides ACID compliance for sensitive health data. "
+            "TimescaleDB extension handles health metrics efficiently. Simpler "
+            "operations than polyglot. Excellent for HIPAA compliance."
+        ),
+        alternatives=[
+            "MongoDB (insufficient for regulatory requirements)",
+            "Separate time-series database (operational overhead)"
+        ]
+    )
+    
+    designer.record_decision(
+        title="Implement API Gateway with Feature Flags",
+        context=(
+            "Need ability to deploy features safely without downtime, "
+            "especially for health/safety critical features."
+        ),
+        decision="Kong API Gateway with feature flag service",
+        rationale=(
+            "API gateway provides request routing, rate limiting, and logging. "
+            "Feature flags enable safe rollouts of health-critical features. "
+            "Positions architecture for future service decomposition."
+        ),
+        alternatives=[
+            "Nginx only (insufficient feature management)",
+            "No gateway (poor request control)"
+        ]
+    )
+    
+    designer.record_decision(
+        title="Security: Zero Trust Model with mTLS",
+        context=(
+            "Health data is sensitive and regulated. Must ensure data protection "
+            "and audit compliance."
+        ),
+        decision="Implement zero trust security with mutual TLS between services",
+        rationale=(
+            "Even in monolithic architecture, zero trust ensures data protection. "
+            "mTLS provides service-to-service authentication. Creates secure "
+            "foundation for future service mesh migration."
+        ),
+        alternatives=[
+            "Network-based security (insufficient for modern threats)",
+            "Perimeter security only (inadequate for health data)"
+        ]
+    )
+    
+    return designer
 
 
-def analyze_architecture_for_context(
-    doc: ArchitectureDocument,
-    team_size: int,
-    current_load: int,
-    projected_growth: float,
-) -> Dict[str, Any]:
-    """
-    Analyze architecture recommendations based on context.
+def main():
+    """Main execution with CLI interface"""
+    parser = argparse.ArgumentParser(
+        description="Solution Architecture Designer with Trade-off Analysis"
+    )
+    parser.add_argument(
+        "--project",
+        type=str,
+        default="HealthTech Venture Platform",
+        help="Project name for architecture design"
+    )
+    parser.add_argument(
+        "--health-focused",
+        action="store_true",
+        default=True,
+        help="Design health-focused architecture"
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="architecture_report.json",
+        help="Output file for architecture report"
+    )
+    parser.add_argument(
+        "--format",
+        choices=["json", "pretty"],
+        default="pretty",
+        help="Output format"
+    )
     
-    Args:
-        doc: Architecture document
-        team_size: Number of engineers available
-        current_load: Current requests per second
-        projected_growth: Expected annual growth rate (0.5 = 50%)
+    args = parser.parse_args()
     
-    Returns:
-        Context-specific recommendations
-    """
+    # Create architecture design
+    designer = create_health_tech_architecture()
     
-    analysis = {
-        "timestamp": datetime.now().isoformat(),
-        "context": {
-            "team_size": team_size,
-            "current_load_rps": current_load,
-            "projected_annual_growth": f"{projected_growth*100:.0f}%",
-        },
-        "recommendations": [],
-        "component_guidance": {},
-        "implementation_roadmap": [],
-    }
+    # Generate report
+    report = designer.generate_report()
     
-    # Pattern recommendation based on team size
-    if team_size < 5:
-        analysis["recommendations"].append({
-            "priority": "CRITICAL",
-            "recommendation": f"With {team_size} engineers, start with monolithic architecture",
-            "rationale": "Microservices require at least 8-10 people to manage complexity effectively"
-        })
-    elif team_size < 15:
-        analysis["recommendations"].append({
-            "priority": "HIGH",
-            "recommendation": "Consider hybrid approach: monolith + 2-3 critical microservices",
-            "rationale": "Allows specialization while keeping operational overhead manageable"
-        })
+    # Output results
+    if args.format == "json":
+        output = json.dumps(report, indent=2)
     else:
-        analysis["recommendations"].append({
-            "priority": "MEDIUM",
-            "recommendation": "Microservices architecture is now viable",
-            "rationale": "Team has capacity for service management and operations"
-        })
+        output = format_report_pretty(report)
     
-    # Scaling guidance based on load
-    scaling_multiplier = current_load * (1 +
+    print(output)
+    
+    # Write to file
+    if args.output:
+        with open(args.output, 'w') as f:
+            if args.format == "json":
+                json.dump(report, f, indent=2)
+            else:
+                f.write(output)
+        print(f"\n[✓] Report written to {args.output}")
+
+
+def format_report_pretty(report: Dict) -> str
