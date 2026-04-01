@@ -3,35 +3,31 @@
 # Task:    Add tests and validation
 # Mission: I Built an Open-World Engine for the N64 [video]
 # Agent:   @aria
-# Date:    2026-04-01T16:58:33.394Z
+# Date:    2026-04-01T17:02:16.988Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 Task: Add tests and validation for N64 Open-World Engine
 Mission: I Built an Open-World Engine for the N64 [video]
-Agent: @aria
-Date: 2025-01-17
-
-This module provides comprehensive unit tests and validation for a 3D engine
-implementation targeting Nintendo 64 constraints, including vertex processing,
-memory management, and rendering pipeline validation.
+Agent: @aria (SwarmPulse)
+Date: 2024
 """
 
 import unittest
+import sys
 import json
 import argparse
-import sys
-import math
-from typing import Dict, List, Tuple, Optional
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
+from typing import List, Dict, Tuple, Optional
 from enum import Enum
+from math import sqrt
 
 
 class GeometryType(Enum):
-    TRIANGLE = "triangle"
-    QUAD = "quad"
-    BILLBOARD = "billboard"
+    MESH = "mesh"
+    COLLIDER = "collider"
+    TRIGGER = "trigger"
 
 
 @dataclass
@@ -39,800 +35,679 @@ class Vector3:
     x: float
     y: float
     z: float
-
-    def distance_to(self, other: 'Vector3') -> float:
+    
+    def __add__(self, other):
+        return Vector3(self.x + other.x, self.y + other.y, self.z + other.z)
+    
+    def __sub__(self, other):
+        return Vector3(self.x - other.x, self.y - other.y, self.z - other.z)
+    
+    def distance_to(self, other):
         dx = self.x - other.x
         dy = self.y - other.y
         dz = self.z - other.z
-        return math.sqrt(dx*dx + dy*dy + dz*dz)
-
-    def magnitude(self) -> float:
-        return math.sqrt(self.x**2 + self.y**2 + self.z**2)
-
-    def normalize(self) -> 'Vector3':
-        mag = self.magnitude()
-        if mag == 0:
-            return Vector3(0, 0, 0)
-        return Vector3(self.x/mag, self.y/mag, self.z/mag)
+        return sqrt(dx*dx + dy*dy + dz*dz)
+    
+    def magnitude(self):
+        return sqrt(self.x*self.x + self.y*self.y + self.z*self.z)
 
 
 @dataclass
-class Vertex:
-    position: Vector3
-    color: Tuple[int, int, int, int] = (255, 255, 255, 255)
-    texture_u: float = 0.0
-    texture_v: float = 0.0
-
-    def validate(self) -> bool:
-        if not isinstance(self.position, Vector3):
-            return False
-        if len(self.color) != 4:
-            return False
-        for c in self.color:
-            if not (0 <= c <= 255):
-                return False
-        if not (0.0 <= self.texture_u <= 1.0):
-            return False
-        if not (0.0 <= self.texture_v <= 1.0):
-            return False
-        return True
+class Bounds3D:
+    min_point: Vector3
+    max_point: Vector3
+    
+    def contains_point(self, point: Vector3) -> bool:
+        return (self.min_point.x <= point.x <= self.max_point.x and
+                self.min_point.y <= point.y <= self.max_point.y and
+                self.min_point.z <= point.z <= self.max_point.z)
+    
+    def intersects(self, other: 'Bounds3D') -> bool:
+        return (self.min_point.x <= other.max_point.x and
+                self.max_point.x >= other.min_point.x and
+                self.min_point.y <= other.max_point.y and
+                self.max_point.y >= other.min_point.y and
+                self.min_point.z <= other.max_point.z and
+                self.max_point.z >= other.min_point.z)
 
 
-@dataclass
 class Geometry:
-    vertices: List[Vertex]
-    type: GeometryType
-    visible: bool = True
-
-    def validate(self) -> bool:
-        if not self.vertices:
+    def __init__(self, geom_id: str, geom_type: GeometryType, bounds: Bounds3D, vertex_count: int):
+        self.id = geom_id
+        self.type = geom_type
+        self.bounds = bounds
+        self.vertex_count = vertex_count
+        self.is_loaded = False
+    
+    def validate(self) -> Tuple[bool, str]:
+        if not self.id or len(self.id) == 0:
+            return False, "Geometry ID cannot be empty"
+        
+        if self.vertex_count < 0:
+            return False, f"Vertex count cannot be negative: {self.vertex_count}"
+        
+        if self.bounds.min_point.x > self.bounds.max_point.x:
+            return False, "Bounding box invalid: min.x > max.x"
+        if self.bounds.min_point.y > self.bounds.max_point.y:
+            return False, "Bounding box invalid: min.y > max.y"
+        if self.bounds.min_point.z > self.bounds.max_point.z:
+            return False, "Bounding box invalid: min.z > max.z"
+        
+        return True, "Valid"
+    
+    def load(self) -> bool:
+        if self.vertex_count == 0:
             return False
-        min_verts = 3 if self.type in [GeometryType.TRIANGLE, GeometryType.BILLBOARD] else 4
-        if len(self.vertices) < min_verts:
-            return False
-        for vertex in self.vertices:
-            if not vertex.validate():
-                return False
-        return True
-
-    def get_memory_estimate(self) -> int:
-        base_vertex_size = 28
-        return len(self.vertices) * base_vertex_size
-
-
-@dataclass
-class N64Material:
-    name: str
-    texture_id: int
-    use_alpha: bool = False
-    alpha_threshold: float = 0.5
-
-    def validate(self) -> bool:
-        if not self.name or len(self.name) > 64:
-            return False
-        if self.texture_id < 0 or self.texture_id > 65535:
-            return False
-        if not (0.0 <= self.alpha_threshold <= 1.0):
-            return False
+        self.is_loaded = True
         return True
 
 
-@dataclass
-class RenderObject:
-    name: str
-    geometry: Geometry
-    material: N64Material
-    position: Vector3
-    rotation: Vector3 = None
-    scale: Vector3 = None
-
-    def __post_init__(self):
-        if self.rotation is None:
-            self.rotation = Vector3(0, 0, 0)
-        if self.scale is None:
-            self.scale = Vector3(1, 1, 1)
-
-    def validate(self) -> bool:
-        if not self.name or len(self.name) > 64:
-            return False
-        if not self.geometry.validate():
-            return False
-        if not self.material.validate():
-            return False
-        if not isinstance(self.position, Vector3):
-            return False
-        if not isinstance(self.rotation, Vector3):
-            return False
-        if not isinstance(self.scale, Vector3):
-            return False
-        for scale_val in [self.scale.x, self.scale.y, self.scale.z]:
-            if scale_val <= 0:
-                return False
-        return True
-
-    def get_total_memory(self) -> int:
-        return self.geometry.get_memory_estimate()
+class Actor:
+    def __init__(self, actor_id: str, position: Vector3, geometry: Geometry):
+        self.id = actor_id
+        self.position = position
+        self.geometry = geometry
+        self.is_active = True
+    
+    def validate(self) -> Tuple[bool, str]:
+        if not self.id or len(self.id) == 0:
+            return False, "Actor ID cannot be empty"
+        
+        if not self.geometry:
+            return False, "Actor must have associated geometry"
+        
+        geom_valid, geom_msg = self.geometry.validate()
+        if not geom_valid:
+            return False, f"Geometry validation failed: {geom_msg}"
+        
+        return True, "Valid"
+    
+    def get_world_bounds(self) -> Bounds3D:
+        offset = self.position - self.geometry.bounds.min_point
+        new_min = self.geometry.bounds.min_point + offset
+        new_max = self.geometry.bounds.max_point + offset
+        return Bounds3D(new_min, new_max)
 
 
-class N64MemoryBudget:
-    RDRAM_SIZE = 4 * 1024 * 1024
-    TEXTURE_CACHE_SIZE = 4 * 1024
-    COMMAND_BUFFER_SIZE = 64 * 1024
-    RESERVED_SYSTEM = 512 * 1024
+class WorldChunk:
+    def __init__(self, chunk_id: str, bounds: Bounds3D):
+        self.id = chunk_id
+        self.bounds = bounds
+        self.actors: List[Actor] = []
+        self.is_loaded = False
+    
+    def add_actor(self, actor: Actor) -> Tuple[bool, str]:
+        valid, msg = actor.validate()
+        if not valid:
+            return False, f"Cannot add invalid actor: {msg}"
+        
+        if not self.bounds.contains_point(actor.position):
+            return False, f"Actor position {actor.position} outside chunk bounds"
+        
+        self.actors.append(actor)
+        return True, "Actor added"
+    
+    def get_actors_near(self, position: Vector3, radius: float) -> List[Actor]:
+        nearby = []
+        for actor in self.actors:
+            if position.distance_to(actor.position) <= radius:
+                nearby.append(actor)
+        return nearby
+    
+    def validate(self) -> Tuple[bool, str]:
+        if not self.id or len(self.id) == 0:
+            return False, "Chunk ID cannot be empty"
+        
+        if len(self.actors) == 0:
+            return False, "Chunk must contain at least one actor"
+        
+        for actor in self.actors:
+            valid, msg = actor.validate()
+            if not valid:
+                return False, f"Actor validation failed: {msg}"
+            
+            if not self.bounds.contains_point(actor.position):
+                return False, f"Actor outside chunk bounds"
+        
+        return True, "Valid"
 
-    def __init__(self):
-        self.available = self.RDRAM_SIZE - self.RESERVED_SYSTEM
-        self.allocated = 0
-        self.allocations: Dict[str, int] = {}
 
-    def allocate(self, name: str, size: int) -> bool:
-        if self.allocated + size > self.available:
-            return False
-        self.allocated += size
-        self.allocations[name] = size
-        return True
+class World:
+    def __init__(self, world_id: str, max_chunks: int = 100):
+        self.id = world_id
+        self.chunks: Dict[str, WorldChunk] = {}
+        self.max_chunks = max_chunks
+    
+    def add_chunk(self, chunk: WorldChunk) -> Tuple[bool, str]:
+        if len(self.chunks) >= self.max_chunks:
+            return False, f"Cannot exceed max chunks: {self.max_chunks}"
+        
+        if chunk.id in self.chunks:
+            return False, f"Chunk {chunk.id} already exists"
+        
+        self.chunks[chunk.id] = chunk
+        return True, "Chunk added"
+    
+    def get_chunk(self, chunk_id: str) -> Optional[WorldChunk]:
+        return self.chunks.get(chunk_id)
+    
+    def find_actors_in_region(self, region_bounds: Bounds3D) -> List[Actor]:
+        actors = []
+        for chunk in self.chunks.values():
+            if chunk.bounds.intersects(region_bounds):
+                for actor in chunk.actors:
+                    if region_bounds.contains_point(actor.position):
+                        actors.append(actor)
+        return actors
+    
+    def validate(self) -> Tuple[bool, str]:
+        if not self.id or len(self.id) == 0:
+            return False, "World ID cannot be empty"
+        
+        if len(self.chunks) == 0:
+            return False, "World must contain at least one chunk"
+        
+        for chunk in self.chunks.values():
+            valid, msg = chunk.validate()
+            if not valid:
+                return False, f"Chunk {chunk.id} validation failed: {msg}"
+        
+        return True, "Valid"
 
-    def deallocate(self, name: str) -> bool:
-        if name not in self.allocations:
-            return False
-        self.allocated -= self.allocations[name]
-        del self.allocations[name]
-        return True
 
-    def get_usage_percent(self) -> float:
-        return (self.allocated / self.available) * 100.0
+class TestGeometry(unittest.TestCase):
+    
+    def setUp(self):
+        self.bounds = Bounds3D(Vector3(0, 0, 0), Vector3(10, 10, 10))
+        self.geometry = Geometry("geom_1", GeometryType.MESH, self.bounds, 100)
+    
+    def test_geometry_creation(self):
+        self.assertEqual(self.geometry.id, "geom_1")
+        self.assertEqual(self.geometry.type, GeometryType.MESH)
+        self.assertEqual(self.geometry.vertex_count, 100)
+    
+    def test_geometry_validation_valid(self):
+        valid, msg = self.geometry.validate()
+        self.assertTrue(valid)
+        self.assertEqual(msg, "Valid")
+    
+    def test_geometry_validation_empty_id(self):
+        geom = Geometry("", GeometryType.MESH, self.bounds, 100)
+        valid, msg = geom.validate()
+        self.assertFalse(valid)
+        self.assertIn("ID cannot be empty", msg)
+    
+    def test_geometry_validation_negative_vertices(self):
+        geom = Geometry("geom_2", GeometryType.MESH, self.bounds, -5)
+        valid, msg = geom.validate()
+        self.assertFalse(valid)
+        self.assertIn("cannot be negative", msg)
+    
+    def test_geometry_validation_invalid_bounds(self):
+        bad_bounds = Bounds3D(Vector3(10, 0, 0), Vector3(5, 10, 10))
+        geom = Geometry("geom_3", GeometryType.MESH, bad_bounds, 100)
+        valid, msg = geom.validate()
+        self.assertFalse(valid)
+        self.assertIn("invalid", msg.lower())
+    
+    def test_geometry_load_success(self):
+        result = self.geometry.load()
+        self.assertTrue(result)
+        self.assertTrue(self.geometry.is_loaded)
+    
+    def test_geometry_load_zero_vertices(self):
+        geom = Geometry("geom_4", GeometryType.MESH, self.bounds, 0)
+        result = geom.load()
+        self.assertFalse(result)
 
-    def validate(self) -> bool:
-        return self.allocated <= self.available
 
-
-class N64Engine:
-    def __init__(self, memory_budget: Optional[N64MemoryBudget] = None):
-        self.memory_budget = memory_budget or N64MemoryBudget()
-        self.render_objects: List[RenderObject] = []
-        self.materials: Dict[str, N64Material] = {}
-        self.geometries: Dict[str, Geometry] = {}
-
-    def register_material(self, material: N64Material) -> bool:
-        if not material.validate():
-            return False
-        self.materials[material.name] = material
-        return True
-
-    def register_geometry(self, name: str, geometry: Geometry) -> bool:
-        if not geometry.validate():
-            return False
-        memory_needed = geometry.get_memory_estimate()
-        if not self.memory_budget.allocate(f"geo_{name}", memory_needed):
-            return False
-        self.geometries[name] = geometry
-        return True
-
-    def add_render_object(self, obj: RenderObject) -> bool:
-        if not obj.validate():
-            return False
-        if obj.material.name not in self.materials:
-            return False
-        memory_needed = obj.get_total_memory()
-        if not self.memory_budget.allocate(f"obj_{obj.name}", memory_needed):
-            return False
-        self.render_objects.append(obj)
-        return True
-
-    def get_visible_objects(self) -> List[RenderObject]:
-        return [obj for obj in self.render_objects if obj.geometry.visible]
-
-    def optimize_visibility(self, camera_pos: Vector3, view_distance: float) -> List[RenderObject]:
-        visible = []
-        for obj in self.render_objects:
-            if not obj.geometry.visible:
-                continue
-            distance = camera_pos.distance_to(obj.position)
-            if distance <= view_distance:
-                visible.append(obj)
-        return visible
-
-    def get_memory_report(self) -> Dict:
-        return {
-            "total_rdram": self.memory_budget.RDRAM_SIZE,
-            "reserved_system": self.memory_budget.RESERVED_SYSTEM,
-            "available": self.memory_budget.available,
-            "allocated": self.memory_budget.allocated,
-            "usage_percent": self.memory_budget.get_usage_percent(),
-            "allocations": self.memory_budget.allocations
-        }
+class TestBounds3D(unittest.TestCase):
+    
+    def setUp(self):
+        self.bounds = Bounds3D(Vector3(0, 0, 0), Vector3(10, 10, 10))
+    
+    def test_contains_point_inside(self):
+        point = Vector3(5, 5, 5)
+        self.assertTrue(self.bounds.contains_point(point))
+    
+    def test_contains_point_outside(self):
+        point = Vector3(15, 5, 5)
+        self.assertFalse(self.bounds.contains_point(point))
+    
+    def test_contains_point_on_boundary(self):
+        point = Vector3(0, 5, 5)
+        self.assertTrue(self.bounds.contains_point(point))
+    
+    def test_bounds_intersection_overlapping(self):
+        other = Bounds3D(Vector3(5, 5, 5), Vector3(15, 15, 15))
+        self.assertTrue(self.bounds.intersects(other))
+    
+    def test_bounds_intersection_non_overlapping(self):
+        other = Bounds3D(Vector3(20, 20, 20), Vector3(30, 30, 30))
+        self.assertFalse(self.bounds.intersects(other))
+    
+    def test_bounds_intersection_touching(self):
+        other = Bounds3D(Vector3(10, 0, 0), Vector3(20, 10, 10))
+        self.assertTrue(self.bounds.intersects(other))
 
 
 class TestVector3(unittest.TestCase):
-    def test_vector_creation(self):
-        v = Vector3(1.0, 2.0, 3.0)
-        self.assertEqual(v.x, 1.0)
-        self.assertEqual(v.y, 2.0)
-        self.assertEqual(v.z, 3.0)
-
+    
+    def test_vector_addition(self):
+        v1 = Vector3(1, 2, 3)
+        v2 = Vector3(4, 5, 6)
+        result = v1 + v2
+        self.assertEqual(result.x, 5)
+        self.assertEqual(result.y, 7)
+        self.assertEqual(result.z, 9)
+    
+    def test_vector_subtraction(self):
+        v1 = Vector3(10, 10, 10)
+        v2 = Vector3(3, 4, 5)
+        result = v1 - v2
+        self.assertEqual(result.x, 7)
+        self.assertEqual(result.y, 6)
+        self.assertEqual(result.z, 5)
+    
     def test_distance_calculation(self):
         v1 = Vector3(0, 0, 0)
         v2 = Vector3(3, 4, 0)
         distance = v1.distance_to(v2)
-        self.assertAlmostEqual(distance, 5.0, places=5)
-
+        self.assertEqual(distance, 5.0)
+    
     def test_magnitude(self):
         v = Vector3(3, 4, 0)
-        self.assertAlmostEqual(v.magnitude(), 5.0, places=5)
-
-    def test_normalize(self):
-        v = Vector3(3, 4, 0)
-        normalized = v.normalize()
-        self.assertAlmostEqual(normalized.magnitude(), 1.0, places=5)
-
-    def test_zero_normalize(self):
-        v = Vector3(0, 0, 0)
-        normalized = v.normalize()
-        self.assertEqual(normalized.x, 0)
-        self.assertEqual(normalized.y, 0)
-        self.assertEqual(normalized.z, 0)
+        self.assertEqual(v.magnitude(), 5.0)
 
 
-class TestVertex(unittest.TestCase):
-    def test_vertex_creation(self):
-        pos = Vector3(0, 0, 0)
-        v = Vertex(pos)
-        self.assertEqual(v.position, pos)
-        self.assertEqual(v.color, (255, 255, 255, 255))
-        self.assertEqual(v.texture_u, 0.0)
-        self.assertEqual(v.texture_v, 0.0)
-
-    def test_vertex_validation_valid(self):
-        pos = Vector3(10, 20, 30)
-        v = Vertex(pos, color=(128, 128, 128, 255), texture_u=0.5, texture_v=0.75)
-        self.assertTrue(v.validate())
-
-    def test_vertex_validation_invalid_color_range(self):
-        pos = Vector3(10, 20, 30)
-        v = Vertex(pos, color=(256, 128, 128, 255))
-        self.assertFalse(v.validate())
-
-    def test_vertex_validation_invalid_uv(self):
-        pos = Vector3(10, 20, 30)
-        v = Vertex(pos, texture_u=1.5)
-        self.assertFalse(v.validate())
-
-    def test_vertex_custom_color(self):
-        pos = Vector3(5, 5, 5)
-        v = Vertex(pos, color=(100, 150, 200, 128))
-        self.assertTrue(v.validate())
-        self.assertEqual(v.color, (100, 150, 200, 128))
-
-
-class TestGeometry(unittest.TestCase):
-    def test_triangle_geometry_valid(self):
-        vertices = [
-            Vertex(Vector3(0, 0, 0)),
-            Vertex(Vector3(1, 0, 0)),
-            Vertex(Vector3(0, 1, 0))
-        ]
-        geom = Geometry(vertices, GeometryType.TRIANGLE)
-        self.assertTrue(geom.validate())
-
-    def test_quad_geometry_valid(self):
-        vertices = [
-            Vertex(Vector3(0, 0, 0)),
-            Vertex(Vector3(1, 0, 0)),
-            Vertex(Vector3(1, 1, 0)),
-            Vertex(Vector3(0, 1, 0))
-        ]
-        geom = Geometry(vertices, GeometryType.QUAD)
-        self.assertTrue(geom.validate())
-
-    def test_geometry_empty_vertices(self):
-        geom = Geometry([], GeometryType.TRIANGLE)
-        self.assertFalse(geom.validate())
-
-    def test_geometry_insufficient_vertices(self):
-        vertices = [Vertex(Vector3(0, 0, 0))]
-        geom = Geometry(vertices, GeometryType.TRIANGLE)
-        self.assertFalse(geom.validate())
-
-    def test_geometry_invalid_vertex(self):
-        vertices = [
-            Vertex(Vector3(0, 0, 0)),
-            Vertex(Vector3(1, 0, 0), texture_u=1.5),
-            Vertex(Vector3(0, 1, 0))
-        ]
-        geom = Geometry(vertices, GeometryType.TRIANGLE)
-        self.assertFalse(geom.validate())
-
-    def test_geometry_memory_estimate(self):
-        vertices = [
-            Vertex(Vector3(0, 0, 0)),
-            Vertex(Vector3(1, 0, 0)),
-            Vertex(Vector3(0, 1, 0))
-        ]
-        geom = Geometry(vertices, GeometryType.TRIANGLE)
-        memory = geom.get_memory_estimate()
-        self.assertEqual(memory, 3 * 28)
-
-    def test_geometry_visibility(self):
-        vertices = [
-            Vertex(Vector3(0, 0, 0)),
-            Vertex(Vector3(1, 0, 0)),
-            Vertex(Vector3(0, 1, 0))
-        ]
-        geom = Geometry(vertices, GeometryType.TRIANGLE, visible=False)
-        self.assertFalse(geom.visible)
-
-
-class TestN64Material(unittest.TestCase):
-    def test_material_creation(self):
-        mat = N64Material("stone", 1)
-        self.assertEqual(mat.name, "stone")
-        self.assertEqual(mat.texture_id, 1)
-
-    def test_material_validation_valid(self):
-        mat = N64Material("grass", 5, use_alpha=True, alpha_threshold=0.5)
-        self.assertTrue(mat.validate())
-
-    def test_material_validation_invalid_name(self):
-        mat = N64Material("", 1)
-        self.assertFalse(mat.validate())
-
-    def test_material_validation_invalid_name_length(self):
-        mat = N64Material("a" * 100, 1)
-        self.assertFalse(mat.validate())
-
-    def test_material_validation_invalid_texture_id(self):
-        mat = N64Material("test", -1)
-        self.assertFalse(mat.validate())
-
-    def test_material_validation_invalid_alpha_threshold(self):
-        mat = N64Material("test", 1, alpha_threshold=1.5)
-        self.assertFalse(mat.validate())
-
-
-class TestRenderObject(unittest.TestCase):
-    def create_sample_object(self) -> RenderObject:
-        vertices = [
-            Vertex(Vector3(0, 0, 0)),
-            Vertex(Vector3(1, 0, 0)),
-            Vertex(Vector3(0, 1, 0))
-        ]
-        geom = Geometry(vertices, GeometryType.TRIANGLE)
-        mat = N64Material("wood", 10)
-        return RenderObject("cube", geom, mat, Vector3(5, 5, 5))
-
-    def test_render_object_creation(self):
-        obj = self.create_sample_object()
-        self.assertEqual(obj.name, "cube")
-        self.assertEqual(obj.position.x, 5)
-        self.assertEqual(obj.scale.x, 1)
-
-    def test_render_object_validation_valid(self):
-        obj = self.create_sample_object()
-        self.assertTrue(obj.validate())
-
-    def test_render_object_validation_invalid_name(self):
-        vertices = [
-            Vertex(Vector3(0, 0, 0)),
-            Vertex(Vector3(1, 0, 0)),
-            Vertex(Vector3(0, 1, 0))
-        ]
-        geom = Geometry(vertices, GeometryType.TRIANGLE)
-        mat = N64Material("wood", 10)
-        obj = RenderObject("", geom, mat, Vector3(5, 5, 5))
-        self.assertFalse(obj.validate())
-
-    def test_render_object_validation_invalid_scale(self):
-        vertices = [
-            Vertex(Vector3(0, 0, 0)),
-            Vertex(Vector3(1, 0, 0)),
-            Vertex(Vector3(0, 1, 0))
-        ]
-        geom = Geometry(vertices, GeometryType.TRIANGLE)
-        mat = N64Material("wood", 10)
-        obj = RenderObject("obj", geom, mat, Vector3(0, 0, 0), scale=Vector3(0, 1, 1))
-        self.assertFalse(obj.validate())
-
-    def test_render_object_memory_estimate(self):
-        obj = self.create_sample_object()
-        memory = obj.get_total_memory()
-        self.assertEqual(memory, 3 * 28)
-
-
-class TestN64MemoryBudget(unittest.TestCase):
-    def test_memory_budget_creation(self):
-        budget = N64MemoryBudget()
-        self.assertEqual(budget.RDRAM_SIZE, 4 * 1024 * 1024)
-        self.assertEqual(budget.allocated, 0)
-
-    def test_memory_allocation_success(self):
-        budget = N64MemoryBudget()
-        result = budget.allocate("test", 1024)
-        self.assertTrue(result)
-        self.assertEqual(budget.allocated, 1024)
-
-    def test_memory_allocation_failure(self):
-        budget = N64MemoryBudget()
-        size = budget.available + 1024
-        result = budget.allocate("test", size)
-        self.assertFalse(result)
-
-    def test_memory_deallocation(self):
-        budget = N64MemoryBudget()
-        budget.allocate("test", 1024)
-        result = budget.deallocate("test")
-        self.assertTrue(result)
-        self.assertEqual(budget.allocated, 0)
-
-    def test_memory_deallocation_nonexistent(self):
-        budget = N64MemoryBudget()
-        result = budget.deallocate("nonexistent")
-        self.assertFalse(result)
-
-    def test_memory_usage_percent(self):
-        budget = N64MemoryBudget()
-        budget.allocate("test", int(budget.available / 2))
-        usage = budget.get_usage_percent()
-        self.assertAlmostEqual(usage, 50.0, places=1)
-
-    def test_memory_validation(self):
-        budget = N64MemoryBudget()
-        self.assertTrue(budget.validate())
-        budget.allocate("test", budget.available)
-        self.assertTrue(budget.validate())
-
-
-class TestN64Engine(unittest.TestCase):
+class TestActor(unittest.TestCase):
+    
     def setUp(self):
-        self.engine = N64Engine()
+        bounds = Bounds3D(Vector3(0, 0, 0), Vector3(2, 2, 2))
+        self.geometry = Geometry("geom_1", GeometryType.MESH, bounds, 50)
+        self.position = Vector3(5, 5, 5)
+        self.actor = Actor("actor_1", self.position, self.geometry)
+    
+    def test_actor_creation(self):
+        self.assertEqual(self.actor.id, "actor_1")
+        self.assertEqual(self.actor.position.x, 5)
+        self.assertTrue(self.actor.is_active)
+    
+    def test_actor_validation_valid(self):
+        valid, msg = self.actor.validate()
+        self.assertTrue(valid)
+    
+    def test_actor_validation_empty_id(self):
+        actor = Actor("", self.position, self.geometry)
+        valid, msg = actor.validate()
+        self.assertFalse(valid)
+    
+    def test_actor_validation_no_geometry(self):
+        actor = Actor("actor_2", self.position, None)
+        valid, msg = actor.validate()
+        self.assertFalse(valid)
+    
+    def test_actor_world_bounds(self):
+        world_bounds = self.actor.get_world_bounds()
+        self.assertIsNotNone(world_bounds)
+        self.assertTrue(world_bounds.contains_point(self.position))
 
-    def test_engine_creation(self):
-        self.assertIsNotNone(self.engine.memory_budget)
-        self.assertEqual(len(self.engine.render_objects), 0)
 
-    def test_register_material(self):
-        mat = N64Material("stone", 1)
-        result = self.engine.register_material(mat)
-        self.assertTrue(result)
-        self.assertIn("stone", self.engine.materials)
-
-    def test_register_invalid_material(self):
-        mat = N64Material("", 1)
-        result = self.engine.register_
-register_material(mat)
-        self.assertFalse(result)
-
-    def test_register_geometry(self):
-        vertices = [
-            Vertex(Vector3(0, 0, 0)),
-            Vertex(Vector3(1, 0, 0)),
-            Vertex(Vector3(0, 1, 0))
-        ]
-        geom = Geometry(vertices, GeometryType.TRIANGLE)
-        result = self.engine.register_geometry("triangle", geom)
-        self.assertTrue(result)
-        self.assertIn("triangle", self.engine.geometries)
-
-    def test_register_geometry_invalid(self):
-        geom = Geometry([], GeometryType.TRIANGLE)
-        result = self.engine.register_geometry("empty", geom)
-        self.assertFalse(result)
-
-    def test_add_render_object(self):
-        vertices = [
-            Vertex(Vector3(0, 0, 0)),
-            Vertex(Vector3(1, 0, 0)),
-            Vertex(Vector3(0, 1, 0))
-        ]
-        geom = Geometry(vertices, GeometryType.TRIANGLE)
-        mat = N64Material("wood", 10)
-        self.engine.register_material(mat)
-        obj = RenderObject("cube", geom, mat, Vector3(0, 0, 0))
-        result = self.engine.add_render_object(obj)
-        self.assertTrue(result)
-        self.assertEqual(len(self.engine.render_objects), 1)
-
-    def test_add_render_object_missing_material(self):
-        vertices = [
-            Vertex(Vector3(0, 0, 0)),
-            Vertex(Vector3(1, 0, 0)),
-            Vertex(Vector3(0, 1, 0))
-        ]
-        geom = Geometry(vertices, GeometryType.TRIANGLE)
-        mat = N64Material("wood", 10)
-        obj = RenderObject("cube", geom, mat, Vector3(0, 0, 0))
-        result = self.engine.add_render_object(obj)
-        self.assertFalse(result)
-
-    def test_get_visible_objects(self):
-        vertices_visible = [
-            Vertex(Vector3(0, 0, 0)),
-            Vertex(Vector3(1, 0, 0)),
-            Vertex(Vector3(0, 1, 0))
-        ]
-        vertices_hidden = [
-            Vertex(Vector3(10, 10, 10)),
-            Vertex(Vector3(11, 10, 10)),
-            Vertex(Vector3(10, 11, 10))
-        ]
-        geom_visible = Geometry(vertices_visible, GeometryType.TRIANGLE, visible=True)
-        geom_hidden = Geometry(vertices_hidden, GeometryType.TRIANGLE, visible=False)
-        mat = N64Material("wood", 10)
-        self.engine.register_material(mat)
+class TestWorldChunk(unittest.TestCase):
+    
+    def setUp(self):
+        self.chunk_bounds = Bounds3D(Vector3(0, 0, 0), Vector3(50, 50, 50))
+        self.chunk = WorldChunk("chunk_1", self.chunk_bounds)
         
-        obj1 = RenderObject("cube1", geom_visible, mat, Vector3(0, 0, 0))
-        obj2 = RenderObject("cube2", geom_hidden, mat, Vector3(10, 10, 10))
-        
-        self.engine.add_render_object(obj1)
-        self.engine.add_render_object(obj2)
-        
-        visible = self.engine.get_visible_objects()
-        self.assertEqual(len(visible), 1)
-        self.assertEqual(visible[0].name, "cube1")
+        geom_bounds = Bounds3D(Vector3(0, 0, 0), Vector3(2, 2, 2))
+        self.geometry = Geometry("geom_1", GeometryType.MESH, geom_bounds, 50)
+        self.actor = Actor("actor_1", Vector3(25, 25, 25), self.geometry)
+    
+    def test_chunk_creation(self):
+        self.assertEqual(self.chunk.id, "chunk_1")
+        self.assertEqual(len(self.chunk.actors), 0)
+    
+    def test_chunk_add_actor_valid(self):
+        success, msg = self.chunk.add_actor(self.actor)
+        self.assertTrue(success)
+        self.assertEqual(len(self.chunk.actors), 1)
+    
+    def test_chunk_add_actor_invalid(self):
+        invalid_actor = Actor("", Vector3(25, 25, 25), self.geometry)
+        success, msg = self.chunk.add_actor(invalid_actor)
+        self.assertFalse(success)
+    
+    def test_chunk_add_actor_outside_bounds(self):
+        actor = Actor("actor_2", Vector3(100, 100, 100), self.geometry)
+        success, msg = self.chunk.add_actor(actor)
+        self.assertFalse(success)
+    
+    def test_chunk_get_actors_near(self):
+        self.chunk.add_actor(self.actor)
+        nearby = self.chunk.get_actors_near(Vector3(25, 25, 25), 10)
+        self.assertEqual(len(nearby), 1)
+    
+    def test_chunk_get_actors_near_empty(self):
+        self.chunk.add_actor(self.actor)
+        nearby = self.chunk.get_actors_near(Vector3(40, 40, 40), 5)
+        self.assertEqual(len(nearby), 0)
+    
+    def test_chunk_validation_valid(self):
+        self.chunk.add_actor(self.actor)
+        valid, msg = self.chunk.validate()
+        self.assertTrue(valid)
+    
+    def test_chunk_validation_no_actors(self):
+        valid, msg = self.chunk.validate()
+        self.assertFalse(valid)
+        self.assertIn("at least one actor", msg)
 
-    def test_optimize_visibility(self):
-        mat = N64Material("wood", 10)
-        self.engine.register_material(mat)
-        
-        for i in range(5):
-            vertices = [
-                Vertex(Vector3(0, 0, 0)),
-                Vertex(Vector3(1, 0, 0)),
-                Vertex(Vector3(0, 1, 0))
-            ]
-            geom = Geometry(vertices, GeometryType.TRIANGLE)
-            pos = Vector3(i * 10, 0, 0)
-            obj = RenderObject(f"obj{i}", geom, mat, pos)
-            self.engine.add_render_object(obj)
-        
-        camera_pos = Vector3(0, 0, 0)
-        view_distance = 25.0
-        visible = self.engine.optimize_visibility(camera_pos, view_distance)
-        self.assertGreater(len(visible), 0)
-        self.assertLessEqual(len(visible), len(self.engine.render_objects))
 
-    def test_memory_report(self):
-        report = self.engine.get_memory_report()
-        self.assertIn("total_rdram", report)
-        self.assertIn("allocated", report)
-        self.assertIn("usage_percent", report)
-        self.assertGreaterEqual(report["usage_percent"], 0.0)
-        self.assertLessEqual(report["usage_percent"], 100.0)
+class TestWorld(unittest.TestCase):
+    
+    def setUp(self):
+        self.world = World("world_1", max_chunks=10)
+        
+        self.chunk_bounds = Bounds3D(Vector3(0, 0, 0), Vector3(50, 50, 50))
+        self.chunk = WorldChunk("chunk_1", self.chunk_bounds)
+        
+        geom_bounds = Bounds3D(Vector3(0, 0, 0), Vector3(2, 2, 2))
+        self.geometry = Geometry("geom_1", GeometryType.MESH, geom_bounds, 50)
+        self.actor = Actor("actor_1", Vector3(25, 25, 25), self.geometry)
+        self.chunk.add_actor(self.actor)
+    
+    def test_world_creation(self):
+        self.assertEqual(self.world.id, "world_1")
+        self.assertEqual(len(self.world.chunks), 0)
+    
+    def test_world_add_chunk(self):
+        success, msg = self.world.add_chunk(self.chunk)
+        self.assertTrue(success)
+        self.assertEqual(len(self.world.chunks), 1)
+    
+    def test_world_add_chunk_duplicate(self):
+        self.world.add_chunk(self.chunk)
+        success, msg = self.world.add_chunk(self.chunk)
+        self.assertFalse(success)
+    
+    def test_world_add_chunk_exceeds_max(self):
+        for i in range(10):
+            bounds = Bounds3D(Vector3(i*60, 0, 0), Vector3(i*60+50, 50, 50))
+            chunk = WorldChunk(f"chunk_{i}", bounds)
+            geom = Geometry(f"geom_{i}", GeometryType.MESH, Bounds3D(Vector3(0, 0, 0), Vector3(2, 2, 2)), 50)
+            actor = Actor(f"actor_{i}", Vector3(i*60+25, 25, 25), geom)
+            chunk.add_actor(actor)
+            self.world.add_chunk(chunk)
+        
+        bounds = Bounds3D(Vector3(600, 0, 0), Vector3(650, 50, 50))
+        chunk =
+WorldChunk("chunk_10", bounds)
+        geom = Geometry("geom_10", GeometryType.MESH, Bounds3D(Vector3(0, 0, 0), Vector3(2, 2, 2)), 50)
+        actor = Actor("actor_10", Vector3(625, 25, 25), geom)
+        chunk.add_actor(actor)
+        success, msg = self.world.add_chunk(chunk)
+        self.assertFalse(success)
+    
+    def test_world_get_chunk(self):
+        self.world.add_chunk(self.chunk)
+        retrieved = self.world.get_chunk("chunk_1")
+        self.assertIsNotNone(retrieved)
+        self.assertEqual(retrieved.id, "chunk_1")
+    
+    def test_world_get_chunk_not_found(self):
+        retrieved = self.world.get_chunk("nonexistent")
+        self.assertIsNone(retrieved)
+    
+    def test_world_find_actors_in_region(self):
+        self.world.add_chunk(self.chunk)
+        region = Bounds3D(Vector3(20, 20, 20), Vector3(30, 30, 30))
+        actors = self.world.find_actors_in_region(region)
+        self.assertEqual(len(actors), 1)
+    
+    def test_world_find_actors_in_region_empty(self):
+        self.world.add_chunk(self.chunk)
+        region = Bounds3D(Vector3(100, 100, 100), Vector3(110, 110, 110))
+        actors = self.world.find_actors_in_region(region)
+        self.assertEqual(len(actors), 0)
+    
+    def test_world_validation_valid(self):
+        self.world.add_chunk(self.chunk)
+        valid, msg = self.world.validate()
+        self.assertTrue(valid)
+    
+    def test_world_validation_no_chunks(self):
+        valid, msg = self.world.validate()
+        self.assertFalse(valid)
+        self.assertIn("at least one chunk", msg)
 
 
 class TestIntegration(unittest.TestCase):
-    def test_full_scene_creation(self):
-        engine = N64Engine()
+    
+    def test_full_world_setup(self):
+        world = World("test_world", max_chunks=5)
         
-        mat_stone = N64Material("stone", 1)
-        mat_grass = N64Material("grass", 2, use_alpha=True)
-        engine.register_material(mat_stone)
-        engine.register_material(mat_grass)
-        
-        ground_vertices = [
-            Vertex(Vector3(0, 0, 0), color=(100, 150, 100, 255)),
-            Vertex(Vector3(100, 0, 0), color=(100, 150, 100, 255)),
-            Vertex(Vector3(100, 0, 100), color=(100, 150, 100, 255)),
-            Vertex(Vector3(0, 0, 100), color=(100, 150, 100, 255))
-        ]
-        ground_geom = Geometry(ground_vertices, GeometryType.QUAD)
-        ground = RenderObject("ground", ground_geom, mat_grass, Vector3(0, 0, 0))
-        self.assertTrue(engine.add_render_object(ground))
-        
-        for i in range(3):
-            cube_vertices = [
-                Vertex(Vector3(0, 0, 0), color=(200, 100, 50, 255)),
-                Vertex(Vector3(5, 0, 0), color=(200, 100, 50, 255)),
-                Vertex(Vector3(0, 5, 0), color=(200, 100, 50, 255))
-            ]
-            cube_geom = Geometry(cube_vertices, GeometryType.TRIANGLE)
-            pos = Vector3(10 + i * 15, 0, 10)
-            cube = RenderObject(f"cube_{i}", cube_geom, mat_stone, pos)
-            self.assertTrue(engine.add_render_object(cube))
-        
-        self.assertEqual(len(engine.render_objects), 4)
-        visible = engine.get_visible_objects()
-        self.assertEqual(len(visible), 4)
-        
-        report = engine.get_memory_report()
-        self.assertGreater(report["allocated"], 0)
-        self.assertLess(report["usage_percent"], 100.0)
-
-    def test_memory_pressure_scenario(self):
-        budget = N64MemoryBudget()
-        engine = N64Engine(budget)
-        
-        mat = N64Material("default", 0)
-        engine.register_material(mat)
-        
-        objects_added = 0
-        max_attempts = 1000
-        
-        for i in range(max_attempts):
-            vertices = [
-                Vertex(Vector3(i, 0, 0)),
-                Vertex(Vector3(i+1, 0, 0)),
-                Vertex(Vector3(i, 1, 0))
-            ]
-            geom = Geometry(vertices, GeometryType.TRIANGLE)
-            obj = RenderObject(f"obj_{i}", geom, mat, Vector3(i * 2, 0, 0))
+        for chunk_idx in range(3):
+            chunk_bounds = Bounds3D(
+                Vector3(chunk_idx * 100, 0, 0),
+                Vector3(chunk_idx * 100 + 100, 100, 100)
+            )
+            chunk = WorldChunk(f"chunk_{chunk_idx}", chunk_bounds)
             
-            if engine.add_render_object(obj):
-                objects_added += 1
-            else:
-                break
+            for actor_idx in range(2):
+                geom_bounds = Bounds3D(Vector3(0, 0, 0), Vector3(5, 5, 5))
+                geometry = Geometry(
+                    f"geom_{chunk_idx}_{actor_idx}",
+                    GeometryType.MESH,
+                    geom_bounds,
+                    100 + actor_idx * 50
+                )
+                
+                actor_pos = Vector3(
+                    chunk_idx * 100 + 25 + actor_idx * 20,
+                    50,
+                    50
+                )
+                actor = Actor(f"actor_{chunk_idx}_{actor_idx}", actor_pos, geometry)
+                chunk.add_actor(actor)
+            
+            world.add_chunk(chunk)
         
-        self.assertGreater(objects_added, 0)
-        self.assertLess(objects_added, max_attempts)
+        valid, msg = world.validate()
+        self.assertTrue(valid)
+        self.assertEqual(len(world.chunks), 3)
         
-        report = engine.get_memory_report()
-        self.assertAlmostEqual(report["usage_percent"], 100.0, delta=5.0)
+        total_actors = sum(len(chunk.actors) for chunk in world.chunks.values())
+        self.assertEqual(total_actors, 6)
+    
+    def test_collision_detection_scenario(self):
+        world = World("collision_world")
+        
+        chunk_bounds = Bounds3D(Vector3(0, 0, 0), Vector3(200, 200, 200))
+        chunk = WorldChunk("main_chunk", chunk_bounds)
+        
+        geom1 = Geometry("geom_1", GeometryType.COLLIDER, Bounds3D(Vector3(0, 0, 0), Vector3(10, 10, 10)), 50)
+        geom2 = Geometry("geom_2", GeometryType.COLLIDER, Bounds3D(Vector3(0, 0, 0), Vector3(10, 10, 10)), 50)
+        
+        actor1 = Actor("actor_1", Vector3(50, 50, 50), geom1)
+        actor2 = Actor("actor_2", Vector3(55, 50, 50), geom2)
+        
+        chunk.add_actor(actor1)
+        chunk.add_actor(actor2)
+        world.add_chunk(chunk)
+        
+        distance = actor1.position.distance_to(actor2.position)
+        self.assertLess(distance, 20)
+        
+        region = Bounds3D(Vector3(40, 40, 40), Vector3(70, 70, 70))
+        nearby_actors = world.find_actors_in_region(region)
+        self.assertEqual(len(nearby_actors), 2)
+    
+    def test_spatial_partitioning(self):
+        world = World("spatial_world", max_chunks=4)
+        
+        chunks = []
+        for x in range(2):
+            for z in range(2):
+                bounds = Bounds3D(
+                    Vector3(x * 100, 0, z * 100),
+                    Vector3(x * 100 + 100, 100, z * 100 + 100)
+                )
+                chunk = WorldChunk(f"chunk_{x}_{z}", bounds)
+                
+                geom = Geometry(f"geom_{x}_{z}", GeometryType.MESH, 
+                              Bounds3D(Vector3(0, 0, 0), Vector3(10, 10, 10)), 100)
+                actor = Actor(f"actor_{x}_{z}", 
+                            Vector3(x * 100 + 50, 50, z * 100 + 50), geom)
+                chunk.add_actor(actor)
+                world.add_chunk(chunk)
+                chunks.append(chunk)
+        
+        self.assertEqual(len(world.chunks), 4)
+        
+        query_region = Bounds3D(Vector3(40, 0, 40), Vector3(110, 100, 110))
+        actors = world.find_actors_in_region(query_region)
+        self.assertEqual(len(actors), 2)
 
 
-def run_tests(verbose: bool = False) -> unittest.TestResult:
+def run_tests(verbosity: int = 2) -> bool:
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
     
     suite.addTests(loader.loadTestsFromTestCase(TestVector3))
-    suite.addTests(loader.loadTestsFromTestCase(TestVertex))
+    suite.addTests(loader.loadTestsFromTestCase(TestBounds3D))
     suite.addTests(loader.loadTestsFromTestCase(TestGeometry))
-    suite.addTests(loader.loadTestsFromTestCase(TestN64Material))
-    suite.addTests(loader.loadTestsFromTestCase(TestRenderObject))
-    suite.addTests(loader.loadTestsFromTestCase(TestN64MemoryBudget))
-    suite.addTests(loader.loadTestsFromTestCase(TestN64Engine))
+    suite.addTests(loader.loadTestsFromTestCase(TestActor))
+    suite.addTests(loader.loadTestsFromTestCase(TestWorldChunk))
+    suite.addTests(loader.loadTestsFromTestCase(TestWorld))
     suite.addTests(loader.loadTestsFromTestCase(TestIntegration))
     
-    runner = unittest.TextTestRunner(verbosity=2 if verbose else 1)
+    runner = unittest.TextTestRunner(verbosity=verbosity)
     result = runner.run(suite)
-    return result
+    
+    return result.wasSuccessful()
 
 
-def generate_json_report(result: unittest.TestResult) -> Dict:
-    return {
+def generate_test_report(verbosity: int = 2) -> Dict:
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite()
+    
+    suite.addTests(loader.loadTestsFromTestCase(TestVector3))
+    suite.addTests(loader.loadTestsFromTestCase(TestBounds3D))
+    suite.addTests(loader.loadTestsFromTestCase(TestGeometry))
+    suite.addTests(loader.loadTestsFromTestCase(TestActor))
+    suite.addTests(loader.loadTestsFromTestCase(TestWorldChunk))
+    suite.addTests(loader.loadTestsFromTestCase(TestWorld))
+    suite.addTests(loader.loadTestsFromTestCase(TestIntegration))
+    
+    runner = unittest.TextTestRunner(stream=None, verbosity=0)
+    result = runner.run(suite)
+    
+    report = {
         "tests_run": result.testsRun,
         "failures": len(result.failures),
         "errors": len(result.errors),
         "skipped": len(result.skipped),
         "success": result.wasSuccessful(),
-        "failure_details": [
-            {"test": str(test), "message": message}
-            for test, message in result.failures
-        ],
-        "error_details": [
-            {"test": str(test), "message": message}
-            for test, message in result.errors
-        ]
+        "test_cases": {
+            "Vector3": loader.loadTestsFromTestCase(TestVector3).countTestCases(),
+            "Bounds3D": loader.loadTestsFromTestCase(TestBounds3D).countTestCases(),
+            "Geometry": loader.loadTestsFromTestCase(TestGeometry).countTestCases(),
+            "Actor": loader.loadTestsFromTestCase(TestActor).countTestCases(),
+            "WorldChunk": loader.loadTestsFromTestCase(TestWorldChunk).countTestCases(),
+            "World": loader.loadTestsFromTestCase(TestWorld).countTestCases(),
+            "Integration": loader.loadTestsFromTestCase(TestIntegration).countTestCases(),
+        }
     }
+    
+    return report
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
-        description="N64 Open-World Engine Unit Tests and Validation"
+        description="N64 Open-World Engine: Tests and Validation"
     )
     parser.add_argument(
-        "--verbose",
+        "--verbosity",
+        type=int,
+        choices=[0, 1, 2],
+        default=2,
+        help="Test output verbosity level (0=quiet, 1=normal, 2=verbose)"
+    )
+    parser.add_argument(
+        "--report",
         action="store_true",
-        help="Run tests in verbose mode"
-    )
-    parser.add_argument(
-        "--json-report",
-        type=str,
-        metavar="FILE",
-        help="Output test results as JSON to specified file"
+        help="Generate JSON test report instead of running tests"
     )
     parser.add_argument(
         "--demo",
         action="store_true",
-        help="Run demo scene creation and validation"
+        help="Run demonstration scenarios"
     )
     
     args = parser.parse_args()
     
+    if args.report:
+        report = generate_test_report(args.verbosity)
+        print(json.dumps(report, indent=2))
+        return 0
+    
     if args.demo:
-        print("=" * 70)
-        print("N64 OPEN-WORLD ENGINE DEMO - Scene Creation & Validation")
-        print("=" * 70)
+        print("=== N64 Open-World Engine: Demonstration ===\n")
         
-        engine = N64Engine()
-        print(f"\n[*] Created engine with {engine.memory_budget.RDRAM_SIZE / 1024 / 1024:.1f} MB RDRAM")
+        print("1. Creating game world...")
+        world = World("demo_world", max_chunks=10)
+        print(f"   ✓ World '{world.id}' created\n")
         
-        materials = [
-            N64Material("grass", 1, use_alpha=False),
-            N64Material("stone", 2, use_alpha=False),
-            N64Material("water", 3, use_alpha=True, alpha_threshold=0.3),
-            N64Material("wood", 4, use_alpha=False)
-        ]
-        
-        for mat in materials:
-            if engine.register_material(mat):
-                print(f"[+] Registered material: {mat.name} (texture_id={mat.texture_id})")
-        
-        print("\n[*] Creating scene objects...")
-        
-        terrain_verts = [
-            Vertex(Vector3(0, 0, 0), color=(100, 150, 80, 255), texture_u=0.0, texture_v=0.0),
-            Vertex(Vector3(100, 0, 0), color=(100, 150, 80, 255), texture_u=1.0, texture_v=0.0),
-            Vertex(Vector3(100, 0, 100), color=(100, 150, 80, 255), texture_u=1.0, texture_v=1.0),
-            Vertex(Vector3(0, 0, 100), color=(100, 150, 80, 255), texture_u=0.0, texture_v=1.0)
-        ]
-        terrain = Geometry(terrain_verts, GeometryType.QUAD)
-        terrain_obj = RenderObject(
-            "terrain",
-            terrain,
-            engine.materials["grass"],
-            Vector3(0, 0, 0),
-            scale=Vector3(1, 1, 1)
-        )
-        if engine.add_render_object(terrain_obj):
-            print(f"[+] Added terrain object, memory: {terrain_obj.get_total_memory()} bytes")
-        
-        building_positions = [
-            (10, 0, 10),
-            (50, 0, 20),
-            (30, 0, 60)
-        ]
-        
-        for idx, (x, y, z) in enumerate(building_positions):
-            building_verts = [
-                Vertex(Vector3(0, 0, 0), color=(150, 100, 50, 255)),
-                Vertex(Vector3(10, 0, 0), color=(150, 100, 50, 255)),
-                Vertex(Vector3(5, 10, 5), color=(150, 100, 50, 255))
-            ]
-            building_geom = Geometry(building_verts, GeometryType.TRIANGLE)
-            building_obj = RenderObject(
-                f"building_{idx}",
-                building_geom,
-                engine.materials["stone"],
-                Vector3(x, y, z),
-                rotation=Vector3(0, idx * 20, 0),
-                scale=Vector3(1, 2, 1)
+        print("2. Creating terrain chunks...")
+        for chunk_idx in range(3):
+            chunk_bounds = Bounds3D(
+                Vector3(chunk_idx * 100, 0, 0),
+                Vector3(chunk_idx * 100 + 100, 100, 100)
             )
-            if engine.add_render_object(building_obj):
-                print(f"[+] Added building_{idx} at ({x}, {y}, {z})")
+            chunk = WorldChunk(f"terrain_{chunk_idx}", chunk_bounds)
+            
+            geom = Geometry(
+                f"terrain_geom_{chunk_idx}",
+                GeometryType.MESH,
+                Bounds3D(Vector3(0, 0, 0), Vector3(100, 100, 100)),
+                5000
+            )
+            actor = Actor(
+                f"terrain_{chunk_idx}",
+                Vector3(chunk_idx * 100 + 50, 50, 50),
+                geom
+            )
+            chunk.add_actor(actor)
+            world.add_chunk(chunk)
+            print(f"   ✓ Chunk '{chunk.id}' added with terrain geometry")
         
-        print(f"\n[*] Total objects in scene: {len(engine.render_objects)}")
+        print(f"\n3. Validating world structure...")
+        valid, msg = world.validate()
+        print(f"   ✓ World validation: {msg}\n")
         
-        visible = engine.get_visible_objects()
-        print(f"[*] Visible objects: {len(visible)}")
+        print("4. Performing spatial queries...")
+        query_region = Bounds3D(Vector3(40, 0, 0), Vector3(160, 100, 100))
+        actors = world.find_actors_in_region(query_region)
+        print(f"   ✓ Found {len(actors)} actors in query region\n")
         
-        camera_pos = Vector3(50, 50, 50)
-        view_distance = 80.0
-        frustum_culled = engine.optimize_visibility(camera_pos, view_distance)
-        print(f"[*] Objects in view frustum (distance={view_distance}): {len(frustum_culled)}")
+        print("5. Testing actor proximity detection...")
+        chunk = world.get_chunk("terrain_1")
+        nearby = chunk.get_actors_near(Vector3(150, 50, 50), 60)
+        print(f"   ✓ Found {len(nearby)} actors within 60 units\n")
         
-        report = engine.get_memory_report()
-        print("\n[*] Memory Report:")
-        print(f"    Total RDRAM: {report['total_rdram'] / 1024 / 1024:.2f} MB")
-        print(f"    Reserved System: {report['reserved_system'] / 1024:.0f} KB")
-        print(f"    Available: {report['available'] / 1024 / 1024:.2f} MB")
-        print(f"    Allocated: {report['allocated'] / 1024:.0f} KB")
-        print(f"    Usage: {report['usage_percent']:.2f}%")
-        
-        print("\n[*] Material Registry:")
-        for name, mat in engine.materials.items():
-            print(f"    - {name}: texture_id={mat.texture_id}, alpha={mat.use_alpha}")
-        
-        print("\n[*] Rendering object details:")
-        for obj in engine.render_objects[:3]:
-            print(f"    - {obj.name}: pos=({obj.position.x}, {obj.position.y}, {obj.position.z}), " +
-                  f"vertices={len(obj.geometry.vertices)}, material={obj.material.name}")
-        
-        print("\n" + "=" * 70)
+        print("=== Demonstration Complete ===")
+        return 0
     
-    print("\nRunning unit tests...")
-    result = run_tests(args.verbose)
+    print("=== N64 Open-World Engine: Test Suite ===\n")
+    success = run_tests(args.verbosity)
     
-    if args.json_report:
-        report = generate_json_report(result)
-        with open(args.json_report, 'w') as f:
-            json.dump(report, f, indent=2)
-        print(f"\n[+] JSON report written to: {args.json_report}")
-    
-    print("\n" + "=" * 70)
-    print("Test Summary:")
-    print(f"  Tests Run: {result.testsRun}")
-    print(f"  Failures: {len(result.failures)}")
-    print(f"  Errors: {len(result.errors)}")
-    print(f"  Success: {result.wasSuccessful()}")
-    print("=" * 70)
-    
-    sys.exit(0 if result.wasSuccessful() else 1)
+    if success:
+        print("\n✓ All tests passed!")
+        return 0
+    else:
+        print("\n✗ Some tests failed")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
