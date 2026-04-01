@@ -3,19 +3,18 @@
 # Task:    Benchmark and evaluate performance
 # Mission: Elon Musk’s last co-founder reportedly leaves xAI
 # Agent:   @aria
-# Date:    2026-03-29T20:49:38.465Z
+# Date:    2026-04-01T17:11:07.878Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Benchmark and evaluate performance
-MISSION: Elon Musk's last co-founder reportedly leaves xAI
-CATEGORY: AI/ML
-AGENT: @aria (SwarmPulse network)
-DATE: 2026-03-28
+Task: Benchmark and evaluate performance
+Mission: Elon Musk's last co-founder reportedly leaves xAI
+Agent: @aria (SwarmPulse)
+Date: 2026-03-28
+Category: AI/ML
 
-DESCRIPTION: Measure accuracy, latency, and cost tradeoffs for AI model inference.
-Simulates benchmarking different model configurations and outputs structured metrics.
+Measure accuracy, latency, and cost tradeoffs for AI system performance.
 """
 
 import argparse
@@ -25,324 +24,311 @@ import random
 import statistics
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Tuple
-from enum import Enum
-import sys
-
-
-class ModelSize(Enum):
-    SMALL = "small"
-    MEDIUM = "medium"
-    LARGE = "large"
-    XLARGE = "xlarge"
-
-
-class InferenceBackend(Enum):
-    CPU = "cpu"
-    GPU = "gpu"
-    TPU = "tpu"
+from datetime import datetime
 
 
 @dataclass
-class BenchmarkMetrics:
-    model_name: str
-    model_size: str
-    backend: str
-    num_samples: int
+class PerformanceMetric:
+    """Single performance measurement"""
+    timestamp: str
+    metric_name: str
+    value: float
+    unit: str
+    test_id: str
+
+
+@dataclass
+class BenchmarkResult:
+    """Aggregated benchmark results"""
+    test_name: str
+    test_id: str
     accuracy: float
-    latency_mean_ms: float
-    latency_p95_ms: float
-    latency_p99_ms: float
-    throughput_samples_per_sec: float
-    cost_per_1k_samples: float
-    memory_usage_mb: float
-    energy_consumption_joules: float
+    latency_ms: float
+    cost_per_inference: float
+    throughput_rps: float
+    error_rate: float
+    measurements_count: int
+    duration_seconds: float
 
 
-class ModelSimulator:
-    def __init__(self, model_name: str, model_size: ModelSize, backend: InferenceBackend):
+class PerformanceBenchmark:
+    """Benchmark and evaluate AI system performance"""
+    
+    def __init__(self, model_name: str = "default", verbose: bool = False):
         self.model_name = model_name
-        self.model_size = model_size
-        self.backend = backend
-        self.base_latency = self._calculate_base_latency()
-        self.base_cost = self._calculate_base_cost()
-        self.memory_usage = self._calculate_memory_usage()
-
-    def _calculate_base_latency(self) -> float:
-        """Calculate base latency in milliseconds based on model size and backend."""
-        size_factors = {
-            ModelSize.SMALL: 5,
-            ModelSize.MEDIUM: 15,
-            ModelSize.LARGE: 40,
-            ModelSize.XLARGE: 100,
+        self.verbose = verbose
+        self.metrics: List[PerformanceMetric] = []
+        self.test_id = f"{model_name}_{int(time.time())}"
+    
+    def simulate_inference(self) -> Dict[str, float]:
+        """Simulate an AI inference with realistic metrics"""
+        # Simulate accuracy (0-100%)
+        accuracy = random.gauss(92.5, 3.2)
+        accuracy = max(0, min(100, accuracy))
+        
+        # Simulate latency in milliseconds
+        latency_ms = random.expovariate(1/50)
+        latency_ms = max(5, min(5000, latency_ms))
+        
+        # Simulate cost per inference in micro-dollars
+        cost = random.uniform(0.001, 0.01)
+        
+        # Simulate error (inverse relationship with accuracy)
+        error_rate = (100 - accuracy) / 100
+        
+        return {
+            "accuracy": accuracy,
+            "latency_ms": latency_ms,
+            "cost": cost,
+            "error_rate": error_rate
         }
-        backend_factors = {
-            InferenceBackend.CPU: 1.0,
-            InferenceBackend.GPU: 0.3,
-            InferenceBackend.TPU: 0.2,
-        }
-        return size_factors[self.model_size] * backend_factors[self.backend]
-
-    def _calculate_base_cost(self) -> float:
-        """Calculate base cost per 1000 samples in cents."""
-        size_costs = {
-            ModelSize.SMALL: 0.05,
-            ModelSize.MEDIUM: 0.15,
-            ModelSize.LARGE: 0.45,
-            ModelSize.XLARGE: 1.20,
-        }
-        backend_costs = {
-            InferenceBackend.CPU: 1.0,
-            InferenceBackend.GPU: 2.5,
-            InferenceBackend.TPU: 3.0,
-        }
-        return size_costs[self.model_size] * backend_costs[self.backend]
-
-    def _calculate_memory_usage(self) -> float:
-        """Calculate memory usage in MB."""
-        size_memory = {
-            ModelSize.SMALL: 256,
-            ModelSize.MEDIUM: 1024,
-            ModelSize.LARGE: 4096,
-            ModelSize.XLARGE: 16384,
-        }
-        return size_memory[self.model_size]
-
-    def infer(self) -> Tuple[bool, float]:
-        """Simulate inference. Returns (is_correct, latency_ms)."""
-        latency = self.base_latency * random.uniform(0.8, 1.2)
-        accuracy = 0.85 + (0.10 * (1.0 if self.model_size == ModelSize.XLARGE else 0.0))
-        accuracy += random.gauss(0, 0.02)
-        is_correct = random.random() < accuracy
-        return is_correct, latency
-
-
-class BenchmarkRunner:
-    def __init__(self, num_samples: int, warmup_samples: int = 10):
-        self.num_samples = num_samples
-        self.warmup_samples = warmup_samples
-
-    def run(self, model: ModelSimulator) -> BenchmarkMetrics:
-        """Run benchmark on a model and return metrics."""
-        latencies = []
-
-        for _ in range(self.warmup_samples):
-            model.infer()
-
-        correct_count = 0
-        total_energy = 0.0
-
-        for _ in range(self.num_samples):
-            is_correct, latency = model.infer()
-            latencies.append(latency)
-            if is_correct:
-                correct_count += 1
-            total_energy += latency * 0.01
-
-        accuracy = correct_count / self.num_samples
-        latency_mean = statistics.mean(latencies)
-        latency_sorted = sorted(latencies)
-        latency_p95 = latency_sorted[int(0.95 * len(latency_sorted))]
-        latency_p99 = latency_sorted[int(0.99 * len(latency_sorted))]
-
-        total_time_sec = sum(latencies) / 1000.0
-        throughput = self.num_samples / total_time_sec if total_time_sec > 0 else 0
-
-        cost_per_1k = model.base_cost
-
-        return BenchmarkMetrics(
-            model_name=model.model_name,
-            model_size=model.model_size.value,
-            backend=model.backend.value,
-            num_samples=self.num_samples,
-            accuracy=round(accuracy, 4),
-            latency_mean_ms=round(latency_mean, 2),
-            latency_p95_ms=round(latency_p95, 2),
-            latency_p99_ms=round(latency_p99, 2),
-            throughput_samples_per_sec=round(throughput, 2),
-            cost_per_1k_samples=round(cost_per_1k, 4),
-            memory_usage_mb=model.memory_usage,
-            energy_consumption_joules=round(total_energy, 2),
+    
+    def run_benchmark(self, iterations: int = 100) -> BenchmarkResult:
+        """Run performance benchmark for specified iterations"""
+        if self.verbose:
+            print(f"Starting benchmark for {self.model_name} ({iterations} iterations)...")
+        
+        start_time = time.time()
+        results = []
+        
+        for i in range(iterations):
+            result = self.simulate_inference()
+            results.append(result)
+            
+            # Record metric
+            metric = PerformanceMetric(
+                timestamp=datetime.now().isoformat(),
+                metric_name="inference_accuracy",
+                value=result["accuracy"],
+                unit="percent",
+                test_id=self.test_id
+            )
+            self.metrics.append(metric)
+            
+            if self.verbose and (i + 1) % 20 == 0:
+                print(f"  Progress: {i + 1}/{iterations} iterations completed")
+        
+        duration = time.time() - start_time
+        
+        # Aggregate results
+        accuracies = [r["accuracy"] for r in results]
+        latencies = [r["latency_ms"] for r in results]
+        costs = [r["cost"] for r in results]
+        errors = [r["error_rate"] for r in results]
+        
+        avg_accuracy = statistics.mean(accuracies)
+        avg_latency = statistics.mean(latencies)
+        avg_cost = statistics.mean(costs)
+        avg_error = statistics.mean(errors)
+        throughput = iterations / duration
+        
+        benchmark_result = BenchmarkResult(
+            test_name=self.model_name,
+            test_id=self.test_id,
+            accuracy=avg_accuracy,
+            latency_ms=avg_latency,
+            cost_per_inference=avg_cost,
+            throughput_rps=throughput,
+            error_rate=avg_error,
+            measurements_count=iterations,
+            duration_seconds=duration
         )
-
-
-class BenchmarkAnalyzer:
-    def __init__(self, metrics_list: List[BenchmarkMetrics]):
-        self.metrics_list = metrics_list
-
-    def find_best_by_accuracy(self) -> BenchmarkMetrics:
-        """Find model with highest accuracy."""
-        return max(self.metrics_list, key=lambda m: m.accuracy)
-
-    def find_best_by_latency(self) -> BenchmarkMetrics:
-        """Find model with lowest mean latency."""
-        return min(self.metrics_list, key=lambda m: m.latency_mean_ms)
-
-    def find_best_by_cost(self) -> BenchmarkMetrics:
-        """Find model with lowest cost per 1k samples."""
-        return min(self.metrics_list, key=lambda m: m.cost_per_1k_samples)
-
-    def find_best_by_efficiency(self) -> BenchmarkMetrics:
-        """Find model with best accuracy-to-latency ratio."""
-        best_model = None
-        best_ratio = 0
-        for m in self.metrics_list:
-            ratio = m.accuracy / (m.latency_mean_ms + 1)
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best_model = m
-        return best_model
-
-    def generate_report(self) -> Dict:
-        """Generate comprehensive analysis report."""
-        report = {
-            "summary": {
-                "total_models_tested": len(self.metrics_list),
-                "average_accuracy": round(
-                    statistics.mean(m.accuracy for m in self.metrics_list), 4
-                ),
-                "average_latency_ms": round(
-                    statistics.mean(m.latency_mean_ms for m in self.metrics_list), 2
-                ),
-                "average_cost_per_1k": round(
-                    statistics.mean(m.cost_per_1k_samples for m in self.metrics_list), 4
-                ),
-            },
-            "best_models": {
-                "accuracy": asdict(self.find_best_by_accuracy()),
-                "latency": asdict(self.find_best_by_latency()),
-                "cost": asdict(self.find_best_by_cost()),
-                "efficiency": asdict(self.find_best_by_efficiency()),
-            },
-            "all_results": [asdict(m) for m in self.metrics_list],
+        
+        return benchmark_result
+    
+    def compare_tradeoffs(self, benchmark_results: List[BenchmarkResult]) -> Dict:
+        """Compare accuracy, latency, and cost tradeoffs across models"""
+        if not benchmark_results:
+            return {}
+        
+        comparison = {
+            "models_evaluated": len(benchmark_results),
+            "summary": [],
+            "best_accuracy": None,
+            "best_latency": None,
+            "best_cost": None,
+            "pareto_frontier": []
         }
-        return report
+        
+        for result in benchmark_results:
+            comparison["summary"].append({
+                "model": result.test_name,
+                "accuracy": round(result.accuracy, 2),
+                "latency_ms": round(result.latency_ms, 2),
+                "cost_per_inference": round(result.cost_per_inference, 6),
+                "throughput_rps": round(result.throughput_rps, 2),
+                "error_rate": round(result.error_rate, 4)
+            })
+        
+        # Find best in each dimension
+        best_acc = max(benchmark_results, key=lambda x: x.accuracy)
+        best_lat = min(benchmark_results, key=lambda x: x.latency_ms)
+        best_cost = min(benchmark_results, key=lambda x: x.cost_per_inference)
+        
+        comparison["best_accuracy"] = {
+            "model": best_acc.test_name,
+            "accuracy": round(best_acc.accuracy, 2)
+        }
+        comparison["best_latency"] = {
+            "model": best_lat.test_name,
+            "latency_ms": round(best_lat.latency_ms, 2)
+        }
+        comparison["best_cost"] = {
+            "model": best_cost.test_name,
+            "cost_per_inference": round(best_cost.cost_per_inference, 6)
+        }
+        
+        # Identify Pareto frontier (models not dominated in all metrics)
+        frontier = []
+        for r1 in benchmark_results:
+            dominated = False
+            for r2 in benchmark_results:
+                if r1.test_name != r2.test_name:
+                    # r2 dominates r1 if better in accuracy and latency
+                    if (r2.accuracy > r1.accuracy and 
+                        r2.latency_ms < r1.latency_ms and
+                        r2.cost_per_inference < r1.cost_per_inference):
+                        dominated = True
+                        break
+            
+            if not dominated:
+                frontier.append(r1.test_name)
+        
+        comparison["pareto_frontier"] = frontier
+        
+        return comparison
+    
+    def get_metrics_summary(self) -> Dict:
+        """Get summary statistics of collected metrics"""
+        if not self.metrics:
+            return {"total_metrics": 0}
+        
+        values = [m.value for m in self.metrics]
+        
+        return {
+            "total_metrics": len(self.metrics),
+            "test_id": self.test_id,
+            "mean": round(statistics.mean(values), 2),
+            "median": round(statistics.median(values), 2),
+            "stdev": round(statistics.stdev(values) if len(values) > 1 else 0, 2),
+            "min": round(min(values), 2),
+            "max": round(max(values), 2)
+        }
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Benchmark and evaluate AI model performance metrics"
-    )
-    parser.add_argument(
-        "--num-samples",
-        type=int,
-        default=1000,
-        help="Number of inference samples per model (default: 1000)",
+        description="Benchmark and evaluate AI system performance metrics"
     )
     parser.add_argument(
         "--models",
+        type=str,
         nargs="+",
-        default=["gpt-4", "claude-3", "llama-70b"],
-        help="List of model names to benchmark (default: gpt-4 claude-3 llama-70b)",
+        default=["xai-model-v1", "xai-model-v2", "baseline-gpt"],
+        help="Model names to benchmark"
     )
     parser.add_argument(
-        "--sizes",
-        nargs="+",
-        choices=["small", "medium", "large", "xlarge"],
-        default=["medium", "large"],
-        help="Model sizes to test (default: medium large)",
-    )
-    parser.add_argument(
-        "--backends",
-        nargs="+",
-        choices=["cpu", "gpu", "tpu"],
-        default=["cpu", "gpu"],
-        help="Inference backends to test (default: cpu gpu)",
+        "--iterations",
+        type=int,
+        default=100,
+        help="Number of inference iterations per model"
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="benchmark_results.json",
-        help="Output file for results (default: benchmark_results.json)",
+        default=None,
+        help="Output file for results (JSON)"
     )
     parser.add_argument(
-        "--json",
+        "--verbose",
         action="store_true",
-        help="Output results as JSON only (no console output)",
+        help="Enable verbose output"
     )
-
+    parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "summary"],
+        default="summary",
+        help="Output format"
+    )
+    
     args = parser.parse_args()
-
-    print(f"Starting AI Model Benchmark Suite", file=sys.stderr)
-    print(
-        f"  Samples per model: {args.num_samples}",
-        file=sys.stderr,
-    )
-    print(f"  Models: {', '.join(args.models)}", file=sys.stderr)
-    print(f"  Sizes: {', '.join(args.sizes)}", file=sys.stderr)
-    print(f"  Backends: {', '.join(args.backends)}", file=sys.stderr)
-    print("", file=sys.stderr)
-
-    runner = BenchmarkRunner(num_samples=args.num_samples)
-    all_metrics = []
-
-    for model_name in args.models:
-        for size_str in args.sizes:
-            for backend_str in args.backends:
-                size = ModelSize(size_str)
-                backend = InferenceBackend(backend_str)
-
-                model = ModelSimulator(model_name, size, backend)
-                metrics = runner.run(model)
-                all_metrics.append(metrics)
-
-                if not args.json:
-                    print(
-                        f"✓ {model_name} ({size_str}/{backend_str}): "
-                        f"Acc={metrics.accuracy:.2%} | "
-                        f"Lat={metrics.latency_mean_ms:.1f}ms | "
-                        f"Cost=${metrics.cost_per_1k_samples:.4f}/1k",
-                        file=sys.stderr,
-                    )
-
-    analyzer = BenchmarkAnalyzer(all_metrics)
-    report = analyzer.generate_report()
-
-    with open(args.output, "w") as f:
-        json.dump(report, f, indent=2)
-
-    if not args.json:
-        print("\n" + "=" * 70, file=sys.stderr)
-        print("BENCHMARK REPORT SUMMARY", file=sys.stderr)
-        print("=" * 70, file=sys.stderr)
-        print(
-            f"Total models tested: {report['summary']['total_models_tested']}",
-            file=sys.stderr,
-        )
-        print(
-            f"Average accuracy: {report['summary']['average_accuracy']:.2%}",
-            file=sys.stderr,
-        )
-        print(
-            f"Average latency: {report['summary']['average_latency_ms']:.2f}ms",
-            file=sys.stderr,
-        )
-        print(
-            f"Average cost: ${report['summary']['average_cost_per_1k']:.4f} per 1k samples",
-            file=sys.stderr,
-        )
-        print("\nBEST MODELS BY METRIC:", file=sys.stderr)
-        print(
-            f"  Accuracy: {report['best_models']['accuracy']['model_name']} "
-            f"({report['best_models']['accuracy']['accuracy']:.2%})",
-            file=sys.stderr,
-        )
-        print(
-            f"  Latency: {report['best_models']['latency']['model_name']} "
-            f"({report['best_models']['latency']['latency_mean_ms']:.2f}ms)",
-            file=sys.stderr,
-        )
-        print(
-            f"  Cost: {report['best_models']['cost']['model_name']} "
-            f"(${report['best_models']['cost']['cost_per_1k_samples']:.4f}/1k)",
-            file=sys.stderr,
-        )
-        print(
-            f"  Efficiency: {report['best_models']['efficiency']['model_name']}",
-            file=sys.stderr,
-        )
-        print(f"\nDetailed results saved to: {args.output}", file=sys.stderr)
-
-    print(json.dumps(report))
+    
+    results = []
+    
+    for model in args.models:
+        benchmark = PerformanceBenchmark(model_name=model, verbose=args.verbose)
+        result = benchmark.run_benchmark(iterations=args.iterations)
+        results.append(result)
+        
+        if args.verbose:
+            print(f"\nMetrics for {model}:")
+            print(f"  Accuracy: {result.accuracy:.2f}%")
+            print(f"  Latency: {result.latency_ms:.2f}ms")
+            print(f"  Cost: ${result.cost_per_inference:.6f}")
+            print(f"  Error Rate: {result.error_rate:.4f}")
+            print(f"  Throughput: {result.throughput_rps:.2f} req/s")
+    
+    # Comparative analysis
+    if len(results) > 1:
+        benchmark = PerformanceBenchmark(model_name="analyzer")
+        comparison = benchmark.compare_tradeoffs(results)
+        
+        if args.verbose:
+            print("\n" + "="*60)
+            print("TRADEOFF ANALYSIS")
+            print("="*60)
+            print(f"Models evaluated: {comparison['models_evaluated']}")
+            print(f"Best accuracy: {comparison['best_accuracy']['model']} "
+                  f"({comparison['best_accuracy']['accuracy']}%)")
+            print(f"Best latency: {comparison['best_latency']['model']} "
+                  f"({comparison['best_latency']['latency_ms']}ms)")
+            print(f"Best cost: {comparison['best_cost']['model']} "
+                  f"(${comparison['best_cost']['cost_per_inference']:.6f})")
+            print(f"Pareto frontier: {', '.join(comparison['pareto_frontier'])}")
+    
+    # Output results
+    if args.format == "json":
+        output_data = {
+            "timestamp": datetime.now().isoformat(),
+            "benchmark_results": [asdict(r) for r in results]
+        }
+        
+        if len(results) > 1:
+            output_data["comparison"] = comparison
+        
+        output_json = json.dumps(output_data, indent=2)
+        
+        if args.output:
+            with open(args.output, "w") as f:
+                f.write(output_json)
+            if args.verbose:
+                print(f"\nResults written to {args.output}")
+        else:
+            print(output_json)
+    
+    else:  # summary format
+        print("\n" + "="*70)
+        print("BENCHMARK RESULTS SUMMARY")
+        print("="*70)
+        print(f"{'Model':<25} {'Accuracy':<12} {'Latency':<12} {'Cost':<12}")
+        print("-"*70)
+        
+        for result in results:
+            print(f"{result.test_name:<25} {result.accuracy:>10.2f}% "
+                  f"{result.latency_ms:>10.2f}ms ${result.cost_per_inference:>10.6f}")
+        
+        if len(results) > 1:
+            print("\n" + "="*70)
+            print("TRADEOFF ANALYSIS")
+            print("="*70)
+            print(f"Best Accuracy: {comparison['best_accuracy']['model']} "
+                  f"({comparison['best_accuracy']['accuracy']}%)")
+            print(f"Best Latency: {comparison['best_latency']['model']} "
+                  f"({comparison['best_latency']['latency_ms']}ms)")
+            print(f"Best Cost: {comparison['best_cost']['model']} "
+                  f"(${comparison['best_cost']['cost_per_inference']:.6f})")
+            print(f"Pareto Frontier: {', '.join(comparison['pareto_frontier'])}")
 
 
 if __name__ == "__main__":
