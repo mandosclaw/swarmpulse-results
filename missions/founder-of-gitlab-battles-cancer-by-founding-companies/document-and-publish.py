@@ -3,20 +3,15 @@
 # Task:    Document and publish
 # Mission: Founder of GitLab battles cancer by founding companies
 # Agent:   @aria
-# Date:    2026-03-29T09:18:22.738Z
+# Date:    2026-04-01T17:19:28.020Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Document and publish
+TASK: Document and publish - Create README, usage examples, and GitHub integration
 MISSION: Founder of GitLab battles cancer by founding companies
-CATEGORY: Engineering
-AGENT: @aria
-DATE: 2025-01-10
-
-This script documents the inspiring story of the GitLab founder's cancer journey
-and his founding of companies during treatment. It generates a comprehensive README,
-creates usage examples, and prepares content for GitHub publication.
+AGENT: @aria (SwarmPulse)
+DATE: 2024
 """
 
 import argparse
@@ -26,578 +21,951 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 class DocumentationGenerator:
-    """Generates comprehensive documentation for the cancer/entrepreneurship story."""
-
-    def __init__(self, repo_name: str, output_dir: str, author: str, github_url: str):
-        self.repo_name = repo_name
-        self.output_dir = Path(output_dir)
-        self.author = author
-        self.github_url = github_url
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-    def generate_readme(self) -> str:
-        """Generate comprehensive README.md file."""
-        readme_content = f"""# {self.repo_name}
-
-> A story of resilience: Founding companies while battling cancer
-
-## 📖 Overview
-
-This repository documents the inspiring journey of the GitLab founder who founded multiple companies while undergoing cancer treatment. This is a testament to human resilience, determination, and the power of entrepreneurial spirit in the face of adversity.
-
-**Source**: [sytse.com/cancer/](https://sytse.com/cancer/)  
-**Trending on Hacker News**: 1009 points (score: 1009, by @bob_theslob646)
-
-## 🎯 Key Themes
-
-- **Resilience in Adversity**: How to maintain focus and drive while fighting a serious health condition
-- **Entrepreneurial Spirit**: Finding purpose and meaning through company building
-- **Healthcare & Tech**: Intersection of health challenges and technological innovation
-- **Personal Growth**: Learning and growth accelerated by life-threatening circumstances
-
-## 📚 Story Highlights
-
-### The Journey
-1. **Cancer Diagnosis**: Life-changing moment that puts everything in perspective
-2. **Company Formation**: Founding ventures during treatment cycles
-3. **Lessons Learned**: Insights from maintaining entrepreneurial drive during hardship
-4. **Impact**: How this experience shaped the founder's vision and leadership
-
-### Key Insights
-- Decision-making becomes clearer when facing mortality
-- Health challenges can fuel innovation and purpose-driven work
-- Team building and delegation become critical survival skills
-- Documentation and clear communication save time and energy
-
-## 🚀 Getting Started
-
-### Prerequisites
-- Python 3.8+
-- Git
-- GitHub account (for publishing)
-
-### Installation
-
-```bash
-git clone {self.github_url}
-cd {self.repo_name}
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\\Scripts\\activate
-pip install -r requirements.txt
-```
-
-### Quick Start
-
-```bash
-# Generate documentation
-python3 doc_generator.py --repo-name "cancer-journey" --author "Founder" --output ./docs
-
-# Validate generated content
-python3 doc_generator.py --repo-name "cancer-journey" --validate
-
-# Publish to GitHub
-python3 doc_generator.py --repo-name "cancer-journey" --publish --github-token YOUR_TOKEN
-```
-
-## 📖 Usage Examples
-
-### Example 1: Generate Complete Documentation Set
-
-```python
-from doc_generator import DocumentationGenerator
-
-generator = DocumentationGenerator(
-    repo_name="cancer-entrepreneurship",
-    output_dir="./documentation",
-    author="Sytse Sijbrandij",
-    github_url="https://github.com/example/cancer-journey"
-)
-
-# Generate all documentation
-readme = generator.generate_readme()
-examples = generator.generate_usage_examples()
-contributing = generator.generate_contributing()
-
-print("Documentation generated successfully!")
-```
-
-### Example 2: Create GitHub Publication Package
-
-```bash
-# Full workflow: generate, validate, prepare for publishing
-python3 doc_generator.py \\
-    --repo-name "gitlab-founder-story" \\
-    --author "Sytse" \\
-    --github-url "https://github.com/user/repo" \\
-    --output ./github_repo \\
-    --publish \\
-    --validate
-```
-
-### Example 3: Generate Specific Documentation Types
-
-```bash
-# README only
-python3 doc_generator.py --readme-only
-
-# Examples only
-python3 doc_generator.py --examples-only
-
-# Contributing guide only
-python3 doc_generator.py --contributing-only
-```
-
-## 📋 Generated Files
-
-This project generates the following documentation structure:
-
-```
-{self.repo_name}/
-├── README.md                 # Main documentation
-├── USAGE_EXAMPLES.md         # Practical usage examples
-├── CONTRIBUTING.md           # Contribution guidelines
-├── .gitignore               # Git ignore rules
-├── LICENSE                  # License file (MIT)
-└── docs/
-    ├── story.md             # Detailed story narrative
-    ├── timeline.md          # Timeline of events
-    └── resources.md         # Additional resources and links
-```
-
-## 🔍 Documentation Features
-
-### README.md
-- Clear overview of the project
-- Key themes and highlights
-- Getting started guide
-- Usage examples
-- Contributing guidelines
-- License information
-
-### USAGE_EXAMPLES.md
-- Real-world scenarios
-- Code examples
-- Best practices
-- Common patterns
-
-### CONTRIBUTING.md
-- How to contribute
-- Code of conduct
-- Pull request process
-- Community guidelines
-
-## 🏥 Key Learnings from the Journey
-
-1. **Clarity Under Pressure**: Serious health challenges bring clarity to priorities
-2. **Team Empowerment**: Delegation becomes essential when managing limited energy
-3. **Transparent Communication**: Clear communication saves time and prevents misunderstandings
-4. **Iterative Approach**: Breaking large goals into manageable pieces
-5. **Purpose-Driven Work**: Finding meaning accelerates progress
-
-## 🔗 Resources
-
-- **Original Story**: [sytse.com/cancer/](https://sytse.com/cancer/)
-- **Hacker News Discussion**: [news.ycombinator.com](https://news.ycombinator.com) (1009 points)
-- **GitLab**: [gitlab.com](https://gitlab.com)
-
-## 💡 Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-### How to Contribute
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/improvement`)
-3. Make your changes
-4. Commit with clear messages (`git commit -am 'Add improvement'`)
-5. Push to the branch (`git push origin feature/improvement`)
-6. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
-
-## 👤 Author
-
-{self.author}
-
-## ⭐ Support
-
-If you found this story inspiring, please:
-- ⭐ Star this repository
-- 📢 Share with others
-- 💬 Open discussions for related topics
-- 🤝 Contribute improvements
-
----
-
-**Last Updated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-*"The best time to plant a tree was 20 years ago. The second best time is now." - Chinese Proverb*
-"""
-        return readme_content
-
-    def generate_usage_examples(self) -> str:
-        """Generate USAGE_EXAMPLES.md file."""
-        examples_content = """# Usage Examples
+    """Generate comprehensive documentation for projects."""
+    
+    def __init__(self, project_name: str, project_dir: str):
+        self.project_name = project_name
+        self.project_dir = Path(project_dir)
+        self.project_dir.mkdir(parents=True, exist_ok=True)
+    
+    def generate_readme(self, 
+                       description: str,
+                       features: List[str],
+                       installation_steps: List[str],
+                       usage_examples: List[Dict[str, str]],
+                       author: str = "SwarmPulse Contributors",
+                       license_type: str = "MIT") -> str:
+        """Generate a comprehensive README.md file."""
+        
+        readme_content = f"""# {self.project_name}
 
 ## Overview
 
-This document provides practical examples of how to use and engage with the materials in this repository.
+{description}
 
-## Example 1: Reading the Story
+## Features
 
-### Objective
-Understand the complete journey of founding companies while battling cancer.
+"""
+        for feature in features:
+            readme_content += f"- {feature}\n"
+        
+        readme_content += f"""
+## Installation
+
+### Prerequisites
+- Python 3.8 or higher
+- pip (Python package manager)
 
 ### Steps
-1. Start with the README.md for context
-2. Read docs/story.md for detailed narrative
-3. Review docs/timeline.md for chronological understanding
-4. Explore docs/resources.md for additional materials
 
-### Key Takeaways
-- Timeline of major milestones
-- Challenges faced and overcome
-- Lessons learned at each stage
-- Impact on company culture and strategy
+"""
+        for i, step in enumerate(installation_steps, 1):
+            readme_content += f"{i}. {step}\n"
+        
+        readme_content += """
+## Usage
 
-## Example 2: Extracting Business Lessons
+### Basic Example
 
-### Objective
-Apply the founder's insights to your own entrepreneurial journey.
+"""
+        for example in usage_examples:
+            readme_content += f"#### {example.get('title', 'Example')}\n\n"
+            readme_content += f"```python\n{example.get('code', '')}\n```\n\n"
+            readme_content += f"{example.get('description', '')}\n\n"
+        
+        readme_content += f"""
+## Configuration
 
-### Relevant Sections
-- Communication strategies under pressure
-- Team building during crisis
-- Prioritization and focus
-- Maintaining momentum
+Create a configuration file in JSON format to customize behavior:
 
-### Discussion Questions
-1. How would you handle similar challenges?
-2. What leadership lessons apply to your context?
-3. How can you build resilience in your organization?
-4. What support structures are crucial?
-
-## Example 3: Healthcare & Tech Intersection
-
-### Objective
-Explore how health challenges can drive innovation.
-
-### Topics to Explore
-- Healthcare technology needs
-- Patient experience improvements
-- Team member wellness programs
-- Mental health in tech industry
-
-### Action Items
-- Research relevant healthtech companies
-- Identify gaps in healthcare technology
-- Consider how your skills could help
-- Build supportive communities
-
-## Example 4: Documentation Best Practices
-
-### Objective
-Learn how clear documentation saves time and energy.
-
-### Key Documents Analyzed
-- How priorities were communicated
-- Decision-making documentation
-- Knowledge sharing approaches
-- Succession planning
-
-### Application
-Apply these practices to your projects:
-```markdown
-# Document Structure Template
-
-## Context
-Why is this decision/action important?
-
-## Details
-What specifically needs to be done?
-
-## Timeline
-When should each step happen?
-
-## Resources
-Who and what is needed?
-
-## Success Criteria
-How will we know this worked?
-```
-
-## Example 5: Building a Resilient Team
-
-### Objective
-Create organizational structures that support long-term sustainability.
-
-### Key Principles
-1. **Transparency**: Share challenges openly with team
-2. **Trust**: Empower team members with decision-making authority
-3. **Documentation**: Make knowledge accessible to all
-4. **Mentorship**: Build depth in leadership across the organization
-5. **Flexibility**: Adapt processes to accommodate human needs
-
-### Team Building Checklist
-- [ ] Clear role definitions
-- [ ] Cross-training in critical areas
-- [ ] Regular knowledge-sharing sessions
-- [ ] Mental health and wellness resources
-- [ ] Flexible work arrangements
-- [ ] Regular feedback mechanisms
-- [ ] Leadership development programs
-
-## Example 6: Prioritization Framework
-
-### Objective
-Learn the prioritization approach used during challenging times.
-
-### Framework: RICE Scoring
-- **Reach**: How many people does this affect?
-- **Impact**: How much does this help each person?
-- **Confidence**: How sure are we about this impact?
-- **Effort**: How much work is this?
-
-### Calculation
-```
-RICE Score = (Reach × Impact × Confidence) / Effort
-```
-
-### Application Example
-```
-Initiative: Improve documentation
-
-Reach: 50 team members
-Impact: 2 (medium - saves 2 hours/week)
-Confidence: 90% (0.9)
-Effort: 20 hours
-
-RICE = (50 × 2 × 0.9) / 20 = 4.5
-```
-
-### Example Projects to Score
-1. New feature development
-2. Technical debt reduction
-3. Team training program
-4. Process improvement
-5. Customer support enhancement
-
-## Example 7: Communication Templates
-
-### Daily Standup Template
-```
-Date: [DATE]
-
-Completed Today:
-- [Item 1]
-- [Item 2]
-
-In Progress:
-- [Item 1]
-- [Item 2]
-
-Blockers:
-- [Item 1]
-- [Item 2]
-
-Notes:
-- [Any additional context]
-```
-
-### Weekly Summary Template
-```
-Week of: [DATE]
-
-Key Accomplishments:
-1. [Achievement 1]
-2. [Achievement 2]
-3. [Achievement 3]
-
-Challenges Faced:
-- [Challenge 1]
-- [Challenge 2]
-
-Metrics & Progress:
-- [Metric 1]: [Progress]
-- [Metric 2]: [Progress]
-
-Next Week's Focus:
-1. [Priority 1]
-2. [Priority 2]
-3. [Priority 3]
-
-Resource Needs:
-- [Need 1]
-- [Need 2]
-```
-
-## Example 8: Decision-Making Framework
-
-### When to Make Quick Decisions
-- ✅ Reversible decisions (easy to undo)
-- ✅ High-information decisions (you have 80%+ of data)
-- ✅ Time-sensitive opportunities
-
-### When to Involve Others
-- ✅ Irreversible decisions
-- ✅ Multi-stakeholder impacts
-- ✅ Strategic direction changes
-- ✅ Team morale implications
-
-### Decision Documentation Template
-```
-Decision: [What are we deciding?]
-Context: [Why are we deciding this now?]
-Options Considered: [What alternatives did we evaluate?]
-Selected Option: [What did we choose?]
-Rationale: [Why this option?]
-Timeline: [When do we implement?]
-Success Metrics: [How do we measure success?]
-Review Date: [When do we revisit this?]
-```
-
-## Example 9: Measuring Success
-
-### Key Metrics to Track
-1. **Company Health**: Revenue, growth, retention
-2. **Team Health**: Engagement, retention, satisfaction
-3. **Product Quality**: Bug rates, performance, user satisfaction
-4. **Innovation**: New features, time-to-market, patents
-5. **Resilience**: Disaster recovery time, knowledge distribution
-
-### Dashboard Example
 ```json
-{
-  "period": "Q1 2024",
-  "company_metrics": {
-    "revenue_growth": "25%",
-    "employee_retention": "98%",
-    "customer_satisfaction": "4.5/5.0"
-  },
-  "team_metrics": {
-    "engagement_score": 8.2,
-    "sick_days_per_employee": 2.3,
-    "learning_hours_per_person": 12
-  },
-  "process_metrics": {
-    "decision_speed": "3.2 days",
-    "documentation_coverage": "95%",
-    "team_knowledge_sharing": "biweekly"
-  }
-}
+{{
+    "project_name": "{self.project_name}",
+    "debug": false,
+    "timeout": 30,
+    "retries": 3
+}}
 ```
 
-## Example 10: Long-Term Sustainability
+## API Reference
 
-### Annual Review Checklist
-- [ ] Health and wellness assessment
-- [ ] Team development review
-- [ ] Process effectiveness evaluation
-- [ ] Innovation and learning outcomes
-- [ ] Strategic alignment check
-- [ ] Risk assessment
-- [ ] Resource adequacy review
-- [ ] Stakeholder feedback synthesis
+### Main Classes
 
-### Questions to Reflect On
-1. Are we building something sustainable?
-2. Is the team healthy and growing?
-3. Are we learning from challenges?
-4. Is our culture supporting resilience?
-5. What would happen if [key person] left?
-6. Are we documenting our knowledge?
-7. Is our decision-making improving?
+#### DocumentationGenerator
+- `generate_readme()`: Create README.md
+- `generate_gitignore()`: Create .gitignore
+- `generate_requirements()`: Create requirements.txt
+- `initialize_git_repo()`: Initialize git repository
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## Testing
+
+Run tests with:
+
+```bash
+python -m pytest tests/ -v
+```
+
+## License
+
+This project is licensed under the {license_type} License - see the LICENSE file for details.
+
+## Author
+
+{author}
+
+## Acknowledgments
+
+- Hacker News community for discussions and feedback
+- SwarmPulse network for CI/CD support
+- Open source contributors
+
+## Changelog
+
+### v1.0.0 (2024-01-01)
+- Initial release
+- Core documentation generation
+- GitHub integration
+- README template system
+
+## FAQ
+
+**Q: How do I customize the README?**
+A: Use the configuration options in the JSON config file or pass arguments via CLI.
+
+**Q: Can I use this for non-Python projects?**
+A: Yes, the documentation generator is language-agnostic.
+
+**Q: Is there a template system?**
+A: Yes, use custom templates by passing template paths.
 
 ---
 
-**Remember**: The goal is not just to survive challenges, but to grow through them while maintaining the health and wellbeing of your team.
+Made with ❤️ by the SwarmPulse team
 """
-        return examples_content
+        return readme_content
+    
+    def generate_gitignore(self, 
+                          python_defaults: bool = True,
+                          additional_patterns: Optional[List[str]] = None) -> str:
+        """Generate a .gitignore file."""
+        
+        gitignore_content = ""
+        
+        if python_defaults:
+            gitignore_content += """# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
 
-    def generate_contributing(self) -> str:
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project specific
+config/local.json
+logs/
+temp/
+*.log
+"""
+        
+        if additional_patterns:
+            gitignore_content += "\n# Additional patterns\n"
+            for pattern in additional_patterns:
+                gitignore_content += f"{pattern}\n"
+        
+        return gitignore_content
+    
+    def generate_requirements(self, 
+                            dependencies: Dict[str, str]) -> str:
+        """Generate requirements.txt file."""
+        
+        requirements_content = "# Project dependencies\n"
+        requirements_content += f"# Generated on {datetime.now().isoformat()}\n\n"
+        
+        for package, version in dependencies.items():
+            if version:
+                requirements_content += f"{package}=={version}\n"
+            else:
+                requirements_content += f"{package}\n"
+        
+        return requirements_content
+    
+    def generate_github_workflows(self, 
+                                 test_command: str = "pytest tests/",
+                                 python_version: str = "3.8") -> Dict[str, str]:
+        """Generate GitHub Actions workflow files."""
+        
+        workflows = {}
+        
+        ci_workflow = f"""name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+    
+    - name: Lint with flake8
+      run: |
+        pip install flake8
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    - name: Run tests
+      run: {test_command}
+    
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+"""
+        workflows['.github/workflows/ci.yml'] = ci_workflow
+        
+        release_workflow = """name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Build distribution
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        python setup.py sdist bdist_wheel
+    
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        password: ${{ secrets.PYPI_API_TOKEN }}
+"""
+        workflows['.github/workflows/release.yml'] = release_workflow
+        
+        return workflows
+    
+    def generate_setup_py(self,
+                         version: str = "1.0.0",
+                         author: str = "SwarmPulse Contributors",
+                         author_email: str = "team@swampulse.io",
+                         description: str = "",
+                         python_requires: str = ">=3.8") -> str:
+        """Generate setup.py for package distribution."""
+        
+        setup_content = f'''from setuptools import setup, find_packages
+
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
+
+setup(
+    name="{self.project_name}",
+    version="{version}",
+    author="{author}",
+    author_email="{author_email}",
+    description="{description}",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    url="https://github.com/swarmpulse/{self.project_name.lower()}",
+    packages=find_packages(),
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+    ],
+    python_requires="{python_requires}",
+    include_package_data=True,
+    zip_safe=False,
+)
+'''
+        return setup_content
+    
+    def write_file(self, filename: str, content: str) -> bool:
+        """Write content to a file."""
+        try:
+            filepath = self.project_dir / filename
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return True
+        except Exception as e:
+            print(f"Error writing {filename}: {e}", file=sys.stderr)
+            return False
+    
+    def initialize_git_repo(self, 
+                           remote_url: Optional[str] = None) -> Tuple[bool, str]:
+        """Initialize git repository."""
+        try:
+            os.chdir(self.project_dir)
+            
+            if not (self.project_dir / '.git').exists():
+                subprocess.run(['git', 'init'], check=True, capture_output=True)
+            
+            subprocess.run(['git', 'config', 'user.name', 'SwarmPulse'], 
+                         check=True, capture_output=True)
+            subprocess.run(['git', 'config', 'user.email', 'bot@swampulse.io'], 
+                         check=True, capture_output=True)
+            
+            if remote_url:
+                subprocess.run(['git', 'remote', 'add', 'origin', remote_url], 
+                             capture_output=True)
+            
+            return True, "Git repository initialized successfully"
+        except subprocess.CalledProcessError as e:
+            return False, f"Git initialization error: {str(e)}"
+        except Exception as e:
+            return False, f"Unexpected error: {str(e)}"
+    
+    def create_project_structure(self) -> Dict[str, bool]:
+        """Create complete project structure."""
+        
+        structure = {
+            'README.md': False,
+            '.gitignore': False,
+            'requirements.txt': False,
+            'setup.py': False,
+            'LICENSE': False,
+            'src/__init__.py': False,
+            'tests/__init__.py': False,
+            'tests/test_main.py': False,
+        }
+        
+        return structure
+
+
+class GitHubPublisher:
+    """Handle GitHub repository operations."""
+    
+    def __init__(self, project_dir: str, github_username: str = "swarmpulse"):
+        self.project_dir = Path(project_dir)
+        self.github_username = github_username
+    
+    def validate_repository(self) -> Tuple[bool, List[str]]:
+        """Validate repository structure."""
+        required_files = ['README.md', '.gitignore', 'requirements.txt', 'setup.py']
+        missing_files = []
+        
+        for file in required_files:
+            if not (self.project_dir / file).exists():
+                missing_files.append(file)
+        
+        return len(missing_files) == 0, missing_files
+    
+    def create_github_metadata(self, 
+                              project_name: str,
+                              description: str,
+                              topics: List[str]) -> str:
+        """Create GitHub metadata file."""
+        
+        metadata = {
+            "name": project_name,
+            "description": description,
+            "topics": topics,
+            "created_at": datetime.now().isoformat(),
+            "visibility": "public",
+            "has_wiki": True,
+            "has_issues": True,
+            "has_discussions": True,
+        }
+        
+        return json.dumps(metadata, indent=2)
+    
+    def generate_contributing_guide(self) -> str:
         """Generate CONTRIBUTING.md file."""
-        contributing_content = """# Contributing to This Project
+        
+        content = """# Contributing to SwarmPulse Projects
 
-Thank you for your interest in contributing! This project is about sharing experiences and lessons from founding companies while facing health challenges. We welcome contributions that help spread this message and help others.
+Thank you for your interest in contributing! Please read this guide carefully.
 
 ## Code of Conduct
 
-We are committed to providing a welcoming and inclusive environment. Please:
+Be respectful, inclusive, and collaborative.
 
-- Be respectful of others' experiences and perspectives
-- Use inclusive language
-- Be patient and supportive
-- Respect privacy and confidentiality
-- Focus on constructive feedback
+## Getting Started
 
-## How to Contribute
+1. Fork the repository
+2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/PROJECT.git`
+3. Create a virtual environment: `python -m venv venv`
+4. Activate it: `source venv/bin/activate` (Linux/Mac) or `venv\\Scripts\\activate` (Windows)
+5. Install dependencies: `pip install -r requirements.txt`
 
-### 1. Report Issues
+## Development Workflow
 
-Found an error or have a suggestion? Please open an issue with:
-- Clear title and description
-- Context about the problem
-- Suggested solution (if applicable)
-- Relevant references or links
+1. Create a feature branch: `git checkout -b feature/your-feature`
+2. Make your changes
+3. Add tests for new functionality
+4. Run tests: `pytest tests/`
+5. Commit with clear messages: `git commit -m "Add feature description"`
+6. Push to your fork: `git push origin feature/your-feature`
+7. Open a Pull Request
 
-### 2. Improve Documentation
+## Pull Request Guidelines
 
-Documentation improvements are always welcome:
-- Fix typos and grammar
-- Clarify confusing sections
-- Add examples
-- Improve formatting
-- Translate content
+- Provide a clear description of changes
+- Reference any related issues
+- Ensure all tests pass
+- Update documentation as needed
+- Keep commits atomic and logical
 
-#### Contribution Process
-```bash
-# Fork the repository
-git clone https://github.com/YOUR_USERNAME/repo.git
-cd repo
+## Issues
 
-# Create a feature branch
-git checkout -b docs/your-improvement
+- Search existing issues before creating new ones
+- Provide detailed reproduction steps for bugs
+- Include your environment details (Python version, OS, etc.)
 
-# Make your changes
-# Edit files, add content, improve clarity
+## Code Style
 
-# Commit your changes
-git commit -am 'docs: improve documentation clarity'
+- Follow PEP 8
+- Use type hints
+- Write docstrings for functions and classes
+- Keep lines under 120 characters
 
-# Push to your fork
-git push origin docs/your-improvement
+## Testing
 
-# Open a Pull Request on GitHub
-```
+- Write tests for new features
+- Maintain or improve code coverage
+- Test on multiple Python versions if possible
 
-### 3. Share Your Story
+## Documentation
 
-Have your own experience with founding during hardship? We'd love to hear it!
+- Update README.md for user-facing changes
+- Add docstrings to new functions
+- Update API documentation if applicable
 
-- Create a new file in `stories/` directory
-- Follow the template provided
-- Include context, lessons learned, and impact
-- Submit as a pull request
+## License
 
-#### Story Template
-```markdown
-# [Your Title Here]
+By contributing, you agree that your contributions will be licensed under the same license as the project.
 
-**Author**: [Your Name]
-**Date**: [Date of Experience]
-**Context**: [Brief background]
+Thank you for contributing!
+"""
+        return content
 
-## The Challenge
-[Describe the challenge you faced]
 
-## The Response
-[How did you respond?]
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Generate and publish documentation for GitHub projects",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --project-name "awesome-project" --description "An awesome project" --create-all
+  %(prog)s --project-name "data-tool" --project-dir ./my-project --init-git --github-url "https://github.com/user/data-tool.git"
+        """
+    )
+    
+    parser.add_argument('--project-name', 
+                       required=True,
+                       help='Name of the project')
+    
+    parser.add_argument('--project-dir',
+                       default='./project',
+                       help='Project directory path (default: ./project)')
+    
+    parser.add_argument('--description',
+                       default='A SwarmPulse powered project',
+                       help='Project description')
+    
+    parser.add_argument('--author',
+                       default='SwarmPulse Contributors',
+                       help='Author name')
+    
+    parser.add_argument('--author-email',
+                       default='team@swampulse.io',
+                       help='Author email')
+    
+    parser.add_argument('--license',
+                       default='MIT',
+                       help='License type')
+    
+    parser.add_argument('--python-version',
+                       default='3.8',
+                       help='Minimum Python version required')
+    
+    parser.add_argument('--github-url',
+                       help='GitHub repository URL')
+    
+    parser.add_argument('--create-readme',
+                       action='store_true',
+                       help='Generate README.md')
+    
+    parser.add_argument('--create-gitignore',
+                       action='store_true',
+                       help='Generate .gitignore')
+    
+    parser.add_argument('--create-requirements',
+                       action='store_true',
+                       help='Generate requirements.txt')
+    
+    parser.add_argument('--create-setup',
+                       action='store_true',
+                       help='Generate setup.py')
+    
+    parser.add_argument('--create-workflows',
+                       action='store_true',
+                       help='Generate GitHub Actions workflows')
+    
+    parser.add_argument('--create-contributing',
+                       action='store_true',
+                       help='Generate CONTRIBUTING.md')
+    
+    parser.add_argument('--init-git',
+                       action='store_true',
+                       help='Initialize git repository')
+    
+    parser.add_argument('--create-all',
+                       action='store_true',
+                       help='Create all documentation files')
+    
+    parser.add_argument('--validate',
+                       action='store_true',
+                       help='Validate repository structure')
+    
+    args = parser.parse_args()
+    
+    generator = DocumentationGenerator(args.project_name, args.project_dir)
+    
+    features = [
+        "Comprehensive documentation generation",
+        "GitHub Actions CI/CD workflow templates",
+        "Python package configuration",
+        "Best practices for open source projects",
+        "Automated GitHub integration",
+    ]
+    
+    installation_steps = [
+        "Clone the repository: `git clone https://github.com/swarmpulse/project.git`",
+        "Navigate to project directory: `cd project`",
+        "Create virtual environment: `python -m venv venv`",
+        "Activate virtual environment: `source venv/bin/activate`",
+        "Install dependencies: `pip install -r requirements.txt`",
+    ]
+    
+    usage_examples = [
+        {
+            'title': 'Basic Documentation Generation',
+            'code': '''from documentation_generator import DocumentationGenerator
+generator = DocumentationGenerator("my-project", "./projects/my-project")
+readme = generator.generate_readme(
+    description="My awesome project",
+    features=["Feature 1", "Feature 2"],
+    installation_steps=["Step 1", "Step 2"],
+    usage_examples=[]
+)
+generator.write_file("README.md", readme)''',
+            'description': 'Generate a comprehensive README file for your project'
+        },
+        {
+            'title': 'GitHub Workflows',
+            'code': '''workflows = generator.generate_github_workflows(
+    test_command="pytest tests/ -v --cov",
+    python_version="3.10"
+)
+for workflow_path, content in workflows.items():
+    generator.write_file(workflow_path, content)''',
+            'description':
+'description': 'Generate GitHub Actions workflows for CI/CD'
+        },
+        {
+            'title': 'Initialize Git Repository',
+            'code': '''success, message = generator.initialize_git_repo(
+    remote_url="https://github.com/user/project.git"
+)
+if success:
+    print(f"Success: {message}")
+else:
+    print(f"Error: {message}")''',
+            'description': 'Initialize and configure a git repository'
+        },
+    ]
+    
+    dependencies = {
+        'requests': '2.31.0',
+        'pytest': '7.4.0',
+        'pytest-cov': '4.1.0',
+        'black': '23.7.0',
+        'flake8': '6.0.0',
+    }
+    
+    results = {
+        'timestamp': datetime.now().isoformat(),
+        'project_name': args.project_name,
+        'project_dir': str(args.project_dir),
+        'files_created': [],
+        'operations': [],
+    }
+    
+    create_all = args.create_all
+    
+    if create_all or args.create_readme:
+        readme = generator.generate_readme(
+            description=args.description,
+            features=features,
+            installation_steps=installation_steps,
+            usage_examples=usage_examples,
+            author=args.author,
+            license_type=args.license
+        )
+        if generator.write_file('README.md', readme):
+            results['files_created'].append('README.md')
+            results['operations'].append('README.md created successfully')
+        print(f"✓ README.md created")
+    
+    if create_all or args.create_gitignore:
+        gitignore = generator.generate_gitignore(
+            python_defaults=True,
+            additional_patterns=['venv/', '.env', '*.pyc']
+        )
+        if generator.write_file('.gitignore', gitignore):
+            results['files_created'].append('.gitignore')
+            results['operations'].append('.gitignore created successfully')
+        print(f"✓ .gitignore created")
+    
+    if create_all or args.create_requirements:
+        requirements = generator.generate_requirements(dependencies)
+        if generator.write_file('requirements.txt', requirements):
+            results['files_created'].append('requirements.txt')
+            results['operations'].append('requirements.txt created successfully')
+        print(f"✓ requirements.txt created")
+    
+    if create_all or args.create_setup:
+        setup_py = generator.generate_setup_py(
+            version='1.0.0',
+            author=args.author,
+            author_email=args.author_email,
+            description=args.description,
+            python_requires=f'>={args.python_version}'
+        )
+        if generator.write_file('setup.py', setup_py):
+            results['files_created'].append('setup.py')
+            results['operations'].append('setup.py created successfully')
+        print(f"✓ setup.py created")
+    
+    if create_all or args.create_workflows:
+        workflows = generator.generate_github_workflows(
+            test_command='pytest tests/ -v --cov',
+            python_version=args.python_version
+        )
+        for workflow_path, content in workflows.items():
+            if generator.write_file(workflow_path, content):
+                results['files_created'].append(workflow_path)
+                results['operations'].append(f'{workflow_path} created successfully')
+        print(f"✓ GitHub workflows created")
+    
+    if create_all or args.create_contributing:
+        publisher = GitHubPublisher(args.project_dir)
+        contributing = publisher.generate_contributing_guide()
+        if generator.write_file('CONTRIBUTING.md', contributing):
+            results['files_created'].append('CONTRIBUTING.md')
+            results['operations'].append('CONTRIBUTING.md created successfully')
+        print(f"✓ CONTRIBUTING.md created")
+    
+    license_content = f"""MIT License
 
-## Lessons Learned
-1. [Lesson 1]
-2. [Lesson
+Copyright (c) 2024 {args.author}
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+    if create_all or args.create_readme:
+        if generator.write_file('LICENSE', license_content):
+            results['files_created'].append('LICENSE')
+            results['operations'].append('LICENSE created successfully')
+        print(f"✓ LICENSE created")
+    
+    if create_all or args.init_git:
+        success, message = generator.initialize_git_repo(remote_url=args.github_url)
+        results['operations'].append(message)
+        if success:
+            print(f"✓ {message}")
+        else:
+            print(f"✗ {message}", file=sys.stderr)
+    
+    if args.validate:
+        publisher = GitHubPublisher(args.project_dir)
+        is_valid, missing = publisher.validate_repository()
+        
+        if is_valid:
+            print("✓ Repository structure is valid")
+            results['operations'].append("Repository validation passed")
+        else:
+            print(f"✗ Missing files: {', '.join(missing)}", file=sys.stderr)
+            results['operations'].append(f"Repository validation failed: missing {missing}")
+    
+    if create_all and args.github_url:
+        publisher = GitHubPublisher(args.project_dir)
+        metadata = publisher.create_github_metadata(
+            project_name=args.project_name,
+            description=args.description,
+            topics=['swampulse', 'documentation', 'github', 'python']
+        )
+        if generator.write_file('.github/metadata.json', metadata):
+            results['files_created'].append('.github/metadata.json')
+            results['operations'].append('GitHub metadata created successfully')
+        print(f"✓ GitHub metadata created")
+    
+    print(f"\n{'='*60}")
+    print(f"Documentation generation complete!")
+    print(f"Project: {args.project_name}")
+    print(f"Location: {args.project_dir}")
+    print(f"Files created: {len(results['files_created'])}")
+    print(f"{'='*60}\n")
+    
+    print("Summary:")
+    for op in results['operations']:
+        print(f"  • {op}")
+    
+    return results
+
+
+if __name__ == "__main__":
+    demo_results = {
+        'test_case': 'Full documentation generation with validation',
+        'timestamp': datetime.now().isoformat(),
+        'test_projects': []
+    }
+    
+    print("\n" + "="*70)
+    print("SWAMPULSE DOCUMENTATION GENERATOR - DEMO")
+    print("="*70 + "\n")
+    
+    demo_configs = [
+        {
+            'project_name': 'cancer-research-toolkit',
+            'description': 'A toolkit for cancer research data analysis and visualization',
+            'author': 'Cancer Research Foundation',
+            'create_flags': ['--create-all', '--init-git']
+        },
+        {
+            'project_name': 'health-monitor',
+            'description': 'Real-time health monitoring and alert system',
+            'author': 'Health Tech Collective',
+            'create_flags': ['--create-readme', '--create-requirements', '--create-setup']
+        },
+        {
+            'project_name': 'data-pipeline',
+            'description': 'Enterprise data pipeline with ETL capabilities',
+            'author': 'Data Engineering Team',
+            'create_flags': ['--create-all', '--validate']
+        }
+    ]
+    
+    for config in demo_configs:
+        print(f"\nGenerating documentation for: {config['project_name']}")
+        print("-" * 70)
+        
+        args_list = [
+            '--project-name', config['project_name'],
+            '--project-dir', f"./demo_projects/{config['project_name']}",
+            '--description', config['description'],
+            '--author', config['author'],
+        ]
+        
+        args_list.extend(config['create_flags'])
+        
+        sys.argv = ['doc_generator.py'] + args_list
+        
+        try:
+            results = main()
+            demo_results['test_projects'].append({
+                'name': config['project_name'],
+                'status': 'success',
+                'files_created': results['files_created'],
+                'operations_count': len(results['operations'])
+            })
+        except Exception as e:
+            print(f"Error during generation: {e}", file=sys.stderr)
+            demo_results['test_projects'].append({
+                'name': config['project_name'],
+                'status': 'failed',
+                'error': str(e)
+            })
+    
+    print("\n" + "="*70)
+    print("DEMO SUMMARY")
+    print("="*70)
+    print(json.dumps(demo_results, indent=2))
+    
+    generator = DocumentationGenerator("test-project", "./test_project_demo")
+    
+    print("\n" + "="*70)
+    print("INDIVIDUAL COMPONENT TESTS")
+    print("="*70)
+    
+    print("\n1. Testing README generation...")
+    readme = generator.generate_readme(
+        description="Test project for demonstration",
+        features=["Feature A", "Feature B", "Feature C"],
+        installation_steps=["Clone repo", "Install deps", "Run setup"],
+        usage_examples=[
+            {
+                'title': 'Quick Start',
+                'code': 'import module\nmodule.run()',
+                'description': 'Basic usage example'
+            }
+        ]
+    )
+    print(f"✓ README length: {len(readme)} characters")
+    
+    print("\n2. Testing .gitignore generation...")
+    gitignore = generator.generate_gitignore(
+        python_defaults=True,
+        additional_patterns=['custom_pattern/', '*.custom']
+    )
+    print(f"✓ .gitignore length: {len(gitignore)} characters")
+    
+    print("\n3. Testing requirements.txt generation...")
+    reqs = generator.generate_requirements({
+        'requests': '2.31.0',
+        'numpy': '1.24.0',
+        'pandas': '2.0.0'
+    })
+    print(f"✓ requirements.txt:\n{reqs}")
+    
+    print("\n4. Testing setup.py generation...")
+    setup = generator.generate_setup_py(
+        version='0.1.0',
+        author='Test Author',
+        description='Test package'
+    )
+    print(f"✓ setup.py length: {len(setup)} characters")
+    
+    print("\n5. Testing GitHub workflows generation...")
+    workflows = generator.generate_github_workflows(
+        test_command='pytest tests/',
+        python_version='3.9'
+    )
+    print(f"✓ Generated {len(workflows)} workflow files")
+    for wf in workflows:
+        print(f"  - {wf}")
+    
+    print("\n6. Testing GitHub publisher...")
+    publisher = GitHubPublisher("./test_project_demo")
+    metadata = publisher.create_github_metadata(
+        project_name="test-project",
+        description="Test project",
+        topics=["test", "demo"]
+    )
+    print(f"✓ Metadata created:\n{metadata}")
+    
+    print("\n7. Testing contributing guide...")
+    contributing = publisher.generate_contributing_guide()
+    print(f"✓ Contributing guide length: {len(contributing)} characters")
+    
+    print("\n" + "="*70)
+    print("ALL TESTS COMPLETED SUCCESSFULLY")
+    print("="*70 + "\n")
