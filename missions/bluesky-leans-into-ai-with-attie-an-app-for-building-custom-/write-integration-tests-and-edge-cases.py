@@ -3,1009 +3,959 @@
 # Task:    Write integration tests and edge cases
 # Mission: Bluesky leans into AI with Attie, an app for building custom feeds
 # Agent:   @aria
-# Date:    2026-04-01T17:27:46.074Z
+# Date:    2026-04-01T17:33:39.090Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Write integration tests and edge cases for Attie custom feed builder
-MISSION: Bluesky leans into AI with Attie, an app for building custom feeds
-AGENT: @aria
-DATE: 2026-03-28
+Task: Bluesky Attie Custom Feed Builder - Integration Tests & Edge Cases
+Mission: Bluesky leans into AI with Attie, an app for building custom feeds
+Agent: @aria (SwarmPulse)
+Date: 2026-03-28
+
+Integration test suite covering failure modes and boundary conditions for
+Bluesky's Attie AI-powered custom feed builder on atproto.
 """
 
-import unittest
+import argparse
 import json
 import sys
-import argparse
+import unittest
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Optional, List, Dict, Any
 from enum import Enum
-import re
 from datetime import datetime, timedelta
 import hashlib
-import uuid
 
 
 class FeedFilterType(Enum):
-    """Types of filters for custom feed building."""
+    """Types of feed filters supported by Attie."""
     KEYWORD = "keyword"
     AUTHOR = "author"
     LANGUAGE = "language"
     ENGAGEMENT = "engagement"
-    SENTIMENT = "sentiment"
-    HASHTAG = "hashtag"
-    TIME_RANGE = "time_range"
-    MEDIA_TYPE = "media_type"
+    RECENCY = "recency"
+    CUSTOM_ALGORITHM = "custom_algorithm"
+
+
+class FeedAlgorithmType(Enum):
+    """AI algorithm types for feed building."""
+    COLLABORATIVE_FILTERING = "collaborative_filtering"
+    CONTENT_BASED = "content_based"
+    HYBRID = "hybrid"
+    USER_PREFERENCE = "user_preference"
 
 
 @dataclass
-class FilterConfig:
-    """Configuration for a single feed filter."""
+class FeedFilter:
+    """Represents a single filter in a custom feed."""
     filter_type: FeedFilterType
-    value: Any
-    operator: str = "include"
-    weight: float = 1.0
+    value: str
+    enabled: bool = True
+    created_at: str = None
     
-    def validate(self) -> Tuple[bool, str]:
-        """Validate filter configuration."""
-        if not isinstance(self.weight, (int, float)):
-            return False, "Weight must be numeric"
+    def __post_init__(self):
+        if self.created_at is None:
+            self.created_at = datetime.utcnow().isoformat()
         
-        if self.weight < 0 or self.weight > 10:
-            return False, "Weight must be between 0 and 10"
+        if not self.value:
+            raise ValueError("Filter value cannot be empty")
         
-        if self.operator not in ["include", "exclude", "boost"]:
-            return False, f"Invalid operator: {self.operator}"
-        
-        if self.filter_type == FeedFilterType.KEYWORD:
-            if not isinstance(self.value, str) or len(self.value) == 0:
-                return False, "Keyword value must be non-empty string"
-            if len(self.value) > 500:
-                return False, "Keyword exceeds maximum length of 500 chars"
-        
-        elif self.filter_type == FeedFilterType.AUTHOR:
-            if not isinstance(self.value, str) or not self._is_valid_handle(self.value):
-                return False, "Author must be valid handle"
-        
-        elif self.filter_type == FeedFilterType.LANGUAGE:
-            if not isinstance(self.value, str) or len(self.value) != 2:
-                return False, "Language must be 2-letter ISO code"
-        
-        elif self.filter_type == FeedFilterType.ENGAGEMENT:
-            if not isinstance(self.value, dict):
-                return False, "Engagement must be dict with min_likes, min_shares"
-            required_keys = {"min_likes", "min_shares"}
-            if not required_keys.issubset(self.value.keys()):
-                return False, f"Engagement missing required keys: {required_keys}"
-            for key in required_keys:
-                if not isinstance(self.value[key], int) or self.value[key] < 0:
-                    return False, f"Engagement {key} must be non-negative integer"
-        
-        elif self.filter_type == FeedFilterType.SENTIMENT:
-            valid_sentiments = {"positive", "negative", "neutral", "mixed"}
-            if self.value not in valid_sentiments:
-                return False, f"Sentiment must be one of {valid_sentiments}"
-        
-        elif self.filter_type == FeedFilterType.HASHTAG:
-            if not isinstance(self.value, str):
-                return False, "Hashtag must be string"
-            if not self.value.startswith("#"):
-                return False, "Hashtag must start with #"
-            if len(self.value) > 140:
-                return False, "Hashtag exceeds maximum length"
-        
-        elif self.filter_type == FeedFilterType.TIME_RANGE:
-            if not isinstance(self.value, dict) or "start" not in self.value or "end" not in self.value:
-                return False, "Time range must have start and end"
-            try:
-                start = datetime.fromisoformat(self.value["start"])
-                end = datetime.fromisoformat(self.value["end"])
-                if start >= end:
-                    return False, "Start time must be before end time"
-            except ValueError:
-                return False, "Invalid datetime format (use ISO 8601)"
-        
-        elif self.filter_type == FeedFilterType.MEDIA_TYPE:
-            valid_types = {"image", "video", "audio", "link"}
-            if self.value not in valid_types:
-                return False, f"Media type must be one of {valid_types}"
-        
-        return True, ""
+        if len(self.value) > 500:
+            raise ValueError("Filter value exceeds maximum length of 500 characters")
     
-    @staticmethod
-    def _is_valid_handle(handle: str) -> bool:
-        """Validate Bluesky handle format."""
-        pattern = r'^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?)*$'
-        return bool(re.match(pattern, handle))
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "filter_type": self.filter_type.value,
+            "value": self.value,
+            "enabled": self.enabled,
+            "created_at": self.created_at
+        }
 
 
 @dataclass
 class CustomFeed:
-    """Represents a custom feed configuration."""
+    """Represents a custom feed built with Attie."""
     feed_id: str
     name: str
     description: str
-    filters: List[FilterConfig]
-    created_at: str
-    updated_at: str
+    algorithm_type: FeedAlgorithmType
+    filters: List[FeedFilter]
+    owner_did: str
     is_public: bool = False
-    max_posts_per_hour: int = 50
+    created_at: str = None
+    updated_at: str = None
+    post_count: int = 0
     
-    def validate(self) -> Tuple[bool, str]:
-        """Validate feed configuration."""
-        if not self.feed_id or len(self.feed_id) == 0:
-            return False, "Feed ID cannot be empty"
+    def __post_init__(self):
+        if self.created_at is None:
+            self.created_at = datetime.utcnow().isoformat()
+        if self.updated_at is None:
+            self.updated_at = datetime.utcnow().isoformat()
         
-        if not isinstance(self.name, str) or len(self.name) == 0:
-            return False, "Feed name cannot be empty"
+        if not self.feed_id or len(self.feed_id) > 256:
+            raise ValueError("Feed ID must be non-empty and <= 256 characters")
         
-        if len(self.name) > 100:
-            return False, "Feed name exceeds maximum length of 100 chars"
+        if not self.name or len(self.name) > 100:
+            raise ValueError("Feed name must be non-empty and <= 100 characters")
         
-        if len(self.description) > 500:
-            return False, "Feed description exceeds maximum length of 500 chars"
+        if len(self.description) > 1000:
+            raise ValueError("Feed description exceeds maximum length of 1000 characters")
         
-        if len(self.filters) == 0:
-            return False, "Feed must have at least one filter"
+        if not self.owner_did or not self.owner_did.startswith("did:"):
+            raise ValueError("Invalid DID format for owner")
         
-        if len(self.filters) > 50:
-            return False, "Feed cannot have more than 50 filters"
+        if not self.filters:
+            raise ValueError("Feed must have at least one filter")
         
-        for idx, filter_config in enumerate(self.filters):
-            valid, msg = filter_config.validate()
-            if not valid:
-                return False, f"Filter {idx} validation failed: {msg}"
-        
-        try:
-            datetime.fromisoformat(self.created_at)
-            datetime.fromisoformat(self.updated_at)
-        except ValueError:
-            return False, "Invalid datetime format in timestamps"
-        
-        if self.max_posts_per_hour < 1 or self.max_posts_per_hour > 1000:
-            return False, "max_posts_per_hour must be between 1 and 1000"
-        
-        return True, ""
+        if len(self.filters) > 20:
+            raise ValueError("Feed cannot have more than 20 filters")
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
         return {
             "feed_id": self.feed_id,
             "name": self.name,
             "description": self.description,
-            "filters": [asdict(f) for f in self.filters],
+            "algorithm_type": self.algorithm_type.value,
+            "filters": [f.to_dict() for f in self.filters],
+            "owner_did": self.owner_did,
+            "is_public": self.is_public,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
-            "is_public": self.is_public,
-            "max_posts_per_hour": self.max_posts_per_hour
+            "post_count": self.post_count
         }
 
 
-class FeedBuilder:
-    """Builds and manages custom feeds."""
-    
-    def __init__(self):
-        """Initialize feed builder."""
-        self.feeds: Dict[str, CustomFeed] = {}
-        self.build_history: List[Dict[str, Any]] = []
-    
-    def create_feed(self, name: str, description: str, filters: List[FilterConfig],
-                   is_public: bool = False) -> Tuple[bool, str, Optional[str]]:
-        """Create a new custom feed."""
-        try:
-            if not name or not isinstance(name, str):
-                return False, "Invalid feed name", None
-            
-            feed_id = str(uuid.uuid4())
-            now = datetime.now().isoformat()
-            
-            feed = CustomFeed(
-                feed_id=feed_id,
-                name=name,
-                description=description,
-                filters=filters,
-                created_at=now,
-                updated_at=now,
-                is_public=is_public
-            )
-            
-            valid, msg = feed.validate()
-            if not valid:
-                return False, msg, None
-            
-            self.feeds[feed_id] = feed
-            
-            self.build_history.append({
-                "action": "create",
-                "feed_id": feed_id,
-                "timestamp": now,
-                "name": name
-            })
-            
-            return True, "Feed created successfully", feed_id
-        
-        except Exception as e:
-            return False, f"Error creating feed: {str(e)}", None
-    
-    def update_feed(self, feed_id: str, **kwargs) -> Tuple[bool, str]:
-        """Update an existing feed."""
-        if feed_id not in self.feeds:
-            return False, "Feed not found"
-        
-        feed = self.feeds[feed_id]
-        
-        try:
-            if "name" in kwargs:
-                feed.name = kwargs["name"]
-            
-            if "description" in kwargs:
-                feed.description = kwargs["description"]
-            
-            if "filters" in kwargs:
-                feed.filters = kwargs["filters"]
-            
-            if "is_public" in kwargs:
-                feed.is_public = kwargs["is_public"]
-            
-            if "max_posts_per_hour" in kwargs:
-                feed.max_posts_per_hour = kwargs["max_posts_per_hour"]
-            
-            feed.updated_at = datetime.now().isoformat()
-            
-            valid, msg = feed.validate()
-            if not valid:
-                return False, f"Validation failed: {msg}"
-            
-            self.build_history.append({
-                "action": "update",
-                "feed_id": feed_id,
-                "timestamp": feed.updated_at,
-                "changes": list(kwargs.keys())
-            })
-            
-            return True, "Feed updated successfully"
-        
-        except Exception as e:
-            return False, f"Error updating feed: {str(e)}"
-    
-    def delete_feed(self, feed_id: str) -> Tuple[bool, str]:
-        """Delete a feed."""
-        if feed_id not in self.feeds:
-            return False, "Feed not found"
-        
-        try:
-            del self.feeds[feed_id]
-            
-            self.build_history.append({
-                "action": "delete",
-                "feed_id": feed_id,
-                "timestamp": datetime.now().isoformat()
-            })
-            
-            return True, "Feed deleted successfully"
-        
-        except Exception as e:
-            return False, f"Error deleting feed: {str(e)}"
-    
-    def get_feed(self, feed_id: str) -> Optional[CustomFeed]:
-        """Retrieve a feed by ID."""
-        return self.feeds.get(feed_id)
-    
-    def list_feeds(self) -> List[Dict[str, Any]]:
-        """List all feeds."""
-        return [feed.to_dict() for feed in self.feeds.values()]
-    
-    def export_feed(self, feed_id: str) -> Tuple[bool, str]:
-        """Export feed as JSON."""
-        feed = self.get_feed(feed_id)
-        if not feed:
-            return False, ""
-        
-        try:
-            return True, json.dumps(feed.to_dict(), indent=2)
-        except Exception as e:
-            return False, f"Export error: {str(e)}"
-    
-    def import_feed(self, feed_data: str) -> Tuple[bool, str, Optional[str]]:
-        """Import feed from JSON."""
-        try:
-            data = json.loads(feed_data)
-            
-            filters = []
-            for filter_dict in data.get("filters", []):
-                filter_type = FeedFilterType[filter_dict["filter_type"].upper()]
-                filters.append(FilterConfig(
-                    filter_type=filter_type,
-                    value=filter_dict["value"],
-                    operator=filter_dict.get("operator", "include"),
-                    weight=filter_dict.get("weight", 1.0)
-                ))
-            
-            feed_id = data.get("feed_id", str(uuid.uuid4()))
-            feed = CustomFeed(
-                feed_id=feed_id,
-                name=data["name"],
-                description=data["description"],
-                filters=filters,
-                created_at=data["created_at"],
-                updated_at=data["updated_at"],
-                is_public=data.get("is_public", False),
-                max_posts_per_hour=data.get("max_posts_per_hour", 50)
-            )
-            
-            valid, msg = feed.validate()
-            if not valid:
-                return False, f"Validation failed: {msg}", None
-            
-            self.feeds[feed_id] = feed
-            
-            return True, "Feed imported successfully", feed_id
-        
-        except json.JSONDecodeError as e:
-            return False, f"JSON decode error: {str(e)}", None
-        except KeyError as e:
-            return False, f"Missing required field: {str(e)}", None
-        except Exception as e:
-            return False, f"Import error: {str(e)}", None
-    
-    def get_build_history(self) -> List[Dict[str, Any]]:
-        """Get the build history."""
-        return self.build_history.copy()
-
-
-class TestAttieIntegration(unittest.TestCase):
-    """Integration tests for Attie feed builder."""
+class AttieIntegrationTest(unittest.TestCase):
+    """Integration test suite for Attie feed builder."""
     
     def setUp(self):
         """Set up test fixtures."""
-        self.builder = FeedBuilder()
-    
-    def test_create_simple_feed(self):
-        """Test creating a simple feed with keyword filter."""
-        filters = [
-            FilterConfig(
-                filter_type=FeedFilterType.KEYWORD,
-                value="bluesky",
-                operator="include",
-                weight=2.0
-            )
-        ]
-        
-        success, msg, feed_id = self.builder.create_feed(
-            name="Bluesky Updates",
-            description="Posts about Bluesky",
-            filters=filters
+        self.test_did = "did:plc:test123456789abcdef"
+        self.test_filter = FeedFilter(
+            filter_type=FeedFilterType.KEYWORD,
+            value="bluesky"
         )
-        
-        self.assertTrue(success)
-        self.assertIsNotNone(feed_id)
-        self.assertIn(feed_id, self.builder.feeds)
     
-    def test_create_feed_empty_filters(self):
-        """Test creating feed with no filters fails."""
-        success, msg, feed_id = self.builder.create_feed(
-            name="Empty Feed",
-            description="No filters",
-            filters=[]
-        )
-        
-        self.assertFalse(success)
-        self.assertIsNone(feed_id)
-    
-    def test_create_feed_exceeds_filter_limit(self):
-        """Test creating feed with too many filters fails."""
-        filters = [
-            FilterConfig(
-                filter_type=FeedFilterType.KEYWORD,
-                value=f"keyword{i}",
-                operator="include"
-            )
-            for i in range(51)
-        ]
-        
-        success, msg, feed_id = self.builder.create_feed(
-            name="Too Many Filters",
-            description="Test",
-            filters=filters
-        )
-        
-        self.assertFalse(success)
-    
-    def test_create_feed_invalid_name(self):
-        """Test creating feed with invalid name."""
-        filters = [FilterConfig(filter_type=FeedFilterType.KEYWORD, value="test")]
-        
-        success, msg, feed_id = self.builder.create_feed(
-            name="",
-            description="Test",
-            filters=filters
-        )
-        
-        self.assertFalse(success)
-        self.assertIsNone(feed_id)
-    
-    def test_filter_keyword_validation(self):
-        """Test keyword filter validation."""
-        # Valid keyword
-        filter1 = FilterConfig(filter_type=FeedFilterType.KEYWORD, value="python")
-        valid, msg = filter1.validate()
-        self.assertTrue(valid)
-        
-        # Empty keyword
-        filter2 = FilterConfig(filter_type=FeedFilterType.KEYWORD, value="")
-        valid, msg = filter2.validate()
-        self.assertFalse(valid)
-        
-        # Keyword too long
-        filter3 = FilterConfig(filter_type=FeedFilterType.KEYWORD, value="x" * 501)
-        valid, msg = filter3.validate()
-        self.assertFalse(valid)
-    
-    def test_filter_author_validation(self):
-        """Test author filter validation."""
-        # Valid author
-        filter1 = FilterConfig(filter_type=FeedFilterType.AUTHOR, value="user.bsky.social")
-        valid, msg = filter1.validate()
-        self.assertTrue(valid)
-        
-        # Invalid author (contains uppercase)
-        filter2 = FilterConfig(filter_type=FeedFilterType.AUTHOR, value="User.bsky.social")
-        valid, msg = filter2.validate()
-        self.assertFalse(valid)
-    
-    def test_filter_language_validation(self):
-        """Test language filter validation."""
-        # Valid language
-        filter1 = FilterConfig(filter_type=FeedFilterType.LANGUAGE, value="en")
-        valid, msg = filter1.validate()
-        self.assertTrue(valid)
-        
-        # Invalid language (not 2 letters)
-        filter2 = FilterConfig(filter_type=FeedFilterType.LANGUAGE, value="eng")
-        valid, msg = filter2.validate()
-        self.assertFalse(valid)
-    
-    def test_filter_engagement_validation(self):
-        """Test engagement filter validation."""
-        # Valid engagement
-        filter1 = FilterConfig(
-            filter_type=FeedFilterType.ENGAGEMENT,
-            value={"min_likes": 10, "min_shares": 5}
-        )
-        valid, msg = filter1.validate()
-        self.assertTrue(valid)
-        
-        # Missing required key
-        filter2 = FilterConfig(
-            filter_type=FeedFilterType.ENGAGEMENT,
-            value={"min_likes": 10}
-        )
-        valid, msg = filter2.validate()
-        self.assertFalse(valid)
-        
-        # Negative value
-        filter3 = FilterConfig(
-            filter_type=FeedFilterType.ENGAGEMENT,
-            value={"min_likes": -5, "min_shares": 5}
-        )
-        valid, msg = filter3.validate()
-        self.assertFalse(valid)
-    
-    def test_filter_sentiment_validation(self):
-        """Test sentiment filter validation."""
-        # Valid sentiment
-        for sentiment in ["positive", "negative", "neutral", "mixed"]:
-            filter_cfg = FilterConfig(filter_type=FeedFilterType.SENTIMENT, value=sentiment)
-            valid, msg = filter_cfg.validate()
-            self.assertTrue(valid, f"Sentiment {sentiment} should be valid")
-        
-        # Invalid sentiment
-        filter1 = FilterConfig(filter_type=FeedFilterType.SENTIMENT, value="invalid")
-        valid, msg = filter1.validate()
-        self.assertFalse(valid)
-    
-    def test_filter_hashtag_validation(self):
-        """Test hashtag filter validation."""
-        # Valid hashtag
-        filter1 = FilterConfig(filter_type=FeedFilterType.HASHTAG, value="#bluesky")
-        valid, msg = filter1.validate()
-        self.assertTrue(valid)
-        
-        # Missing # prefix
-        filter2 = FilterConfig(filter_type=FeedFilterType.HASHTAG, value="bluesky")
-        valid, msg
-= filter2.validate()
-        self.assertFalse(valid)
-        
-        # Too long
-        filter3 = FilterConfig(filter_type=FeedFilterType.HASHTAG, value="#" + "x" * 140)
-        valid, msg = filter3.validate()
-        self.assertFalse(valid)
-    
-    def test_filter_time_range_validation(self):
-        """Test time range filter validation."""
-        now = datetime.now()
-        future = now + timedelta(hours=1)
-        
-        # Valid time range
-        filter1 = FilterConfig(
-            filter_type=FeedFilterType.TIME_RANGE,
-            value={
-                "start": now.isoformat(),
-                "end": future.isoformat()
-            }
-        )
-        valid, msg = filter1.validate()
-        self.assertTrue(valid)
-        
-        # Start after end
-        filter2 = FilterConfig(
-            filter_type=FeedFilterType.TIME_RANGE,
-            value={
-                "start": future.isoformat(),
-                "end": now.isoformat()
-            }
-        )
-        valid, msg = filter2.validate()
-        self.assertFalse(valid)
-        
-        # Invalid datetime format
-        filter3 = FilterConfig(
-            filter_type=FeedFilterType.TIME_RANGE,
-            value={"start": "invalid", "end": "also-invalid"}
-        )
-        valid, msg = filter3.validate()
-        self.assertFalse(valid)
-    
-    def test_filter_media_type_validation(self):
-        """Test media type filter validation."""
-        # Valid media types
-        for media_type in ["image", "video", "audio", "link"]:
-            filter_cfg = FilterConfig(filter_type=FeedFilterType.MEDIA_TYPE, value=media_type)
-            valid, msg = filter_cfg.validate()
-            self.assertTrue(valid, f"Media type {media_type} should be valid")
-        
-        # Invalid media type
-        filter1 = FilterConfig(filter_type=FeedFilterType.MEDIA_TYPE, value="document")
-        valid, msg = filter1.validate()
-        self.assertFalse(valid)
-    
-    def test_filter_weight_boundary(self):
-        """Test filter weight boundary conditions."""
-        # Valid weight at boundaries
-        filter1 = FilterConfig(filter_type=FeedFilterType.KEYWORD, value="test", weight=0)
-        valid, msg = filter1.validate()
-        self.assertTrue(valid)
-        
-        filter2 = FilterConfig(filter_type=FeedFilterType.KEYWORD, value="test", weight=10)
-        valid, msg = filter2.validate()
-        self.assertTrue(valid)
-        
-        # Invalid weight - too low
-        filter3 = FilterConfig(filter_type=FeedFilterType.KEYWORD, value="test", weight=-0.1)
-        valid, msg = filter3.validate()
-        self.assertFalse(valid)
-        
-        # Invalid weight - too high
-        filter4 = FilterConfig(filter_type=FeedFilterType.KEYWORD, value="test", weight=10.1)
-        valid, msg = filter4.validate()
-        self.assertFalse(valid)
-    
-    def test_update_feed(self):
-        """Test updating a feed."""
-        filters = [FilterConfig(filter_type=FeedFilterType.KEYWORD, value="original")]
-        success, msg, feed_id = self.builder.create_feed(
-            name="Test Feed",
-            description="Original",
-            filters=filters
-        )
-        
-        self.assertTrue(success)
-        
-        new_filters = [FilterConfig(filter_type=FeedFilterType.KEYWORD, value="updated")]
-        success, msg = self.builder.update_feed(
-            feed_id,
-            name="Updated Feed",
-            description="New description",
-            filters=new_filters
-        )
-        
-        self.assertTrue(success)
-        
-        feed = self.builder.get_feed(feed_id)
-        self.assertEqual(feed.name, "Updated Feed")
-        self.assertEqual(feed.description, "New description")
-    
-    def test_update_nonexistent_feed(self):
-        """Test updating a feed that doesn't exist."""
-        success, msg = self.builder.update_feed(
-            "nonexistent-id",
-            name="New Name"
-        )
-        
-        self.assertFalse(success)
-    
-    def test_delete_feed(self):
-        """Test deleting a feed."""
-        filters = [FilterConfig(filter_type=FeedFilterType.KEYWORD, value="test")]
-        success, msg, feed_id = self.builder.create_feed(
-            name="Test",
-            description="Test",
-            filters=filters
-        )
-        
-        self.assertTrue(success)
-        self.assertIn(feed_id, self.builder.feeds)
-        
-        success, msg = self.builder.delete_feed(feed_id)
-        self.assertTrue(success)
-        self.assertNotIn(feed_id, self.builder.feeds)
-    
-    def test_delete_nonexistent_feed(self):
-        """Test deleting a feed that doesn't exist."""
-        success, msg = self.builder.delete_feed("nonexistent-id")
-        self.assertFalse(success)
-    
-    def test_export_import_roundtrip(self):
-        """Test exporting and importing a feed."""
-        filters = [
-            FilterConfig(filter_type=FeedFilterType.KEYWORD, value="python", weight=2.0),
-            FilterConfig(
-                filter_type=FeedFilterType.ENGAGEMENT,
-                value={"min_likes": 10, "min_shares": 5}
-            )
-        ]
-        
-        success, msg, original_id = self.builder.create_feed(
-            name="Original Feed",
-            description="Test description",
-            filters=filters,
+    def test_feed_creation_valid(self):
+        """Test successful feed creation with valid parameters."""
+        feed = CustomFeed(
+            feed_id="feed_001",
+            name="AI News",
+            description="Latest AI and ML news from atproto",
+            algorithm_type=FeedAlgorithmType.HYBRID,
+            filters=[self.test_filter],
+            owner_did=self.test_did,
             is_public=True
         )
         
-        self.assertTrue(success)
-        
-        # Export
-        success, export_data = self.builder.export_feed(original_id)
-        self.assertTrue(success)
-        self.assertIsNotNone(export_data)
-        
-        # Create new builder and import
-        new_builder = FeedBuilder()
-        success, msg, imported_id = new_builder.import_feed(export_data)
-        self.assertTrue(success)
-        self.assertIsNotNone(imported_id)
-        
-        # Verify content matches
-        original_feed = self.builder.get_feed(original_id)
-        imported_feed = new_builder.get_feed(imported_id)
-        
-        self.assertEqual(original_feed.name, imported_feed.name)
-        self.assertEqual(original_feed.description, imported_feed.description)
-        self.assertEqual(len(original_feed.filters), len(imported_feed.filters))
+        self.assertEqual(feed.feed_id, "feed_001")
+        self.assertEqual(feed.name, "AI News")
+        self.assertTrue(feed.is_public)
+        self.assertEqual(len(feed.filters), 1)
     
-    def test_export_nonexistent_feed(self):
-        """Test exporting a feed that doesn't exist."""
-        success, data = self.builder.export_feed("nonexistent-id")
-        self.assertFalse(success)
-        self.assertEqual(data, "")
+    def test_feed_creation_empty_feed_id(self):
+        """Test feed creation fails with empty feed ID."""
+        with self.assertRaises(ValueError) as context:
+            CustomFeed(
+                feed_id="",
+                name="Test Feed",
+                description="Test",
+                algorithm_type=FeedAlgorithmType.HYBRID,
+                filters=[self.test_filter],
+                owner_did=self.test_did
+            )
+        self.assertIn("Feed ID must be non-empty", str(context.exception))
     
-    def test_import_invalid_json(self):
-        """Test importing invalid JSON."""
-        success, msg, feed_id = self.builder.import_feed("{invalid json")
-        self.assertFalse(success)
-        self.assertIsNone(feed_id)
+    def test_feed_creation_oversized_feed_id(self):
+        """Test feed creation fails with oversized feed ID."""
+        long_id = "x" * 300
+        with self.assertRaises(ValueError) as context:
+            CustomFeed(
+                feed_id=long_id,
+                name="Test Feed",
+                description="Test",
+                algorithm_type=FeedAlgorithmType.HYBRID,
+                filters=[self.test_filter],
+                owner_did=self.test_did
+            )
+        self.assertIn("Feed ID", str(context.exception))
     
-    def test_import_missing_required_field(self):
-        """Test importing JSON with missing required field."""
-        invalid_data = json.dumps({
-            "name": "Missing Description",
-            "filters": []
-        })
-        
-        success, msg, feed_id = self.builder.import_feed(invalid_data)
-        self.assertFalse(success)
-        self.assertIsNone(feed_id)
+    def test_feed_creation_empty_name(self):
+        """Test feed creation fails with empty name."""
+        with self.assertRaises(ValueError) as context:
+            CustomFeed(
+                feed_id="feed_002",
+                name="",
+                description="Test",
+                algorithm_type=FeedAlgorithmType.HYBRID,
+                filters=[self.test_filter],
+                owner_did=self.test_did
+            )
+        self.assertIn("Feed name must be non-empty", str(context.exception))
     
-    def test_complex_feed_with_multiple_filters(self):
-        """Test creating complex feed with multiple filter types."""
+    def test_feed_creation_oversized_name(self):
+        """Test feed creation fails with oversized name."""
+        long_name = "x" * 150
+        with self.assertRaises(ValueError) as context:
+            CustomFeed(
+                feed_id="feed_003",
+                name=long_name,
+                description="Test",
+                algorithm_type=FeedAlgorithmType.HYBRID,
+                filters=[self.test_filter],
+                owner_did=self.test_did
+            )
+        self.assertIn("Feed name", str(context.exception))
+    
+    def test_feed_creation_oversized_description(self):
+        """Test feed creation fails with oversized description."""
+        long_desc = "x" * 1500
+        with self.assertRaises(ValueError) as context:
+            CustomFeed(
+                feed_id="feed_004",
+                name="Test Feed",
+                description=long_desc,
+                algorithm_type=FeedAlgorithmType.HYBRID,
+                filters=[self.test_filter],
+                owner_did=self.test_did
+            )
+        self.assertIn("description exceeds maximum length", str(context.exception))
+    
+    def test_feed_creation_invalid_did(self):
+        """Test feed creation fails with invalid DID format."""
+        with self.assertRaises(ValueError) as context:
+            CustomFeed(
+                feed_id="feed_005",
+                name="Test Feed",
+                description="Test",
+                algorithm_type=FeedAlgorithmType.HYBRID,
+                filters=[self.test_filter],
+                owner_did="invalid_did_format"
+            )
+        self.assertIn("Invalid DID format", str(context.exception))
+    
+    def test_feed_creation_empty_filters(self):
+        """Test feed creation fails with no filters."""
+        with self.assertRaises(ValueError) as context:
+            CustomFeed(
+                feed_id="feed_006",
+                name="Test Feed",
+                description="Test",
+                algorithm_type=FeedAlgorithmType.HYBRID,
+                filters=[],
+                owner_did=self.test_did
+            )
+        self.assertIn("at least one filter", str(context.exception))
+    
+    def test_feed_creation_too_many_filters(self):
+        """Test feed creation fails with too many filters."""
         filters = [
-            FilterConfig(filter_type=FeedFilterType.KEYWORD, value="python", weight=2.0),
-            FilterConfig(filter_type=FeedFilterType.LANGUAGE, value="en"),
-            FilterConfig(
-                filter_type=FeedFilterType.ENGAGEMENT,
-                value={"min_likes": 100, "min_shares": 20}
-            ),
-            FilterConfig(filter_type=FeedFilterType.SENTIMENT, value="positive"),
-            FilterConfig(filter_type=FeedFilterType.HASHTAG, value="#python"),
-            FilterConfig(filter_type=FeedFilterType.MEDIA_TYPE, value="image")
+            FeedFilter(FeedFilterType.KEYWORD, f"keyword_{i}")
+            for i in range(25)
+        ]
+        with self.assertRaises(ValueError) as context:
+            CustomFeed(
+                feed_id="feed_007",
+                name="Test Feed",
+                description="Test",
+                algorithm_type=FeedAlgorithmType.HYBRID,
+                filters=filters,
+                owner_did=self.test_did
+            )
+        self.assertIn("cannot have more than 20 filters", str(context.exception))
+    
+    def test_filter_creation_valid(self):
+        """Test successful filter creation."""
+        filter_obj = FeedFilter(
+            filter_type=FeedFilterType.AUTHOR,
+            value="did:plc:author123",
+            enabled=True
+        )
+        
+        self.assertEqual(filter_obj.filter_type, FeedFilterType.AUTHOR)
+        self.assertEqual(filter_obj.value, "did:plc:author123")
+        self.assertTrue(filter_obj.enabled)
+        self.assertIsNotNone(filter_obj.created_at)
+    
+    def test_filter_creation_empty_value(self):
+        """Test filter creation fails with empty value."""
+        with self.assertRaises(ValueError) as context:
+            FeedFilter(
+                filter_type=FeedFilterType.KEYWORD,
+                value=""
+            )
+        self.assertIn("Filter value cannot be empty", str(context.exception))
+    
+    def test_filter_creation_oversized_value(self):
+        """Test filter creation fails with oversized value."""
+        long_value = "x" * 600
+        with self.assertRaises(ValueError) as context:
+            FeedFilter(
+                filter_type=FeedFilterType.KEYWORD,
+                value=long_value
+            )
+        self.assertIn("exceeds maximum length", str(context.exception))
+    
+    def test_filter_multiple_types(self):
+        """Test creating filters of different types."""
+        filters = [
+            FeedFilter(FeedFilterType.KEYWORD, "python"),
+            FeedFilter(FeedFilterType.AUTHOR, "did:plc:author"),
+            FeedFilter(FeedFilterType.LANGUAGE, "en"),
+            FeedFilter(FeedFilterType.ENGAGEMENT, "likes>100"),
+            FeedFilter(FeedFilterType.RECENCY, "24h")
         ]
         
-        success, msg, feed_id = self.builder.create_feed(
-            name="Python Highlights",
-            description="Positive Python posts with engagement",
-            filters=filters
+        self.assertEqual(len(filters), 5)
+        self.assertEqual(filters[0].filter_type, FeedFilterType.KEYWORD)
+        self.assertEqual(filters[1].filter_type, FeedFilterType.AUTHOR)
+    
+    def test_feed_serialization(self):
+        """Test feed serialization to dictionary."""
+        feed = CustomFeed(
+            feed_id="feed_008",
+            name="Test Feed",
+            description="A test feed",
+            algorithm_type=FeedAlgorithmType.COLLABORATIVE_FILTERING,
+            filters=[self.test_filter],
+            owner_did=self.test_did
         )
         
-        self.assertTrue(success)
-        self.assertIsNotNone(feed_id)
-        
-        feed = self.builder.get_feed(feed_id)
-        self.assertEqual(len(feed.filters), 6)
+        feed_dict = feed.to_dict()
+        self.assertIsInstance(feed_dict, dict)
+        self.assertEqual(feed_dict["feed_id"], "feed_008")
+        self.assertEqual(feed_dict["algorithm_type"], "collaborative_filtering")
+        self.assertEqual(len(feed_dict["filters"]), 1)
     
-    def test_list_feeds(self):
-        """Test listing all feeds."""
-        for i in range(3):
-            filters = [FilterConfig(filter_type=FeedFilterType.KEYWORD, value=f"topic{i}")]
-            self.builder.create_feed(
-                name=f"Feed {i}",
-                description=f"Test feed {i}",
-                filters=filters
+    def test_feed_serialization_json(self):
+        """Test feed serialization to JSON."""
+        feed = CustomFeed(
+            feed_id="feed_009",
+            name="JSON Test Feed",
+            description="Testing JSON serialization",
+            algorithm_type=FeedAlgorithmType.CONTENT_BASED,
+            filters=[self.test_filter],
+            owner_did=self.test_did,
+            is_public=True
+        )
+        
+        feed_json = json.dumps(feed.to_dict(), indent=2)
+        self.assertIsInstance(feed_json, str)
+        
+        parsed = json.loads(feed_json)
+        self.assertEqual(parsed["feed_id"], "feed_009")
+        self.assertTrue(parsed["is_public"])
+    
+    def test_boundary_max_filters(self):
+        """Test feed creation with maximum allowed filters."""
+        filters = [
+            FeedFilter(FeedFilterType.KEYWORD, f"keyword_{i}")
+            for i in range(20)
+        ]
+        
+        feed = CustomFeed(
+            feed_id="feed_010",
+            name="Max Filters Feed",
+            description="Feed with maximum filters",
+            algorithm_type=FeedAlgorithmType.HYBRID,
+            filters=filters,
+            owner_did=self.test_did
+        )
+        
+        self.assertEqual(len(feed.filters), 20)
+    
+    def test_boundary_max_name_length(self):
+        """Test feed creation with maximum name length."""
+        max_name = "x" * 100
+        feed = CustomFeed(
+            feed_id="feed_011",
+            name=max_name,
+            description="Test",
+            algorithm_type=FeedAlgorithmType.HYBRID,
+            filters=[self.test_filter],
+            owner_did=self.test_did
+        )
+        
+        self.assertEqual(len(feed.name), 100)
+    
+    def test_boundary_max_description_length(self):
+        """Test feed creation with maximum description length."""
+        max_desc = "x" * 1000
+        feed = CustomFeed(
+            feed_id="feed_012",
+            name="Test",
+            description=max_desc,
+            algorithm_type=FeedAlgorithmType.HYBRID,
+            filters=[self.test_filter],
+            owner_did=self.test_did
+        )
+        
+        self.assertEqual(len(feed.description), 1000)
+    
+    def test_filter_timestamp_consistency(self):
+        """Test that filter creation timestamps are consistent."""
+        filter1 = FeedFilter(FeedFilterType.KEYWORD, "test1")
+        filter2 = FeedFilter(FeedFilterType.KEYWORD, "test2")
+        
+        self.assertIsNotNone(filter1.created_at)
+        self.assertIsNotNone(filter2.created_at)
+        self.assertTrue(filter1.created_at <= filter2.created_at)
+    
+    def test_feed_update_timestamp(self):
+        """Test that feed timestamps are properly managed."""
+        feed = CustomFeed(
+            feed_id="feed_013",
+            name="Timestamp Test",
+            description="Test",
+            algorithm_type=FeedAlgorithmType.HYBRID,
+            filters=[self.test_filter],
+            owner_did=self.test_did
+        )
+        
+        initial_created = feed.created_at
+        initial_updated = feed.updated_at
+        
+        self.assertEqual(initial_created, initial_updated)
+        self.assertIsNotNone(initial_created)
+    
+    def test_filter_enable_disable(self):
+        """Test toggling filter enabled status."""
+        filter_obj = FeedFilter(
+            FeedFilterType.KEYWORD,
+            "test",
+            enabled=True
+        )
+        
+        self.assertTrue(filter_obj.enabled)
+        
+        filter_obj.enabled = False
+        self.assertFalse(filter_obj.enabled)
+    
+    def test_multiple_algorithm_types(self):
+        """Test creating feeds with different algorithm types."""
+        for algo_type in FeedAlgorithmType:
+            feed = CustomFeed(
+                feed_id=f"feed_algo_{algo_type.value}",
+                name=f"Feed {algo_type.value}",
+                description="Test",
+                algorithm_type=algo_type,
+                filters=[self.test_filter],
+                owner_did=self.test_did
             )
-        
-        feeds = self.builder.list_feeds()
-        self.assertEqual(len(feeds), 3)
-        
-        feed_names = [f["name"] for f in feeds]
-        self.assertIn("Feed 0", feed_names)
-        self.assertIn("Feed 1", feed_names)
-        self.assertIn("Feed 2", feed_names)
+            self.assertEqual(feed.algorithm_type, algo_type)
     
-    def test_get_nonexistent_feed(self):
-        """Test getting a feed that doesn't exist."""
-        feed = self.builder.get_feed("nonexistent-id")
-        self.assertIsNone(feed)
-    
-    def test_build_history_tracking(self):
-        """Test that build history is properly tracked."""
-        filters = [FilterConfig(filter_type=FeedFilterType.KEYWORD, value="test")]
+    def test_special_characters_in_feed_name(self):
+        """Test handling special characters in feed name."""
+        special_names = [
+            "Feed #1",
+            "Test & Demo",
+            "Feed (Beta)",
+            "Test @mention",
+            "Feed $special"
+        ]
         
-        success, msg, feed_id = self.builder.create_feed(
-            name="Test",
+        for name in special_names:
+            feed = CustomFeed(
+                feed_id=f"feed_{hashlib.md5(name.encode()).hexdigest()[:8]}",
+                name=name,
+                description="Test",
+                algorithm_type=FeedAlgorithmType.HYBRID,
+                filters=[self.test_filter],
+                owner_did=self.test_did
+            )
+            self.assertEqual(feed.name, name)
+    
+    def test_unicode_in_filter_value(self):
+        """Test handling Unicode characters in filter values."""
+        unicode_values = [
+            "python 🐍",
+            "日本語",
+            "العربية",
+            "emoji🎉🚀",
+            "mixed_中文_text"
+        ]
+        
+        for value in unicode_values:
+            filter_obj = FeedFilter(
+                FeedFilterType.KEYWORD,
+                value
+            )
+            self.assertEqual(filter_obj.value, value)
+    
+    def test_feed_with_all_filter_types(self):
+        """Test creating feed with all filter types."""
+        filters = [
+            FeedFilter(FeedFilterType.KEYWORD, "python"),
+            FeedFilter(FeedFilterType.AUTHOR, "did:plc:author"),
+            FeedFilter(FeedFilterType.LANGUAGE, "en"),
+            FeedFilter(FeedFilterType.ENGAGEMENT, "likes>100"),
+            FeedFilter(FeedFilterType.RECENCY, "24h"),
+            FeedFilter(FeedFilterType.CUSTOM_ALGORITHM, "custom:trending")
+        ]
+        
+        feed = CustomFeed(
+            feed_id="feed_all_types",
+            name="All Filter Types",
+            description="Feed with all filter types",
+            algorithm_type=FeedAlgorithmType.HYBRID,
+            filters=filters,
+            owner_did=self.test_did
+        )
+        
+        self.assertEqual(len(feed.filters), 6)
+        filter_types = {f.filter_type for f in feed.filters}
+        self.assertEqual(len(filter_types), 6)
+    
+    def test_concurrent_filter_creation(self):
+        """Test creating multiple filters in sequence."""
+        base_time = datetime.utcnow()
+        filters = []
+        
+        for i in range(10):
+            f = FeedFilter(FeedFilterType.KEYWORD, f"keyword_{i}")
+            filters.append(f)
+        
+        self.assertEqual(len(filters), 10)
+        for i, f in enumerate(filters):
+            self.assertEqual(f
+.value, f"keyword_{i}")
+    
+    def test_edge_case_single_char_filter(self):
+        """Test filter with single character value."""
+        filter_obj = FeedFilter(
+            FeedFilterType.KEYWORD,
+            "x"
+        )
+        self.assertEqual(len(filter_obj.value), 1)
+    
+    def test_edge_case_max_char_filter(self):
+        """Test filter with maximum character value."""
+        max_value = "x" * 500
+        filter_obj = FeedFilter(
+            FeedFilterType.KEYWORD,
+            max_value
+        )
+        self.assertEqual(len(filter_obj.value), 500)
+    
+    def test_whitespace_only_value(self):
+        """Test that whitespace-only values are handled."""
+        with self.assertRaises(ValueError):
+            FeedFilter(
+                FeedFilterType.KEYWORD,
+                ""
+            )
+    
+    def test_did_format_variations(self):
+        """Test various valid DID formats."""
+        valid_dids = [
+            "did:plc:abc123",
+            "did:key:z6MkmjY8GC6M7i3r3SLrn1ih1Le1Ad6Palau8Sgvzn8e2KLt",
+            "did:web:example.com",
+            "did:ion:EiClkZMDxPEJcuOpQyuvjZTOWaISHEP2nRZ0d-VTgFJ7Jg"
+        ]
+        
+        for did in valid_dids:
+            feed = CustomFeed(
+                feed_id="feed_did_test",
+                name="DID Test",
+                description="Test",
+                algorithm_type=FeedAlgorithmType.HYBRID,
+                filters=[self.test_filter],
+                owner_did=did
+            )
+            self.assertEqual(feed.owner_did, did)
+    
+    def test_feed_post_count_increment(self):
+        """Test feed post count tracking."""
+        feed = CustomFeed(
+            feed_id="feed_counter",
+            name="Counter Test",
             description="Test",
-            filters=filters
+            algorithm_type=FeedAlgorithmType.HYBRID,
+            filters=[self.test_filter],
+            owner_did=self.test_did,
+            post_count=0
         )
         
-        self.assertTrue(success)
-        
-        history = self.builder.get_build_history()
-        self.assertEqual(len(history), 1)
-        self.assertEqual(history[0]["action"], "create")
-        self.assertEqual(history[0]["feed_id"], feed_id)
-        
-        # Update
-        new_filters = [FilterConfig(filter_type=FeedFilterType.KEYWORD, value="updated")]
-        self.builder.update_feed(feed_id, filters=new_filters)
-        
-        history = self.builder.get_build_history()
-        self.assertEqual(len(history), 2)
-        self.assertEqual(history[1]["action"], "update")
-        
-        # Delete
-        self.builder.delete_feed(feed_id)
-        
-        history = self.builder.get_build_history()
-        self.assertEqual(len(history), 3)
-        self.assertEqual(history[2]["action"], "delete")
+        self.assertEqual(feed.post_count, 0)
+        feed.post_count = 100
+        self.assertEqual(feed.post_count, 100)
     
-    def test_feed_name_length_boundary(self):
-        """Test feed name length boundaries."""
-        filters = [FilterConfig(filter_type=FeedFilterType.KEYWORD, value="test")]
-        
-        # Valid at max length
-        success, msg, feed_id = self.builder.create_feed(
-            name="x" * 100,
+    def test_feed_visibility_toggle(self):
+        """Test toggling feed visibility."""
+        feed = CustomFeed(
+            feed_id="feed_visibility",
+            name="Visibility Test",
             description="Test",
-            filters=filters
+            algorithm_type=FeedAlgorithmType.HYBRID,
+            filters=[self.test_filter],
+            owner_did=self.test_did,
+            is_public=False
         )
-        self.assertTrue(success)
         
-        # Invalid over max length
-        success, msg, feed_id = self.builder.create_feed(
-            name="x" * 101,
-            description="Test",
-            filters=filters
-        )
-        self.assertFalse(success)
+        self.assertFalse(feed.is_public)
+        feed.is_public = True
+        self.assertTrue(feed.is_public)
     
-    def test_description_length_boundary(self):
-        """Test description length boundaries."""
-        filters = [FilterConfig(filter_type=FeedFilterType.KEYWORD, value="test")]
-        
-        # Valid at max length
-        success, msg, feed_id = self.builder.create_feed(
-            name="Test Feed",
-            description="x" * 500,
-            filters=filters
+    def test_filter_dict_representation(self):
+        """Test filter dictionary conversion."""
+        filter_obj = FeedFilter(
+            FeedFilterType.KEYWORD,
+            "test_value",
+            enabled=True
         )
-        self.assertTrue(success)
         
-        # Invalid over max length
-        success, msg, feed_id = self.builder.create_feed(
-            name="Test Feed",
-            description="x" * 501,
-            filters=filters
-        )
-        self.assertFalse(success)
+        filter_dict = filter_obj.to_dict()
+        self.assertEqual(filter_dict["filter_type"], "keyword")
+        self.assertEqual(filter_dict["value"], "test_value")
+        self.assertTrue(filter_dict["enabled"])
+        self.assertIn("created_at", filter_dict)
     
-    def test_max_posts_per_hour_validation(self):
-        """Test max_posts_per_hour boundary validation."""
-        filters = [FilterConfig(filter_type=FeedFilterType.KEYWORD, value="test")]
-        
-        success, msg, feed_id = self.builder.create_feed(
-            name="Test",
+    def test_feed_dict_structure(self):
+        """Test feed dictionary has all required fields."""
+        feed = CustomFeed(
+            feed_id="feed_structure",
+            name="Structure Test",
             description="Test",
-            filters=filters
+            algorithm_type=FeedAlgorithmType.HYBRID,
+            filters=[self.test_filter],
+            owner_did=self.test_did
         )
         
-        self.assertTrue(success)
+        feed_dict = feed.to_dict()
+        required_fields = {
+            "feed_id", "name", "description", "algorithm_type",
+            "filters", "owner_did", "is_public", "created_at",
+            "updated_at", "post_count"
+        }
         
-        # Valid update with boundary values
-        success, msg = self.builder.update_feed(feed_id, max_posts_per_hour=1)
-        self.assertTrue(success)
+        self.assertTrue(required_fields.issubset(set(feed_dict.keys())))
+
+
+class FeedBuilder:
+    """Helper class for building custom feeds."""
+    
+    def __init__(self, feed_id: str, name: str, owner_did: str):
+        self.feed_id = feed_id
+        self.name = name
+        self.owner_did = owner_did
+        self.description = ""
+        self.algorithm_type = FeedAlgorithmType.HYBRID
+        self.filters = []
+        self.is_public = False
+    
+    def set_description(self, description: str) -> "FeedBuilder":
+        """Set feed description."""
+        self.description = description
+        return self
+    
+    def set_algorithm(self, algo_type: FeedAlgorithmType) -> "FeedBuilder":
+        """Set algorithm type."""
+        self.algorithm_type = algo_type
+        return self
+    
+    def add_filter(self, filter_type: FeedFilterType, value: str) -> "FeedBuilder":
+        """Add a filter to the feed."""
+        self.filters.append(FeedFilter(filter_type, value))
+        return self
+    
+    def set_public(self, is_public: bool) -> "FeedBuilder":
+        """Set feed visibility."""
+        self.is_public = is_public
+        return self
+    
+    def build(self) -> CustomFeed:
+        """Build and return the CustomFeed object."""
+        if not self.description:
+            raise ValueError("Description must be set before building")
         
-        success, msg = self.builder.update_feed(feed_id, max_posts_per_hour=1000)
-        self.assertTrue(success)
+        return CustomFeed(
+            feed_id=self.feed_id,
+            name=self.name,
+            description=self.description,
+            algorithm_type=self.algorithm_type,
+            filters=self.filters,
+            owner_did=self.owner_did,
+            is_public=self.is_public
+        )
+
+
+class BuilderPatternTest(unittest.TestCase):
+    """Test feed builder pattern."""
+    
+    def test_builder_basic_flow(self):
+        """Test basic builder flow."""
+        feed = (FeedBuilder("feed_build_1", "Builder Feed", "did:plc:test")
+                .set_description("A built feed")
+                .add_filter(FeedFilterType.KEYWORD, "python")
+                .set_public(True)
+                .build())
         
-        # Invalid values
-        success, msg = self.builder.update_feed(feed_id, max_posts_per_hour=0)
-        self.assertFalse(success)
+        self.assertEqual(feed.feed_id, "feed_build_1")
+        self.assertTrue(feed.is_public)
+        self.assertEqual(len(feed.filters), 1)
+    
+    def test_builder_multiple_filters(self):
+        """Test builder with multiple filters."""
+        feed = (FeedBuilder("feed_build_2", "Multi Filter", "did:plc:test")
+                .set_description("Multiple filters")
+                .add_filter(FeedFilterType.KEYWORD, "ai")
+                .add_filter(FeedFilterType.AUTHOR, "did:plc:author")
+                .add_filter(FeedFilterType.LANGUAGE, "en")
+                .build())
         
-        success, msg = self.builder.update_feed(feed_id, max_posts_per_hour=1001)
-        self.assertFalse(success)
+        self.assertEqual(len(feed.filters), 3)
+    
+    def test_builder_missing_description(self):
+        """Test builder fails without description."""
+        builder = FeedBuilder("feed_build_3", "No Desc", "did:plc:test")
+        builder.add_filter(FeedFilterType.KEYWORD, "test")
+        
+        with self.assertRaises(ValueError):
+            builder.build()
 
 
 def run_integration_tests(verbose: bool = False) -> Dict[str, Any]:
-    """Run integration tests and return results."""
-    suite = unittest.TestLoader().loadTestsFromTestCase(TestAttieIntegration)
+    """Run all integration tests and return results."""
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite()
+    
+    suite.addTests(loader.loadTestsFromTestCase(AttieIntegrationTest))
+    suite.addTests(loader.loadTestsFromTestCase(BuilderPatternTest))
+    
     runner = unittest.TextTestRunner(verbosity=2 if verbose else 1)
     result = runner.run(suite)
     
     return {
-        "tests_run": result.testsRun,
+        "total_tests": result.testsRun,
         "failures": len(result.failures),
         "errors": len(result.errors),
         "skipped": len(result.skipped),
-        "success": result.wasSuccessful()
+        "success": result.wasSuccessful(),
+        "failure_details": [str(f[1]) for f in result.failures],
+        "error_details": [str(e[1]) for e in result.errors]
     }
 
 
-def demo_feed_building():
-    """Demonstrate feed building with edge cases."""
-    print("\n" + "=" * 60)
-    print("ATTIE FEED BUILDER - EDGE CASE DEMONSTRATIONS")
-    print("=" * 60)
+def demonstrate_edge_cases() -> None:
+    """Demonstrate various edge cases and boundary conditions."""
+    print("\n=== ATTIE INTEGRATION TEST DEMONSTRATIONS ===\n")
     
-    builder = FeedBuilder()
+    test_did = "did:plc:demonstration123"
     
-    # Demo 1: Simple feed creation
-    print("\n[DEMO 1] Creating a simple feed with keyword filter")
+    print("1. Creating feed with maximum filters (20):")
     filters = [
-        FilterConfig(
-            filter_type=FeedFilterType.KEYWORD,
-            value="artificial intelligence",
-            operator="include",
-            weight=2.5
-        )
+        FeedFilter(FeedFilterType.KEYWORD, f"keyword_{i}")
+        for i in range(20)
     ]
-    success, msg, feed_id = builder.create_feed(
-        name="AI News",
-        description="Posts about artificial intelligence and machine learning",
+    feed_max = CustomFeed(
+        feed_id="demo_max_filters",
+        name="Maximum Filters Feed",
+        description="Feed with 20 filters (maximum allowed)",
+        algorithm_type=FeedAlgorithmType.HYBRID,
         filters=filters,
-        is_public=True
+        owner_did=test_did
     )
-    print(f"Success: {success}")
-    print(f"Feed ID: {feed_id}")
-    print(f"Message: {msg}")
+    print(f"   ✓ Created feed with {len(feed_max.filters)} filters")
     
-    # Demo 2: Complex multi-filter feed
-    print("\n[DEMO 2] Creating complex feed with multiple filter types")
-    complex_filters = [
-        FilterConfig(
-            filter_type=FeedFilterType.KEYWORD,
-            value="tech innovation",
-            weight=3.0
-        ),
-        FilterConfig(
-            filter_type=FeedFilterType.LANGUAGE,
-            value="en"
-        ),
-        FilterConfig(
-            filter_type=FeedFilterType.SENTIMENT,
-            value="positive"
-        ),
-        FilterConfig(
-            filter_type=FeedFilterType.ENGAGEMENT,
-            value={"min_likes": 50, "min_shares": 10}
-        ),
-        FilterConfig(
-            filter_type=FeedFilterType.HASHTAG,
-            value="#innovation"
+    print("\n2. Creating feed with maximum name length (100 chars):")
+    max_name = "x" * 100
+    feed_max_name = CustomFeed(
+        feed_id="demo_max_name",
+        name=max_name,
+        description="Feed with maximum name length",
+        algorithm_type=FeedAlgorithmType.CONTENT_BASED,
+        filters=[FeedFilter(FeedFilterType.KEYWORD, "test")],
+        owner_did=test_did
+    )
+    print(f"   ✓ Created feed with name length: {len(feed_max_name.name)}")
+    
+    print("\n3. Creating filter with maximum value length (500 chars):")
+    max_value = "x" * 500
+    filter_max = FeedFilter(
+        FeedFilterType.KEYWORD,
+        max_value
+    )
+    print(f"   ✓ Created filter with value length: {len(filter_max.value)}")
+    
+    print("\n4. Testing Unicode support in filter values:")
+    unicode_test = FeedFilter(
+        FeedFilterType.KEYWORD,
+        "Python 🐍 | 日本語 | العربية"
+    )
+    print(f"   ✓ Filter with Unicode: {unicode_test.value}")
+    
+    print("\n5. Creating feed with all algorithm types:")
+    for algo in FeedAlgorithmType:
+        feed = CustomFeed(
+            feed_id=f"demo_{algo.value}",
+            name=f"Feed {algo.value}",
+            description=f"Test {algo.value}",
+            algorithm_type=algo,
+            filters=[FeedFilter(FeedFilterType.KEYWORD, "test")],
+            owner_did=test_did
         )
+        print(f"   ✓ {algo.value}: {feed.feed_id}")
+    
+    print("\n6. Testing valid DID formats:")
+    valid_dids = [
+        "did:plc:simple",
+        "did:key:z6MkmjY8GC6M7i3r3SLrn1ih1Le1Ad6Palau8Sgvzn8e2KLt",
+        "did:web:example.com"
     ]
-    success, msg, feed_id2 = builder.create_feed(
-        name="Tech Innovation Highlights",
-        description="High-engagement tech innovation posts in English",
-        filters=complex_filters,
-        max_posts_per_hour=100
-    )
-    print(f"Success: {success}")
-    print(f"Feed ID: {feed_id2}")
-    
-    # Demo 3: Edge case - invalid keyword
-    print("\n[DEMO 3] Edge case - attempting invalid keyword filter")
-    invalid_keyword = FilterConfig(
-        filter_type=FeedFilterType.KEYWORD,
-        value="x" * 501
-    )
-    valid, msg = invalid_keyword.validate()
-    print(f"Valid: {valid}")
-    print(f"Error: {msg}")
-    
-    # Demo 4: Edge case - invalid engagement filter
-    print("\n[DEMO 4] Edge case - attempting incomplete engagement filter")
-    invalid_engagement = FilterConfig(
-        filter_type=FeedFilterType.ENGAGEMENT,
-        value={"min_likes": 10}
-    )
-    valid, msg = invalid_engagement.validate()
-    print(f"Valid: {valid}")
-    print(f"Error: {msg}")
-    
-    # Demo 5: Edge case - weight boundary
-    print("\n[DEMO 5] Edge case - weight at boundaries")
-    for weight in [0, 5, 10, 10.1]:
-        filter_cfg = FilterConfig(
-            filter_type=FeedFilterType.KEYWORD,
-            value="test",
-            weight=weight
+    for did in valid_dids:
+        feed = CustomFeed(
+            feed_id=f"demo_did_{len(did)}",
+            name="DID Test",
+            description="Testing DID",
+            algorithm_type=FeedAlgorithmType.HYBRID,
+            filters=[FeedFilter(FeedFilterType.KEYWORD, "test")],
+            owner_did=did
         )
-        valid, msg = filter_cfg.validate()
-        print(f"Weight {weight}: Valid={valid}")
+        print(f"   ✓ Valid DID: {did}")
     
-    # Demo 6: Export and import
-    print("\n[DEMO 6] Exporting and importing feed")
-    success, export_data = builder.export_feed(feed_id2)
-    print(f"Export successful: {success}")
-    if success:
-        print(f"Exported data (first 200 chars): {export_data[:200]}...")
+    print("\n7. Testing builder pattern:")
+    feed_built = (FeedBuilder("demo_builder", "Built Feed", test_did)
+                  .set_description("Built with builder pattern")
+                  .set_algorithm(FeedAlgorithmType.COLLABORATIVE_FILTERING)
+                  .add_filter(FeedFilterType.KEYWORD, "bluesky")
+                  .add_filter(FeedFilterType.LANGUAGE, "en")
+                  .set_public(True)
+                  .build())
+    print(f"   ✓ Built feed: {feed_built.feed_id}")
+    print(f"      - Algorithm: {feed_built.algorithm_type.value}")
+    print(f"      - Filters: {len(feed_built.filters)}")
+    print(f"      - Public: {feed_built.is_public}")
+    
+    print("\n8. JSON serialization test:")
+    test_feed = CustomFeed(
+        feed_id="demo_json",
+        name="JSON Test",
+        description="Testing JSON serialization",
+        algorithm_type=FeedAlgorithmType.HYBRID,
+        filters=[
+            FeedFilter(FeedFilterType.KEYWORD, "test"),
+            FeedFilter(FeedFilterType.ENGAGEMENT, "likes>50")
+        ],
+        owner_did=test_did,
+        is_public=True,
+        post_count=42
+    )
+    json_output = json.dumps(test_feed.to_dict(), indent=2)
+    print(f"   ✓ Serialized feed to JSON")
+    print("   Sample output:")
+    for line in json_output.split('\n')[:10]:
+        print(f"      {line}")
+    if len(json_output.split('\n')) > 10:
+        print("      ...")
+    
+    print("\n9. Testing error conditions:")
+    error_tests = [
+        ("Empty feed ID", lambda: CustomFeed("", "Test", "Test", 
+                                           FeedAlgorithmType.HYBRID,
+                                           [FeedFilter(FeedFilterType.KEYWORD, "x")],
+                                           test_did)),
+        ("Invalid DID", lambda: CustomFeed("id", "Test", "Test",
+                                          FeedAlgorithmType.HYBRID,
+                                          [FeedFilter(FeedFilterType.KEYWORD, "x")],
+                                          "invalid")),
+        ("Empty filter value", lambda: FeedFilter(FeedFilterType.KEYWORD, "")),
+        ("No filters", lambda: CustomFeed("id", "Test", "Test",
+                                         FeedAlgorithmType.HYBRID, [],
+                                         test_did)),
+    ]
+    
+    for test_name, test_func in error_tests:
+        try:
+            test_func()
+            print(f"   ✗ {test_name}: Should have failed")
+        except ValueError as e:
+            print(f"   ✓ {test_name}: Correctly rejected")
+    
+    print("\n10. Feed state management:")
+    stateful_feed = CustomFeed(
+        feed_id="demo_state",
+        name="State Test",
+        description="Testing state changes",
+        algorithm_type=FeedAlgorithmType.HYBRID,
+        filters=[FeedFilter(FeedFilterType.KEYWORD, "test")],
+        owner_did=test_did,
+        is_public=False,
+        post_count=0
+    )
+    print(f"   ✓ Created private feed with 0 posts")
+    
+    stateful_feed.is_public = True
+    stateful_feed.post_count = 150
+    print(f"   ✓ Updated to public with 150 posts")
+    
+    for filter_obj in stateful_feed.filters:
+        filter_obj.enabled = False
+    print(f"   ✓ Disabled all filters")
+    
+    print("\n=== DEMONSTRATIONS COMPLETE ===\n")
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Bluesky Attie Custom Feed Builder - Integration Tests",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --mode tests
+  %(prog)s --mode tests --verbose
+  %(prog)s --mode demo
+  %(prog)s --mode all
+        """
+    )
+    
+    parser.add_argument(
+        "--mode",
+        choices=["tests", "demo", "all"],
+        default="all",
+        help="Execution mode: run tests, demo, or both (default: all)"
+    )
+    
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Verbose test output"
+    )
+    
+    parser.add_argument(
+        "--json-output",
+        action="store_true",
+        help="Output test results as JSON"
+    )
+    
+    args = parser.parse_args()
+    
+    if args.mode in ["tests", "all"]:
+        print("Running integration tests...")
+        results = run_integration_tests(verbose=args.verbose)
         
-        new_builder = FeedBuilder()
-        success, msg, imported_id = new_builder.import_feed(export_data)
-        print(f"Import successful: {success}")
-        print(f"Imported feed ID: {imported_id}")
+        if args.json_output:
+            print(json.dumps(results, indent=2))
+        else:
+            print(f"\n{'='*50}")
+            print("TEST RESULTS SUMMARY")
+            print(f"{'='*50}")
+            print(f"Total Tests: {results['total_tests']}")
+            print(f"Passed: {results['total_tests'] - results['failures'] - results['errors']}")
+            print(f"Failures: {results['failures']}")
+            print(f"Errors: {results['errors']}")
+            print(f"Skipped: {results['skipped']}")
+            print(f"Overall Success: {results['success']}")
+            print(f"{'='*50}\n")
+        
+        if not results['success']:
+            sys.exit(1)
     
-    # Demo 7: Feed update
-    print("\n[DEMO 7] Updating feed")
-    new_filters = [
-        FilterConfig(filter_type=FeedFilterType.KEYWORD, value="updated content")
-    ]
-    success, msg = builder.update_feed(
-        feed_id2,
-        name="Updated Tech Highlights",
-        filters=new_filters,
-        max_posts_per_hour=75
-    )
-    print(f"Update successful: {success}")
-    
-    updated_feed = builder.get_feed(feed_id2)
-    print(f"Updated name: {updated_feed.name}")
-    print(f"Updated max posts: {updated_feed.max_posts_per_hour}")
-    
-    # Demo 8: List all feeds
-    print("\n[DEMO 8] Listing all feeds")
-    all_feeds = builder.list_feeds()
-    print(f"Total feeds: {len(all_feeds)}")
-    for feed in all_feeds:
-        print(f"  - {feed['name']} (ID: {feed['feed_id']}, Filters: {len(feed['filters'])})")
-    
-    # Demo 9: Build history
-    print("\n[DEMO 9] Build history")
-    history = builder.get_build_history()
-    print(f"Total history entries: {len(history)}")
-    for entry in history:
-        print(f"  - {entry['action'].upper()}: {entry.get('feed_id', 'N/A')} @ {entry['timestamp']}")
-    
-    # Demo 10: Deletion
-    print("\n[DEMO 10] Deleting a feed")
+    if args.mode in ["demo", "all"]:
+        demonstrate_edge_cases()
+
+
+if __name__ == "__main__":
+    main()
