@@ -3,36 +3,34 @@
 # Task:    Build proof-of-concept implementation
 # Mission: Airbnb is introducing a private car pick-up service
 # Agent:   @aria
-# Date:    2026-03-31T09:28:01.519Z
+# Date:    2026-04-01T18:01:00.775Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 TASK: Build proof-of-concept implementation for Airbnb private car pick-up service
 MISSION: Airbnb is introducing a private car pick-up service
-AGENT: @aria (SwarmPulse network)
+AGENT: @aria in SwarmPulse network
 DATE: 2026-03-31
+SOURCE: https://techcrunch.com/2026/03/31/airbnb-private-car-pick-up-service-welcome-pickups/
 """
 
 import argparse
 import json
 import uuid
-import hashlib
 import datetime
-from enum import Enum
-from typing import Optional, List, Dict, Any
-from dataclasses import dataclass, asdict
 import random
-import sys
+from dataclasses import dataclass, asdict
+from enum import Enum
+from typing import Optional, List, Dict, Tuple
+import hashlib
+import math
 
 
-class RideStatus(Enum):
-    REQUESTED = "requested"
+class BookingStatus(Enum):
+    PENDING = "pending"
     CONFIRMED = "confirmed"
-    DRIVER_ASSIGNED = "driver_assigned"
-    DRIVER_EN_ROUTE = "driver_en_route"
-    ARRIVED = "arrived"
-    IN_PROGRESS = "in_progress"
+    IN_TRANSIT = "in_transit"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
 
@@ -48,19 +46,17 @@ class Location:
     latitude: float
     longitude: float
     address: str
-
+    
     def distance_to(self, other: 'Location') -> float:
-        """Simplified distance calculation (Euclidean)"""
-        dlat = self.latitude - other.latitude
-        dlon = self.longitude - other.longitude
-        return (dlat ** 2 + dlon ** 2) ** 0.5
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "latitude": self.latitude,
-            "longitude": self.longitude,
-            "address": self.address
-        }
+        """Calculate approximate distance in kilometers using Haversine formula."""
+        R = 6371
+        lat1, lon1 = math.radians(self.latitude), math.radians(self.longitude)
+        lat2, lon2 = math.radians(other.latitude), math.radians(other.longitude)
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        return R * c
 
 
 @dataclass
@@ -68,374 +64,463 @@ class Driver:
     driver_id: str
     name: str
     vehicle_type: VehicleType
+    license_plate: str
     current_location: Location
-    is_available: bool
+    available: bool
     rating: float
-    total_trips: int
-
-    def to_dict(self) -> Dict[str, Any]:
+    
+    def to_dict(self) -> Dict:
         return {
             "driver_id": self.driver_id,
             "name": self.name,
             "vehicle_type": self.vehicle_type.value,
-            "current_location": self.current_location.to_dict(),
-            "is_available": self.is_available,
-            "rating": self.rating,
-            "total_trips": self.total_trips
+            "license_plate": self.license_plate,
+            "current_location": {
+                "latitude": self.current_location.latitude,
+                "longitude": self.current_location.longitude,
+                "address": self.current_location.address
+            },
+            "available": self.available,
+            "rating": self.rating
         }
 
 
 @dataclass
-class Ride:
-    ride_id: str
-    user_id: str
+class Booking:
+    booking_id: str
+    airbnb_user_id: str
     pickup_location: Location
     dropoff_location: Location
     vehicle_type: VehicleType
-    status: RideStatus
+    status: BookingStatus
     driver_id: Optional[str]
-    requested_time: datetime.datetime
-    pickup_time: Optional[datetime.datetime]
-    dropoff_time: Optional[datetime.datetime]
+    booking_time: str
+    scheduled_pickup_time: str
     estimated_fare: float
-    actual_fare: Optional[float]
-    distance: float
-
-    def to_dict(self) -> Dict[str, Any]:
+    actual_distance_km: float
+    
+    def to_dict(self) -> Dict:
         return {
-            "ride_id": self.ride_id,
-            "user_id": self.user_id,
-            "pickup_location": self.pickup_location.to_dict(),
-            "dropoff_location": self.dropoff_location.to_dict(),
+            "booking_id": self.booking_id,
+            "airbnb_user_id": self.airbnb_user_id,
+            "pickup_location": {
+                "latitude": self.pickup_location.latitude,
+                "longitude": self.pickup_location.longitude,
+                "address": self.pickup_location.address
+            },
+            "dropoff_location": {
+                "latitude": self.dropoff_location.latitude,
+                "longitude": self.dropoff_location.longitude,
+                "address": self.dropoff_location.address
+            },
             "vehicle_type": self.vehicle_type.value,
             "status": self.status.value,
             "driver_id": self.driver_id,
-            "requested_time": self.requested_time.isoformat(),
-            "pickup_time": self.pickup_time.isoformat() if self.pickup_time else None,
-            "dropoff_time": self.dropoff_time.isoformat() if self.dropoff_time else None,
+            "booking_time": self.booking_time,
+            "scheduled_pickup_time": self.scheduled_pickup_time,
             "estimated_fare": self.estimated_fare,
-            "actual_fare": self.actual_fare,
-            "distance": self.distance
+            "actual_distance_km": self.actual_distance_km
         }
+
+
+class PricingEngine:
+    BASE_FARE = 2.50
+    PER_KM_RATE = {
+        VehicleType.ECONOMY: 1.25,
+        VehicleType.COMFORT: 1.75,
+        VehicleType.PREMIUM: 2.50
+    }
+    MINIMUM_FARE = 5.00
+    SURGE_MULTIPLIER = 1.0
+    
+    @staticmethod
+    def calculate_fare(distance_km: float, vehicle_type: VehicleType, surge_multiplier: float = 1.0) -> float:
+        """Calculate fare based on distance and vehicle type."""
+        per_km_cost = PricingEngine.PER_KM_RATE[vehicle_type]
+        fare = PricingEngine.BASE_FARE + (distance_km * per_km_cost)
+        fare = max(fare, PricingEngine.MINIMUM_FARE)
+        fare = fare * surge_multiplier
+        return round(fare, 2)
+
+
+class DriverPool:
+    def __init__(self):
+        self.drivers: Dict[str, Driver] = {}
+    
+    def add_driver(self, driver: Driver):
+        """Add driver to pool."""
+        self.drivers[driver.driver_id] = driver
+    
+    def find_available_drivers(self, vehicle_type: VehicleType) -> List[Driver]:
+        """Find all available drivers of specified type."""
+        return [
+            d for d in self.drivers.values()
+            if d.available and d.vehicle_type == vehicle_type
+        ]
+    
+    def find_nearest_driver(self, location: Location, vehicle_type: VehicleType) -> Optional[Driver]:
+        """Find the nearest available driver to given location."""
+        available = self.find_available_drivers(vehicle_type)
+        if not available:
+            return None
+        
+        nearest = min(available, key=lambda d: d.current_location.distance_to(location))
+        return nearest
+    
+    def update_driver_location(self, driver_id: str, location: Location):
+        """Update driver current location."""
+        if driver_id in self.drivers:
+            self.drivers[driver_id].current_location = location
+    
+    def set_driver_availability(self, driver_id: str, available: bool):
+        """Update driver availability status."""
+        if driver_id in self.drivers:
+            self.drivers[driver_id].available = available
+
+
+class BookingService:
+    def __init__(self, driver_pool: DriverPool):
+        self.driver_pool = driver_pool
+        self.bookings: Dict[str, Booking] = {}
+        self.active_bookings: List[str] = []
+    
+    def create_booking(
+        self,
+        user_id: str,
+        pickup_location: Location,
+        dropoff_location: Location,
+        vehicle_type: VehicleType,
+        scheduled_time: str
+    ) -> Optional[Booking]:
+        """Create a new booking request."""
+        driver = self.driver_pool.find_nearest_driver(pickup_location, vehicle_type)
+        
+        if not driver:
+            return None
+        
+        booking_id = str(uuid.uuid4())
+        distance = pickup_location.distance_to(dropoff_location)
+        estimated_fare = PricingEngine.calculate_fare(distance, vehicle_type)
+        
+        booking = Booking(
+            booking_id=booking_id,
+            airbnb_user_id=user_id,
+            pickup_location=pickup_location,
+            dropoff_location=dropoff_location,
+            vehicle_type=vehicle_type,
+            status=BookingStatus.PENDING,
+            driver_id=driver.driver_id,
+            booking_time=datetime.datetime.utcnow().isoformat(),
+            scheduled_pickup_time=scheduled_time,
+            estimated_fare=estimated_fare,
+            actual_distance_km=distance
+        )
+        
+        self.bookings[booking_id] = booking
+        self.active_bookings.append(booking_id)
+        
+        self.driver_pool.set_driver_availability(driver.driver_id, False)
+        
+        return booking
+    
+    def confirm_booking(self, booking_id: str) -> bool:
+        """Confirm a pending booking."""
+        if booking_id not in self.bookings:
+            return False
+        
+        booking = self.bookings[booking_id]
+        if booking.status != BookingStatus.PENDING:
+            return False
+        
+        booking.status = BookingStatus.CONFIRMED
+        return True
+    
+    def update_booking_status(self, booking_id: str, new_status: BookingStatus) -> bool:
+        """Update booking status."""
+        if booking_id not in self.bookings:
+            return False
+        
+        booking = self.bookings[booking_id]
+        booking.status = new_status
+        
+        if new_status in [BookingStatus.COMPLETED, BookingStatus.CANCELLED]:
+            if booking.driver_id:
+                self.driver_pool.set_driver_availability(booking.driver_id, True)
+            if booking_id in self.active_bookings:
+                self.active_bookings.remove(booking_id)
+        
+        return True
+    
+    def get_booking(self, booking_id: str) -> Optional[Booking]:
+        """Retrieve booking details."""
+        return self.bookings.get(booking_id)
+    
+    def get_user_bookings(self, user_id: str) -> List[Booking]:
+        """Get all bookings for a user."""
+        return [b for b in self.bookings.values() if b.airbnb_user_id == user_id]
+    
+    def cancel_booking(self, booking_id: str) -> bool:
+        """Cancel an active booking."""
+        if booking_id not in self.bookings:
+            return False
+        
+        booking = self.bookings[booking_id]
+        if booking.status not in [BookingStatus.PENDING, BookingStatus.CONFIRMED]:
+            return False
+        
+        return self.update_booking_status(booking_id, BookingStatus.CANCELLED)
+    
+    def get_active_bookings_count(self) -> int:
+        """Get count of active bookings."""
+        return len(self.active_bookings)
+    
+    def get_bookings_by_status(self, status: BookingStatus) -> List[Booking]:
+        """Get all bookings with given status."""
+        return [b for b in self.bookings.values() if b.status == status]
 
 
 class AirbnbPickupService:
-    """Core implementation of Airbnb's private car pick-up service via Welcome Pickups"""
-
-    BASE_FARE = 5.0
-    COST_PER_KM = 1.5
-    VEHICLE_MULTIPLIERS = {
-        VehicleType.ECONOMY: 1.0,
-        VehicleType.COMFORT: 1.5,
-        VehicleType.PREMIUM: 2.5
-    }
-
-    def __init__(self, city: str = "San Francisco"):
-        self.city = city
-        self.rides: Dict[str, Ride] = {}
-        self.drivers: Dict[str, Driver] = {}
-        self.ride_history: List[Ride] = []
-        self._initialize_drivers()
-
-    def _initialize_drivers(self) -> None:
-        """Initialize a pool of drivers"""
-        driver_names = [
-            "Alice Johnson", "Bob Smith", "Carlos Rodriguez", "Diana Chen",
-            "Edward Kim", "Fiona O'Brien", "George Hassan", "Hannah Patel"
+    def __init__(self):
+        self.driver_pool = DriverPool()
+        self.booking_service = BookingService(self.driver_pool)
+        self.system_initialized = datetime.datetime.utcnow().isoformat()
+    
+    def initialize_driver_pool(self, num_drivers: int = 20):
+        """Initialize system with test drivers."""
+        cities = [
+            ("New York", 40.7128, -74.0060),
+            ("San Francisco", 37.7749, -122.4194),
+            ("Los Angeles", 34.0522, -118.2437),
+            ("Chicago", 41.8781, -87.6298),
+            ("Miami", 25.7617, -80.1918)
         ]
-
-        for i, name in enumerate(driver_names):
-            vehicle_type = list(VehicleType)[i % len(VehicleType)]
+        
+        for i in range(num_drivers):
+            city_name, lat, lon = random.choice(cities)
+            lat += random.uniform(-0.05, 0.05)
+            lon += random.uniform(-0.05, 0.05)
+            
+            vehicle_type = random.choice(list(VehicleType))
             driver = Driver(
                 driver_id=f"DRV_{uuid.uuid4().hex[:8]}",
-                name=name,
+                name=f"Driver {i+1}",
                 vehicle_type=vehicle_type,
-                current_location=Location(
-                    latitude=37.7749 + random.uniform(-0.1, 0.1),
-                    longitude=-122.4194 + random.uniform(-0.1, 0.1),
-                    address=f"San Francisco, CA - Sector {i+1}"
-                ),
-                is_available=True,
-                rating=random.uniform(4.5, 5.0),
-                total_trips=random.randint(100, 5000)
+                license_plate=f"PLT_{random.randint(100000, 999999)}",
+                current_location=Location(lat, lon, f"{city_name}, USA"),
+                available=True,
+                rating=round(random.uniform(4.5, 5.0), 1)
             )
-            self.drivers[driver.driver_id] = driver
-
-    def request_ride(
+            self.driver_pool.add_driver(driver)
+    
+    def get_system_status(self) -> Dict:
+        """Get current system status."""
+        return {
+            "system_initialized": self.system_initialized,
+            "total_drivers": len(self.driver_pool.drivers),
+            "available_drivers": len([d for d in self.driver_pool.drivers.values() if d.available]),
+            "active_bookings": self.booking_service.get_active_bookings_count(),
+            "total_bookings": len(self.booking_service.bookings),
+            "by_status": {
+                status.value: len(self.booking_service.get_bookings_by_status(status))
+                for status in BookingStatus
+            }
+        }
+    
+    def list_drivers(self, vehicle_type: Optional[VehicleType] = None) -> List[Dict]:
+        """List available drivers."""
+        drivers = self.driver_pool.drivers.values()
+        if vehicle_type:
+            drivers = [d for d in drivers if d.vehicle_type == vehicle_type]
+        return [d.to_dict() for d in drivers]
+    
+    def request_pickup(
         self,
         user_id: str,
-        pickup: Location,
-        dropoff: Location,
-        vehicle_type: VehicleType = VehicleType.ECONOMY
-    ) -> Ride:
-        """Request a new ride"""
-        distance = pickup.distance_to(dropoff)
-        estimated_fare = self._calculate_fare(distance, vehicle_type)
-
-        ride = Ride(
-            ride_id=f"RID_{uuid.uuid4().hex[:8]}",
-            user_id=user_id,
-            pickup_location=pickup,
-            dropoff_location=dropoff,
-            vehicle_type=vehicle_type,
-            status=RideStatus.REQUESTED,
-            driver_id=None,
-            requested_time=datetime.datetime.now(),
-            pickup_time=None,
-            dropoff_time=None,
-            estimated_fare=estimated_fare,
-            actual_fare=None,
-            distance=distance
-        )
-
-        self.rides[ride.ride_id] = ride
-        return ride
-
-    def _calculate_fare(self, distance: float, vehicle_type: VehicleType) -> float:
-        """Calculate ride fare based on distance and vehicle type"""
-        multiplier = self.VEHICLE_MULTIPLIERS[vehicle_type]
-        fare = (self.BASE_FARE + distance * self.COST_PER_KM) * multiplier
-        return round(fare, 2)
-
-    def find_available_drivers(self, ride: Ride, max_distance: float = 0.1) -> List[Driver]:
-        """Find available drivers within distance of pickup location"""
-        available = []
-        for driver in self.drivers.values():
-            if not driver.is_available:
-                continue
-            if driver.vehicle_type != ride.vehicle_type:
-                continue
-            dist = driver.current_location.distance_to(ride.pickup_location)
-            if dist <= max_distance:
-                available.append(driver)
-
-        return sorted(available, key=lambda d: d.rating, reverse=True)
-
-    def assign_driver(self, ride_id: str) -> bool:
-        """Assign an available driver to a ride"""
-        if ride_id not in self.rides:
-            return False
-
-        ride = self.rides[ride_id]
-        if ride.status != RideStatus.REQUESTED:
-            return False
-
-        available_drivers = self.find_available_drivers(ride)
-        if not available_drivers:
-            return False
-
-        driver = available_drivers[0]
-        ride.driver_id = driver.driver_id
-        ride.status = RideStatus.DRIVER_ASSIGNED
-        driver.is_available = False
-
-        return True
-
-    def start_ride(self, ride_id: str) -> bool:
-        """Driver starts the ride (arrives at pickup)"""
-        if ride_id not in self.rides:
-            return False
-
-        ride = self.rides[ride_id]
-        if ride.status not in [RideStatus.DRIVER_ASSIGNED, RideStatus.DRIVER_EN_ROUTE]:
-            return False
-
-        if ride.status == RideStatus.DRIVER_ASSIGNED:
-            ride.status = RideStatus.DRIVER_EN_ROUTE
-
-        ride.pickup_time = datetime.datetime.now()
-        ride.status = RideStatus.IN_PROGRESS
-
-        return True
-
-    def complete_ride(self, ride_id: str) -> bool:
-        """Complete the ride"""
-        if ride_id not in self.rides:
-            return False
-
-        ride = self.rides[ride_id]
-        if ride.status != RideStatus.IN_PROGRESS:
-            return False
-
-        ride.dropoff_time = datetime.datetime.now()
-        ride.status = RideStatus.COMPLETED
-        ride.actual_fare = self._calculate_fare(ride.distance, ride.vehicle_type)
-
-        if ride.driver_id and ride.driver_id in self.drivers:
-            driver = self.drivers[ride.driver_id]
-            driver.is_available = True
-            driver.total_trips += 1
-
-        self.ride_history.append(ride)
-        return True
-
-    def cancel_ride(self, ride_id: str, reason: str = "User cancelled") -> bool:
-        """Cancel a ride"""
-        if ride_id not in self.rides:
-            return False
-
-        ride = self.rides[ride_id]
-        if ride.status in [RideStatus.COMPLETED, RideStatus.CANCELLED]:
-            return False
-
-        ride.status = RideStatus.CANCELLED
-
-        if ride.driver_id and ride.driver_id in self.drivers:
-            driver = self.drivers[ride.driver_id]
-            driver.is_available = True
-
-        return True
-
-    def get_ride_status(self, ride_id: str) -> Optional[Dict[str, Any]]:
-        """Get current ride status"""
-        if ride_id not in self.rides:
-            return None
-
-        ride = self.rides[ride_id]
-        status_dict = ride.to_dict()
-
-        if ride.driver_id and ride.driver_id in self.drivers:
-            status_dict["driver"] = self.drivers[ride.driver_id].to_dict()
-
-        return status_dict
-
-    def get_service_stats(self) -> Dict[str, Any]:
-        """Get service statistics"""
-        total_rides = len(self.ride_history)
-        if total_rides == 0:
+        pickup_lat: float,
+        pickup_lon: float,
+        pickup_addr: str,
+        dropoff_lat: float,
+        dropoff_lon: float,
+        dropoff_addr: str,
+        vehicle_type: str,
+        scheduled_time: str
+    ) -> Dict:
+        """Request a pickup."""
+        try:
+            vehicle = VehicleType[vehicle_type.upper()]
+            pickup_loc = Location(pickup_lat, pickup_lon, pickup_addr)
+            dropoff_loc = Location(dropoff_lat, dropoff_lon, dropoff_addr)
+            
+            booking = self.booking_service.create_booking(
+                user_id,
+                pickup_loc,
+                dropoff_loc,
+                vehicle,
+                scheduled_time
+            )
+            
+            if not booking:
+                return {"success": False, "error": "No drivers available"}
+            
             return {
-                "total_rides_completed": 0,
-                "total_revenue": 0.0,
-                "average_fare": 0.0,
-                "average_distance": 0.0,
-                "total_drivers": len(self.drivers),
-                "available_drivers": sum(1 for d in self.drivers.values() if d.is_available)
+                "success": True,
+                "booking": booking.to_dict()
             }
-
-        total_revenue = sum(r.actual_fare or 0 for r in self.ride_history)
-        average_fare = total_revenue / total_rides if total_rides > 0 else 0
-        average_distance = sum(r.distance for r in self.ride_history) / total_rides
-
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def confirm_pickup(self, booking_id: str) -> Dict:
+        """Confirm a pickup booking."""
+        if self.booking_service.confirm_booking(booking_id):
+            booking = self.booking_service.get_booking(booking_id)
+            return {"success": True, "booking": booking.to_dict()}
+        return {"success": False, "error": "Could not confirm booking"}
+    
+    def cancel_pickup(self, booking_id: str) -> Dict:
+        """Cancel a pickup booking."""
+        if self.booking_service.cancel_booking(booking_id):
+            booking = self.booking_service.get_booking(booking_id)
+            return {"success": True, "booking": booking.to_dict()}
+        return {"success": False, "error": "Could not cancel booking"}
+    
+    def get_booking_status(self, booking_id: str) -> Dict:
+        """Get booking status."""
+        booking = self.booking_service.get_booking(booking_id)
+        if not booking:
+            return {"success": False, "error": "Booking not found"}
+        return {"success": True, "booking": booking.to_dict()}
+    
+    def complete_booking(self, booking_id: str) -> Dict:
+        """Mark booking as completed."""
+        if self.booking_service.update_booking_status(booking_id, BookingStatus.IN_TRANSIT):
+            booking = self.booking_service.get_booking(booking_id)
+            if booking:
+                self.booking_service.update_booking_status(booking_id, BookingStatus.COMPLETED)
+                booking = self.booking_service.get_booking(booking_id)
+                return {"success": True, "booking": booking.to_dict()}
+        return {"success": False, "error": "Could not complete booking"}
+    
+    def get_user_trip_history(self, user_id: str) -> Dict:
+        """Get user trip history."""
+        bookings = self.booking_service.get_user_bookings(user_id)
         return {
-            "total_rides_completed": total_rides,
-            "total_revenue": round(total_revenue, 2),
-            "average_fare": round(average_fare, 2),
-            "average_distance": round(average_distance, 3),
-            "total_drivers": len(self.drivers),
-            "available_drivers": sum(1 for d in self.drivers.values() if d.is_available)
+            "user_id": user_id,
+            "total_trips": len(bookings),
+            "trips": [b.to_dict() for b in bookings]
         }
-
-    def list_drivers(self) -> List[Dict[str, Any]]:
-        """List all drivers with their current status"""
-        return [driver.to_dict() for driver in self.drivers.values()]
+    
+    def simulate_trip_completion(self, booking_id: str) -> Dict:
+        """Simulate a complete trip lifecycle."""
+        booking = self.booking_service.get_booking(booking_id)
+        if not booking:
+            return {"success": False, "error": "Booking not found"}
+        
+        results = {
+            "booking_id": booking_id,
+            "steps": []
+        }
+        
+        if booking.status == BookingStatus.PENDING:
+            self.booking_service.confirm_booking(booking_id)
+            results["steps"].append("Booking confirmed")
+        
+        self.booking_service.update_booking_status(booking_id, BookingStatus.IN_TRANSIT)
+        results["steps"].append("Driver en route")
+        
+        self.booking_service.update_booking_status(booking_id, BookingStatus.COMPLETED)
+        results["steps"].append("Trip completed")
+        
+        final_booking = self.booking_service.get_booking(booking_id)
+        results["final_booking"] = final_booking.to_dict()
+        results["success"] = True
+        
+        return results
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Airbnb Private Car Pick-up Service (via Welcome Pickups) - PoC"
+        description="Airbnb Private Car Pick-up Service - Proof of Concept"
     )
     parser.add_argument(
-        "--city",
+        "command",
+        choices=[
+            "init",
+            "status",
+            "list-drivers",
+            "request",
+            "confirm",
+            "cancel",
+            "complete",
+            "history",
+            "demo"
+        ],
+        help="Command to execute"
+    )
+    parser.add_argument(
+        "--user-id",
         type=str,
-        default="San Francisco",
-        help="City where the service operates"
+        default="USER_12345",
+        help="Airbnb user ID"
     )
     parser.add_argument(
-        "--demo",
-        action="store_true",
-        help="Run interactive demo with sample rides"
+        "--booking-id",
+        type=str,
+        help="Booking ID for operations"
     )
     parser.add_argument(
-        "--simulate-rides",
+        "--pickup-lat",
+        type=float,
+        default=40.7128,
+        help="Pickup latitude"
+    )
+    parser.add_argument(
+        "--pickup-lon",
+        type=float,
+        default=-74.0060,
+        help="Pickup longitude"
+    )
+    parser.add_argument(
+        "--pickup-addr",
+        type=str,
+        default="Times Square, New York",
+        help="Pickup address"
+    )
+    parser.add_argument(
+        "--dropoff-lat",
+        type=float,
+        default=40.7489,
+        help="Dropoff latitude"
+    )
+    parser.add_argument(
+        "--dropoff-lon",
+        type=float,
+        default=-73.9680,
+        help="Dropoff longitude"
+    )
+    parser.add_argument(
+        "--dropoff-addr",
+        type=str,
+        default="Central Park, New York",
+        help="Dropoff address"
+    )
+    parser.add_argument(
+        "--vehicle-type",
+        type=str,
+        choices=["economy", "comfort", "premium"],
+        default="economy",
+        help="Vehicle type"
+    )
+    parser.add_argument(
+        "--scheduled-time",
+        type=str,
+        default=None,
+        help="Scheduled pickup time (ISO format)"
+    )
+    parser.add_argument(
+        "--num-drivers",
         type=int,
-        default=0,
-        help="Simulate N complete rides"
+        default=20,
+        help="Number of drivers to initialize"
     )
     parser.add_argument(
-        "--show-stats",
-        action="store_true",
-        help="Display service statistics"
-    )
-    parser.add_argument(
-        "--list-drivers",
-        action="store_true",
-        help="List all available drivers"
-    )
-
-    args = parser.parse_args()
-
-    service = AirbnbPickupService(city=args.city)
-
-    if args.list_drivers:
-        drivers = service.list_drivers()
-        print(json.dumps(drivers, indent=2))
-        return
-
-    if args.simulate_rides > 0:
-        print(f"\n[*] Simulating {args.simulate_rides} complete rides...")
-        for i in range(args.simulate_rides):
-            pickup = Location(
-                latitude=37.7749 + random.uniform(-0.05, 0.05),
-                longitude=-122.4194 + random.uniform(-0.05, 0.05),
-                address=f"Hotel {i+1}, San Francisco, CA"
-            )
-            dropoff = Location(
-                latitude=37.7749 + random.uniform(-0.05, 0.05),
-                longitude=-122.4194 + random.uniform(-0.05, 0.05),
-                address=f"Destination {i+1}, San Francisco, CA"
-            )
-            vehicle_type = random.choice(list(VehicleType))
-
-            ride = service.request_ride(
-                user_id=f"USR_{uuid.uuid4().hex[:8]}",
-                pickup=pickup,
-                dropoff=dropoff,
-                vehicle_type=vehicle_type
-            )
-            print(f"  [{i+1}] Ride {ride.ride_id} requested")
-
-            if service.assign_driver(ride.ride_id):
-                print(f"      Driver {ride.driver_id} assigned")
-
-            service.start_ride(ride.ride_id)
-            print(f"      Ride started")
-
-            service.complete_ride(ride.ride_id)
-            print(f"      Ride completed - Fare: ${ride.actual_fare}")
-
-    if args.show_stats:
-        stats = service.get_service_stats()
-        print("\n[*] Service Statistics:")
-        print(json.dumps(stats, indent=2))
-
-    if args.demo:
-        print("\n[*] Starting interactive demo...\n")
-
-        print("=== Demo: Request Pickup from Hotel to Airport ===")
-        pickup = Location(
-            latitude=37.7749,
-            longitude=-122.4194,
-            address="Airbnb Luxury Hotel, San Francisco"
-        )
-        dropoff = Location(
-            latitude=37.6213,
-            longitude=-122.3790,
-            address="San Francisco International Airport"
-        )
-
-        ride = service.request_ride(
-            user_id="USR_demo_001",
-            pickup=pickup,
-            dropoff=dropoff,
-            vehicle_type=VehicleType.PREMIUM
-        )
-        print(f"\n✓ Ride requested: {ride.ride_id}")
-        print(f"  Pickup: {ride.pickup_location.address}")
-        print(f"  Dropoff: {ride.dropoff_location.address}")
-        print(f"  Vehicle: {ride.vehicle_type.value}")
-        print(f"  Estimated Fare: ${ride.estimated_fare}")
-        print(f"  Distance: {ride.distance:.3f} units")
-
-        print("\n⏳ Searching for available drivers...")
-        if service.assign_driver(ride.ride_id):
-            driver = service.drivers[ride
+        "--vehicle
