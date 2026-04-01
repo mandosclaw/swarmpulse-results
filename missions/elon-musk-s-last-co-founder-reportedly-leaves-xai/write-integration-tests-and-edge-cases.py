@@ -3,424 +3,1001 @@
 # Task:    Write integration tests and edge cases
 # Mission: Elon Musk’s last co-founder reportedly leaves xAI
 # Agent:   @aria
-# Date:    2026-03-29T20:49:40.999Z
+# Date:    2026-04-01T17:11:56.452Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Integration tests and edge cases for xAI co-founder departure tracking system.
+Task: Write integration tests and edge cases for xAI co-founder departure news analysis
 Mission: Elon Musk's last co-founder reportedly leaves xAI
+Agent: @aria
 Category: AI/ML
-Agent: @aria (SwarmPulse network)
 Date: 2026-03-28
+Description: Cover failure modes and boundary conditions for news event processing
 """
 
-import unittest
 import json
 import sys
 import argparse
+import unittest
+from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timedelta
-from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Optional, Tuple
 from enum import Enum
-import hashlib
-import re
+from typing import Dict, List, Optional, Tuple, Any
+from dataclasses import dataclass, asdict
+import traceback
 
 
-class DepartureStatus(Enum):
-    """Status of co-founder departure."""
-    ACTIVE = "active"
-    DEPARTED = "departed"
-    RUMORED = "rumored"
-    CONFIRMED = "confirmed"
+class EventSeverity(Enum):
+    """Severity levels for corporate events"""
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    INFO = "info"
 
 
 @dataclass
-class CoFounder:
-    """Represents a co-founder of xAI."""
+class CofounderDeparture:
+    """Data model for co-founder departure event"""
     name: str
-    employee_id: str
-    join_date: str
-    departure_date: Optional[str] = None
-    status: DepartureStatus = DepartureStatus.ACTIVE
-    announcement_source: Optional[str] = None
-    verification_score: float = field(default=0.0)
-    metadata: Dict = field(default_factory=dict)
+    company: str
+    departure_date: str
+    reason: str
+    remaining_count: int
+    total_original: int
+    source_url: str
+    published_date: str
+    severity: str
 
-    def to_dict(self) -> Dict:
-        """Convert to dictionary."""
-        data = asdict(self)
-        data['status'] = self.status.value
-        return data
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
-    def validate(self) -> Tuple[bool, List[str]]:
-        """Validate co-founder data."""
-        errors = []
-        
-        if not self.name or len(self.name.strip()) == 0:
-            errors.append("Name cannot be empty")
-        
-        if not self.employee_id or len(self.employee_id) < 3:
-            errors.append("Employee ID must be at least 3 characters")
-        
-        if not self._is_valid_date(self.join_date):
-            errors.append(f"Invalid join_date format: {self.join_date}")
-        
-        if self.departure_date and not self._is_valid_date(self.departure_date):
-            errors.append(f"Invalid departure_date format: {self.departure_date}")
-        
-        if self.departure_date and self.join_date:
-            if self._parse_date(self.departure_date) < self._parse_date(self.join_date):
-                errors.append("Departure date cannot be before join date")
-        
-        if not 0.0 <= self.verification_score <= 1.0:
-            errors.append("Verification score must be between 0.0 and 1.0")
-        
-        if self.status == DepartureStatus.DEPARTED and not self.departure_date:
-            errors.append("Departed status requires departure_date")
-        
-        return len(errors) == 0, errors
+
+class NewsEventValidator:
+    """Validates news events for data integrity and boundary conditions"""
+
+    def __init__(self):
+        self.validation_errors: List[str] = []
+
+    def validate_departure_event(self, event: CofounderDeparture) -> Tuple[bool, List[str]]:
+        """
+        Validate departure event with comprehensive checks
+        Returns: (is_valid, list_of_errors)
+        """
+        self.validation_errors = []
+
+        # Name validation
+        if not event.name or len(event.name.strip()) == 0:
+            self.validation_errors.append("Cofounder name cannot be empty")
+        elif len(event.name) > 100:
+            self.validation_errors.append("Cofounder name exceeds 100 characters")
+
+        # Company validation
+        if not event.company or len(event.company.strip()) == 0:
+            self.validation_errors.append("Company name cannot be empty")
+        elif event.company.lower() not in ["xai", "x.ai"]:
+            self.validation_errors.append(f"Invalid company: {event.company}")
+
+        # Date validation
+        if not self._validate_date_format(event.departure_date):
+            self.validation_errors.append(
+                f"Invalid departure_date format: {event.departure_date}"
+            )
+
+        if not self._validate_date_format(event.published_date):
+            self.validation_errors.append(
+                f"Invalid published_date format: {event.published_date}"
+            )
+
+        # Ensure published date is not in future
+        try:
+            pub_dt = datetime.fromisoformat(event.published_date)
+            if pub_dt > datetime.now() + timedelta(days=1):
+                self.validation_errors.append("Published date cannot be in future")
+        except ValueError:
+            pass
+
+        # Departure date should not be unreasonably far in past
+        try:
+            dep_dt = datetime.fromisoformat(event.departure_date)
+            if dep_dt < datetime.now() - timedelta(days=3650):
+                self.validation_errors.append("Departure date is unreasonably old")
+        except ValueError:
+            pass
+
+        # Reason validation
+        if not event.reason or len(event.reason.strip()) == 0:
+            self.validation_errors.append("Departure reason cannot be empty")
+        elif len(event.reason) > 500:
+            self.validation_errors.append("Departure reason exceeds 500 characters")
+
+        # Count validation
+        if event.remaining_count < 0:
+            self.validation_errors.append("Remaining cofounder count cannot be negative")
+
+        if event.total_original <= 0:
+            self.validation_errors.append("Total original cofounder count must be positive")
+
+        if event.remaining_count > event.total_original:
+            self.validation_errors.append(
+                "Remaining count cannot exceed total original count"
+            )
+
+        # Percentage check - departures should make sense
+        departed = event.total_original - event.remaining_count
+        if departed > event.total_original:
+            self.validation_errors.append("Departed count exceeds total count")
+
+        # URL validation
+        if not event.source_url.startswith(("http://", "https://")):
+            self.validation_errors.append("Invalid source URL format")
+        elif len(event.source_url) > 2048:
+            self.validation_errors.append("Source URL exceeds maximum length")
+
+        # Severity validation
+        valid_severities = [s.value for s in EventSeverity]
+        if event.severity not in valid_severities:
+            self.validation_errors.append(
+                f"Invalid severity. Must be one of: {', '.join(valid_severities)}"
+            )
+
+        return len(self.validation_errors) == 0, self.validation_errors
 
     @staticmethod
-    def _is_valid_date(date_str: str) -> bool:
-        """Check if date string is valid ISO format."""
+    def _validate_date_format(date_str: str) -> bool:
+        """Validate ISO format date strings"""
         try:
             datetime.fromisoformat(date_str)
             return True
         except (ValueError, TypeError):
             return False
 
-    @staticmethod
-    def _parse_date(date_str: str) -> datetime:
-        """Parse ISO format date string."""
-        return datetime.fromisoformat(date_str)
 
-
-class XAICoFounderTracker:
-    """Tracks xAI co-founder departures and verifies data integrity."""
-
-    TOTAL_COFOUNDERS = 11
+class DepartureAnalyzer:
+    """Analyzes departure patterns and trends"""
 
     def __init__(self):
-        """Initialize tracker."""
-        self.co_founders: Dict[str, CoFounder] = {}
-        self.departure_events: List[Dict] = []
-        self.verification_cache: Dict[str, float] = {}
+        self.events: List[CofounderDeparture] = []
 
-    def add_co_founder(self, co_founder: CoFounder) -> Tuple[bool, str]:
-        """Add a co-founder to tracking."""
-        is_valid, errors = co_founder.validate()
-        if not is_valid:
-            return False, f"Validation failed: {'; '.join(errors)}"
+    def add_event(self, event: CofounderDeparture) -> None:
+        """Add event to analysis"""
+        self.events.append(event)
 
-        if co_founder.employee_id in self.co_founders:
-            return False, f"Co-founder {co_founder.employee_id} already exists"
+    def calculate_retention_rate(self, company: str) -> Optional[float]:
+        """Calculate retention rate: remaining / total * 100"""
+        events = [e for e in self.events if e.company.lower() == company.lower()]
+        if not events:
+            return None
 
-        self.co_founders[co_founder.employee_id] = co_founder
-        return True, f"Co-founder {co_founder.name} added successfully"
+        latest = max(events, key=lambda e: e.published_date)
+        retention = (latest.remaining_count / latest.total_original) * 100
+        return round(retention, 2)
 
-    def record_departure(self, employee_id: str, departure_date: str, 
-                        source: str, notes: str = "") -> Tuple[bool, str]:
-        """Record a co-founder departure."""
-        if employee_id not in self.co_founders:
-            return False, f"Co-founder {employee_id} not found"
+    def calculate_departure_velocity(self, company: str, days: int = 30) -> Optional[float]:
+        """Calculate departures per day in last N days"""
+        events = [e for e in self.events if e.company.lower() == company.lower()]
+        if not events:
+            return None
 
-        co_founder = self.co_founders[employee_id]
-        
-        if not CoFounder._is_valid_date(departure_date):
-            return False, f"Invalid departure date format: {departure_date}"
+        cutoff = datetime.now() - timedelta(days=days)
+        recent = [
+            e
+            for e in events
+            if datetime.fromisoformat(e.published_date) >= cutoff
+        ]
 
-        if CoFounder._parse_date(departure_date) < CoFounder._parse_date(co_founder.join_date):
-            return False, "Departure date cannot be before join date"
-
-        co_founder.departure_date = departure_date
-        co_founder.status = DepartureStatus.CONFIRMED
-        co_founder.announcement_source = source
-
-        event = {
-            "employee_id": employee_id,
-            "name": co_founder.name,
-            "departure_date": departure_date,
-            "source": source,
-            "notes": notes,
-            "recorded_at": datetime.utcnow().isoformat()
-        }
-        self.departure_events.append(event)
-
-        return True, f"Departure recorded for {co_founder.name}"
-
-    def get_departure_count(self) -> int:
-        """Get count of departed co-founders."""
-        return sum(1 for cf in self.co_founders.values() 
-                  if cf.status == DepartureStatus.DEPARTED or cf.status == DepartureStatus.CONFIRMED)
-
-    def get_active_count(self) -> int:
-        """Get count of active co-founders."""
-        return sum(1 for cf in self.co_founders.values() 
-                  if cf.status == DepartureStatus.ACTIVE)
-
-    def get_retention_rate(self) -> float:
-        """Calculate retention rate."""
-        if not self.co_founders:
-            return 0.0
-        active = self.get_active_count()
-        return active / len(self.co_founders) * 100
-
-    def verify_departure_consistency(self) -> Tuple[bool, List[str]]:
-        """Verify consistency of departure records."""
-        issues = []
-
-        departed_count = self.get_departure_count()
-        if departed_count > self.TOTAL_COFOUNDERS:
-            issues.append(f"Departed count ({departed_count}) exceeds total co-founders ({self.TOTAL_COFOUNDERS})")
-
-        for employee_id, cf in self.co_founders.items():
-            if cf.status == DepartureStatus.CONFIRMED and not cf.departure_date:
-                issues.append(f"Co-founder {employee_id} marked departed but no departure_date")
-
-            if cf.departure_date and cf.status != DepartureStatus.CONFIRMED:
-                issues.append(f"Co-founder {employee_id} has departure_date but status is {cf.status.value}")
-
-        for event in self.departure_events:
-            emp_id = event["employee_id"]
-            if emp_id not in self.co_founders:
-                issues.append(f"Departure event references unknown co-founder {emp_id}")
-
-        return len(issues) == 0, issues
-
-    def calculate_verification_score(self, employee_id: str) -> float:
-        """Calculate verification score for a co-founder."""
-        if employee_id not in self.co_founders:
+        if len(recent) < 2:
             return 0.0
 
-        if employee_id in self.verification_cache:
-            return self.verification_cache[employee_id]
+        earliest_recent = min(recent, key=lambda e: e.published_date)
+        latest_recent = max(recent, key=lambda e: e.published_date)
 
-        cf = self.co_founders[employee_id]
-        score = 0.0
+        days_span = (
+            datetime.fromisoformat(latest_recent.published_date)
+            - datetime.fromisoformat(earliest_recent.published_date)
+        ).days
 
-        if cf.status == DepartureStatus.CONFIRMED:
-            score += 0.4
-        elif cf.status == DepartureStatus.RUMORED:
-            score += 0.2
-        elif cf.status == DepartureStatus.ACTIVE:
-            score += 0.1
+        if days_span == 0:
+            return float(len(recent))
 
-        if cf.announcement_source:
-            trusted_sources = ["techcrunch", "reuters", "bloomberg", "official"]
-            if any(src in cf.announcement_source.lower() for src in trusted_sources):
-                score += 0.3
-            else:
-                score += 0.1
+        return round(len(recent) / days_span, 2)
 
-        if cf.departure_date:
-            departure_obj = CoFounder._parse_date(cf.departure_date)
-            if departure_obj <= datetime.utcnow():
-                score += 0.2
+    def identify_critical_threshold(self, company: str) -> Dict[str, Any]:
+        """Check if departures crossed critical thresholds"""
+        events = [e for e in self.events if e.company.lower() == company.lower()]
+        if not events:
+            return {"status": "no_data"}
 
-        score = min(score, 1.0)
-        cf.verification_score = score
-        self.verification_cache[employee_id] = score
+        latest = max(events, key=lambda e: e.published_date)
+        retention_rate = (latest.remaining_count / latest.total_original) * 100
 
-        return score
-
-    def export_report(self, include_departed: bool = True) -> Dict:
-        """Generate a structured report."""
-        departed_list = []
-        active_list = []
-
-        for emp_id, cf in self.co_founders.items():
-            if cf.status in (DepartureStatus.CONFIRMED, DepartureStatus.DEPARTED):
-                departed_list.append(cf.to_dict())
-            else:
-                active_list.append(cf.to_dict())
-
-        return {
-            "timestamp": datetime.utcnow().isoformat(),
-            "total_cofounders": len(self.co_founders),
-            "departed_count": len(departed_list),
-            "active_count": len(active_list),
-            "retention_rate": self.get_retention_rate(),
-            "departed": departed_list if include_departed else [],
-            "active": active_list,
-            "events": self.departure_events
+        thresholds = {
+            "critical": 25,  # Less than 25% remaining
+            "high": 50,  # Less than 50% remaining
+            "medium": 75,  # Less than 75% remaining
         }
 
+        for level, threshold in thresholds.items():
+            if retention_rate < threshold:
+                return {
+                    "status": "threshold_crossed",
+                    "level": level,
+                    "retention_rate": retention_rate,
+                    "threshold": threshold,
+                }
 
-class TestCoFounderValidation(unittest.TestCase):
-    """Test co-founder validation logic."""
+        return {"status": "normal", "retention_rate": retention_rate}
 
-    def test_valid_cofounderm(self):
-        """Test valid co-founder creation."""
-        cf = CoFounder(
-            name="John Doe",
-            employee_id="EMP001",
-            join_date="2023-01-15",
-            status=DepartureStatus.ACTIVE
+
+class TestNewsEventValidator(unittest.TestCase):
+    """Integration tests for news event validator"""
+
+    def setUp(self):
+        self.validator = NewsEventValidator()
+
+    def test_valid_event(self):
+        """Test valid co-founder departure event"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/elon-musks-last-co-founder-reportedly-leaves-xai/",
+            published_date="2026-03-28",
+            severity="high",
         )
-        is_valid, errors = cf.validate()
+        is_valid, errors = self.validator.validate_departure_event(event)
         self.assertTrue(is_valid)
         self.assertEqual(len(errors), 0)
 
     def test_empty_name(self):
-        """Test empty name validation."""
-        cf = CoFounder(
+        """Test event with empty cofounder name"""
+        event = CofounderDeparture(
             name="",
-            employee_id="EMP001",
-            join_date="2023-01-15"
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
         )
-        is_valid, errors = cf.validate()
+        is_valid, errors = self.validator.validate_departure_event(event)
         self.assertFalse(is_valid)
-        self.assertTrue(any("Name" in e for e in errors))
+        self.assertTrue(any("empty" in e.lower() for e in errors))
 
-    def test_short_employee_id(self):
-        """Test short employee ID validation."""
-        cf = CoFounder(
-            name="John Doe",
-            employee_id="E1",
-            join_date="2023-01-15"
+    def test_name_too_long(self):
+        """Test event with excessively long name"""
+        event = CofounderDeparture(
+            name="A" * 101,
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
         )
-        is_valid, errors = cf.validate()
+        is_valid, errors = self.validator.validate_departure_event(event)
         self.assertFalse(is_valid)
-        self.assertTrue(any("Employee ID" in e for e in errors))
+        self.assertTrue(any("exceeds" in e.lower() for e in errors))
 
-    def test_invalid_join_date_format(self):
-        """Test invalid date format."""
-        cf = CoFounder(
-            name="John Doe",
-            employee_id="EMP001",
-            join_date="01/15/2023"
+    def test_invalid_company(self):
+        """Test event with invalid company name"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="TechCorp",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
         )
-        is_valid, errors = cf.validate()
+        is_valid, errors = self.validator.validate_departure_event(event)
         self.assertFalse(is_valid)
-        self.assertTrue(any("join_date" in e for e in errors))
+        self.assertTrue(any("Invalid company" in e for e in errors))
 
-    def test_departure_before_join(self):
-        """Test departure before join date."""
-        cf = CoFounder(
-            name="John Doe",
-            employee_id="EMP001",
-            join_date="2023-06-15",
-            departure_date="2023-01-15",
-            status=DepartureStatus.CONFIRMED
+    def test_invalid_date_format(self):
+        """Test event with malformed date"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="28/03/2026",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
         )
-        is_valid, errors = cf.validate()
+        is_valid, errors = self.validator.validate_departure_event(event)
         self.assertFalse(is_valid)
-        self.assertTrue(any("Departure" in e for e in errors))
+        self.assertTrue(any("Invalid" in e and "date" in e.lower() for e in errors))
 
-    def test_invalid_verification_score(self):
-        """Test invalid verification score."""
-        cf = CoFounder(
-            name="John Doe",
-            employee_id="EMP001",
-            join_date="2023-01-15",
-            verification_score=1.5
+    def test_future_published_date(self):
+        """Test event with future published date"""
+        future_date = (datetime.now() + timedelta(days=2)).isoformat()
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date=future_date,
+            severity="high",
         )
-        is_valid, errors = cf.validate()
+        is_valid, errors = self.validator.validate_departure_event(event)
         self.assertFalse(is_valid)
-        self.assertTrue(any("Verification score" in e for e in errors))
+        self.assertTrue(any("future" in e.lower() for e in errors))
 
-    def test_departed_without_date(self):
-        """Test departed status without departure date."""
-        cf = CoFounder(
-            name="John Doe",
-            employee_id="EMP001",
-            join_date="2023-01-15",
-            status=DepartureStatus.DEPARTED
+    def test_remaining_exceeds_total(self):
+        """Test boundary condition: remaining count > total count"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=15,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
         )
-        is_valid, errors = cf.validate()
+        is_valid, errors = self.validator.validate_departure_event(event)
         self.assertFalse(is_valid)
-        self.assertTrue(any("departure_date" in e for e in errors))
+        self.assertTrue(any("remain" in e.lower() for e in errors))
+
+    def test_negative_remaining_count(self):
+        """Test boundary condition: negative remaining count"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=-1,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        is_valid, errors = self.validator.validate_departure_event(event)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("negative" in e.lower() for e in errors))
+
+    def test_zero_total_count(self):
+        """Test boundary condition: zero total count"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=0,
+            total_original=0,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        is_valid, errors = self.validator.validate_departure_event(event)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("positive" in e.lower() for e in errors))
+
+    def test_empty_reason(self):
+        """Test event with empty reason"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        is_valid, errors = self.validator.validate_departure_event(event)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("reason" in e.lower() and "empty" in e.lower() for e in errors))
+
+    def test_reason_too_long(self):
+        """Test event with excessively long reason"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="A" * 501,
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        is_valid, errors = self.validator.validate_departure_event(event)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("exceeds" in e.lower() and "reason" in e.lower() for e in errors))
+
+    def test_invalid_url_format(self):
+        """Test event with invalid URL"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="not-a-valid-url",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        is_valid, errors = self.validator.validate_departure_event(event)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("URL" in e for e in errors))
+
+    def test_url_too_long(self):
+        """Test event with excessively long URL"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://" + "a" * 2042,
+            published_date="2026-03-28",
+            severity="high",
+        )
+        is_valid, errors = self.validator.validate_departure_event(event)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("exceeds" in e.lower() and "URL" in e for e in errors))
+
+    def test_invalid_severity(self):
+        """Test event with invalid severity"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="catastrophic",
+        )
+        is_valid, errors = self.validator.validate_departure_event(event)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("severity" in e.lower() for e in errors))
+
+    def test_old_departure_date(self):
+        """Test boundary condition: departure date too far in past"""
+        old_date = (datetime.now() - timedelta(days=4000)).isoformat()
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date=old_date,
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        is_valid, errors = self.validator.validate_departure_event(event)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("unreasonably old" in e.lower() for e in errors))
 
 
-class TestTrackerFunctionality(unittest.TestCase):
-    """Test tracker functionality."""
+class TestDepartureAnalyzer(unittest.TestCase):
+    """Integration tests for departure analyzer"""
 
     def setUp(self):
-        """Set up test fixtures."""
-        self.tracker = XAICoFounderTracker()
-
-    def test_add_valid_cofounderm(self):
-        """Test adding valid co-founder."""
-        cf = CoFounder(
-            name="Alice Smith",
-            employee_id="EMP001",
-            join_date="2023-01-15"
-        )
-        success, msg = self.tracker.add_co_founder(cf)
-        self.assertTrue(success)
-        self.assertEqual(len(self.tracker.co_founders), 1)
-
-    def test_add_duplicate_cofounderm(self):
-        """Test adding duplicate co-founder."""
-        cf = CoFounder(
-            name="Alice Smith",
-            employee_id="EMP001",
-            join_date="2023-01-15"
-        )
-        self.tracker.add_co_founder(cf)
-        success, msg = self.tracker.add_co_founder(cf)
-        self.assertFalse(success)
-        self.assertIn("already exists", msg)
-
-    def test_record_valid_departure(self):
-        """Test recording valid departure."""
-        cf = CoFounder(
-            name="Bob Johnson",
-            employee_id="EMP002",
-            join_date="2023-01-15"
-        )
-        self.tracker.add_co_founder(cf)
-        success, msg = self.tracker.record_departure(
-            "EMP002",
-            "2026-03-28",
-            "techcrunch.com"
-        )
-        self.assertTrue(success)
-        self.assertEqual(self.tracker.get_departure_count(), 1)
-
-    def test_record_departure_nonexistent(self):
-        """Test recording departure for non-existent co-founder."""
-        success, msg = self.tracker.record_departure(
-            "EMP999",
-            "2026-03-28",
-            "techcrunch.com"
-        )
-        self.assertFalse(success)
-        self.assertIn("not found", msg)
-
-    def test_record_departure_invalid_date(self):
-        """Test recording departure with invalid date."""
-        cf = CoFounder(
-            name="Charlie Brown",
-            employee_id="EMP003",
-            join_date="2023-01-15"
-        )
-        self.tracker.add_co_founder(cf)
-        success, msg = self.tracker.record_departure(
-            "EMP003",
-            "invalid-date",
-            "techcrunch.com"
-        )
-        self.assertFalse(success)
-
-    def test_departure_before_join(self):
-        """Test departure before join date."""
-        cf = CoFounder(
-            name="Diana Prince",
-            employee_id="EMP004",
-            join_date="2024-01-15"
-        )
-        self.tracker.add_co_founder(cf)
-        success, msg = self.tracker.record_departure(
-            "EMP004",
-            "2023-06-15",
-            "techcrunch.com"
-        )
-        self.assertFalse(success)
+        self.analyzer = Departure
+Analyzer()
 
     def test_retention_rate_calculation(self):
-        """Test retention rate calculation."""
-        for i in range(11):
-            cf = CoFounder(
-                name=f
+        """Test retention rate calculation"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        self.analyzer.add_event(event)
+        retention = self.analyzer.calculate_retention_rate("xAI")
+        self.assertIsNotNone(retention)
+        self.assertAlmostEqual(retention, 18.18, places=1)
+
+    def test_retention_rate_no_data(self):
+        """Test retention rate with no data"""
+        retention = self.analyzer.calculate_retention_rate("nonexistent")
+        self.assertIsNone(retention)
+
+    def test_retention_rate_case_insensitive(self):
+        """Test retention rate is case-insensitive for company"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        self.analyzer.add_event(event)
+        retention_lower = self.analyzer.calculate_retention_rate("xai")
+        retention_upper = self.analyzer.calculate_retention_rate("XAI")
+        self.assertEqual(retention_lower, retention_upper)
+
+    def test_departure_velocity_single_event(self):
+        """Test departure velocity with single event returns 0"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        self.analyzer.add_event(event)
+        velocity = self.analyzer.calculate_departure_velocity("xAI", days=30)
+        self.assertEqual(velocity, 0.0)
+
+    def test_departure_velocity_multiple_events(self):
+        """Test departure velocity with multiple events"""
+        base_date = datetime.now()
+        for i in range(3):
+            event_date = (base_date - timedelta(days=i * 7)).isoformat()
+            event = CofounderDeparture(
+                name=f"Cofounder {i}",
+                company="xAI",
+                departure_date=event_date,
+                reason="Pursuing other opportunities",
+                remaining_count=11 - i - 1,
+                total_original=11,
+                source_url="https://techcrunch.com/2026/03/28/test/",
+                published_date=event_date,
+                severity="high",
+            )
+            self.analyzer.add_event(event)
+
+        velocity = self.analyzer.calculate_departure_velocity("xAI", days=30)
+        self.assertIsNotNone(velocity)
+        self.assertGreater(velocity, 0)
+
+    def test_departure_velocity_no_data(self):
+        """Test departure velocity with no data"""
+        velocity = self.analyzer.calculate_departure_velocity("nonexistent", days=30)
+        self.assertIsNone(velocity)
+
+    def test_critical_threshold_crossing(self):
+        """Test critical threshold identification"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        self.analyzer.add_event(event)
+        result = self.analyzer.identify_critical_threshold("xAI")
+        self.assertEqual(result["status"], "threshold_crossed")
+        self.assertEqual(result["level"], "critical")
+
+    def test_high_threshold_crossing(self):
+        """Test high threshold identification"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=4,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        self.analyzer.add_event(event)
+        result = self.analyzer.identify_critical_threshold("xAI")
+        self.assertEqual(result["status"], "threshold_crossed")
+        self.assertEqual(result["level"], "high")
+
+    def test_normal_status(self):
+        """Test normal status when no threshold crossed"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=9,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="low",
+        )
+        self.analyzer.add_event(event)
+        result = self.analyzer.identify_critical_threshold("xAI")
+        self.assertEqual(result["status"], "normal")
+        self.assertAlmostEqual(result["retention_rate"], 81.82, places=1)
+
+    def test_threshold_no_data(self):
+        """Test threshold check with no data"""
+        result = self.analyzer.identify_critical_threshold("nonexistent")
+        self.assertEqual(result["status"], "no_data")
+
+    def test_multiple_companies(self):
+        """Test analyzer with multiple companies"""
+        event1 = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        event2 = CofounderDeparture(
+            name="Jane Doe",
+            company="x.ai",
+            departure_date="2026-03-27",
+            reason="Strategic move",
+            remaining_count=3,
+            total_original=10,
+            source_url="https://techcrunch.com/2026/03/27/test/",
+            published_date="2026-03-27",
+            severity="medium",
+        )
+        self.analyzer.add_event(event1)
+        self.analyzer.add_event(event2)
+
+        retention_xai = self.analyzer.calculate_retention_rate("xAI")
+        self.assertIsNotNone(retention_xai)
+
+
+class EdgeCaseValidator:
+    """Additional edge case tests"""
+
+    @staticmethod
+    def test_unicode_handling(event: CofounderDeparture) -> Tuple[bool, str]:
+        """Test handling of unicode characters in text fields"""
+        try:
+            event.name.encode("utf-8")
+            event.reason.encode("utf-8")
+            event.company.encode("utf-8")
+            return True, "Unicode handling passed"
+        except UnicodeEncodeError as e:
+            return False, f"Unicode error: {str(e)}"
+
+    @staticmethod
+    def test_sql_injection_patterns(event: CofounderDeparture) -> Tuple[bool, str]:
+        """Test for SQL injection patterns in string fields"""
+        dangerous_patterns = [
+            "' OR '1'='1",
+            "'; DROP TABLE",
+            "1 UNION SELECT",
+            "-- ",
+            "/**/",
+        ]
+
+        fields = [event.name, event.reason, event.company]
+        for field in fields:
+            for pattern in dangerous_patterns:
+                if pattern.lower() in field.lower():
+                    return False, f"Dangerous pattern detected: {pattern}"
+
+        return True, "No SQL injection patterns detected"
+
+    @staticmethod
+    def test_xss_patterns(event: CofounderDeparture) -> Tuple[bool, str]:
+        """Test for XSS patterns in string fields"""
+        xss_patterns = [
+            "<script>",
+            "javascript:",
+            "onerror=",
+            "onclick=",
+            "<iframe",
+        ]
+
+        fields = [event.name, event.reason, event.company]
+        for field in fields:
+            for pattern in xss_patterns:
+                if pattern.lower() in field.lower():
+                    return False, f"XSS pattern detected: {pattern}"
+
+        return True, "No XSS patterns detected"
+
+    @staticmethod
+    def test_boundary_numbers() -> Tuple[bool, List[str]]:
+        """Test mathematical boundary conditions"""
+        errors = []
+
+        # Test max int
+        try:
+            test_val = 2**63 - 1
+            if test_val < 0:
+                errors.append("Integer overflow detection failed")
+        except Exception as e:
+            errors.append(f"Integer test failed: {str(e)}")
+
+        # Test float precision
+        try:
+            rate1 = 2 / 11
+            rate2 = 2 / 11
+            if abs(rate1 - rate2) > 1e-10:
+                errors.append("Float precision issue")
+        except Exception as e:
+            errors.append(f"Float test failed: {str(e)}")
+
+        return len(errors) == 0, errors
+
+
+class TestEdgeCases(unittest.TestCase):
+    """Test edge cases and failure modes"""
+
+    def test_unicode_in_name(self):
+        """Test unicode characters in cofounder name"""
+        event = CofounderDeparture(
+            name="José García Müller",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        is_valid, errors = EdgeCaseValidator.test_unicode_handling(event)
+        self.assertTrue(is_valid)
+
+    def test_sql_injection_attempt(self):
+        """Test SQL injection pattern detection"""
+        event = CofounderDeparture(
+            name="John'; DROP TABLE cofounders; --",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        is_valid, msg = EdgeCaseValidator.test_sql_injection_patterns(event)
+        self.assertFalse(is_valid)
+        self.assertIn("Dangerous", msg)
+
+    def test_xss_attempt(self):
+        """Test XSS pattern detection"""
+        event = CofounderDeparture(
+            name="John <script>alert('xss')</script>",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        is_valid, msg = EdgeCaseValidator.test_xss_patterns(event)
+        self.assertFalse(is_valid)
+        self.assertIn("XSS", msg)
+
+    def test_boundary_numbers(self):
+        """Test mathematical boundary conditions"""
+        is_valid, errors = EdgeCaseValidator.test_boundary_numbers()
+        self.assertTrue(is_valid)
+        self.assertEqual(len(errors), 0)
+
+    def test_whitespace_only_name(self):
+        """Test name with only whitespace"""
+        event = CofounderDeparture(
+            name="   ",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=2,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        validator = NewsEventValidator()
+        is_valid, errors = validator.validate_departure_event(event)
+        self.assertFalse(is_valid)
+
+    def test_very_large_counts(self):
+        """Test with very large cofounder counts"""
+        event = CofounderDeparture(
+            name="John Smith",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=1000000,
+            total_original=2000000,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="high",
+        )
+        validator = NewsEventValidator()
+        is_valid, errors = validator.validate_departure_event(event)
+        self.assertTrue(is_valid)
+
+    def test_single_remaining_cofounder(self):
+        """Test boundary: only one cofounder remaining"""
+        event = CofounderDeparture(
+            name="Elon Musk",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Pursuing other opportunities",
+            remaining_count=1,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="critical",
+        )
+        validator = NewsEventValidator()
+        is_valid, errors = validator.validate_departure_event(event)
+        self.assertTrue(is_valid)
+        analyzer = DepartureAnalyzer()
+        analyzer.add_event(event)
+        retention = analyzer.calculate_retention_rate("xAI")
+        self.assertAlmostEqual(retention, 9.09, places=1)
+
+    def test_zero_remaining_cofounders(self):
+        """Test boundary: zero cofounders remaining"""
+        event = CofounderDeparture(
+            name="Last Person",
+            company="xAI",
+            departure_date="2026-03-28",
+            reason="Company shutdown",
+            remaining_count=0,
+            total_original=11,
+            source_url="https://techcrunch.com/2026/03/28/test/",
+            published_date="2026-03-28",
+            severity="critical",
+        )
+        validator = NewsEventValidator()
+        is_valid, errors = validator.validate_departure_event(event)
+        self.assertTrue(is_valid)
+
+
+def generate_sample_events() -> List[CofounderDeparture]:
+    """Generate sample co-founder departure events for testing"""
+    base_date = datetime.now()
+    events = []
+
+    for i in range(9):
+        event_date = (base_date - timedelta(days=i * 2)).isoformat()
+        event = CofounderDeparture(
+            name=f"Cofounder {i+1}",
+            company="xAI",
+            departure_date=event_date,
+            reason=f"Reason {i+1}: Strategic move",
+            remaining_count=11 - (i + 1),
+            total_original=11,
+            source_url=f"https://techcrunch.com/2026/03/{28-i:02d}/test{i}/",
+            published_date=event_date,
+            severity=["critical", "high", "medium", "low"][i % 4],
+        )
+        events.append(event)
+
+    return events
+
+
+def run_integration_tests(verbose: bool = False) -> Tuple[int, int]:
+    """Run all integration tests and return (tests_run, failures)"""
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite()
+
+    suite.addTests(loader.loadTestsFromTestCase(TestNewsEventValidator))
+    suite.addTests(loader.loadTestsFromTestCase(TestDepartureAnalyzer))
+    suite.addTests(loader.loadTestsFromTestCase(TestEdgeCases))
+
+    runner = unittest.TextTestRunner(verbosity=2 if verbose else 1)
+    result = runner.run(suite)
+
+    return result.testsRun, len(result.failures) + len(result.errors)
+
+
+def print_test_summary(test_results: Dict[str, Any]) -> None:
+    """Print formatted test summary"""
+    print("\n" + "=" * 70)
+    print("INTEGRATION TEST SUMMARY - xAI Co-founder Departure Analysis")
+    print("=" * 70)
+    print(json.dumps(test_results, indent=2))
+    print("=" * 70)
+
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description="Integration tests for xAI co-founder departure news analysis"
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Verbose test output",
+    )
+    parser.add_argument(
+        "--demo",
+        "-d",
+        action="store_true",
+        help="Run demo analysis with sample data",
+    )
+    parser.add_argument(
+        "--validate-sample",
+        action="store_true",
+        help="Validate sample events",
+    )
+    parser.add_argument(
+        "--analyze-trends",
+        action="store_true",
+        help="Analyze trends from sample data",
+    )
+    parser.add_argument(
+        "--edge-cases",
+        action="store_true",
+        help="Run edge case demonstrations",
+    )
+
+    args = parser.parse_args()
+
+    if args.demo or (
+        not args.validate_sample
+        and not args.analyze_trends
+        and not args.edge_cases
+    ):
+        tests_run, failures = run_integration_tests(verbose=args.verbose)
+        test_results = {
+            "total_tests": tests_run,
+            "failures": failures,
+            "success": failures == 0,
+            "timestamp": datetime.now().isoformat(),
+        }
+        print_test_summary(test_results)
+        sys.exit(0 if failures == 0 else 1)
+
+    if args.validate_sample:
+        print("\n" + "=" * 70)
+        print("SAMPLE EVENT VALIDATION")
+        print("=" * 70)
+        validator = NewsEventValidator()
+        events = generate_sample_events()
+
+        for event in events[:3]:
+            is_valid, errors = validator.validate_departure_event(event)
+            print(f"\nEvent: {event.name}")
+            print(f"Valid: {is_valid}")
+            if errors:
+                print("Errors:")
+                for error in errors:
+                    print(f"  - {error}")
+            else:
+                print("No validation errors")
+
+    if args.analyze_trends:
