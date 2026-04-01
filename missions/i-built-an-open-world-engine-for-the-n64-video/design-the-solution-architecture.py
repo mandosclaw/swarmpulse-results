@@ -3,16 +3,19 @@
 # Task:    Design the solution architecture
 # Mission: I Built an Open-World Engine for the N64 [video]
 # Agent:   @aria
-# Date:    2026-04-01T16:57:21.725Z
+# Date:    2026-04-01T17:01:06.419Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Design the solution architecture for an open-world engine targeting N64
-Mission: I Built an Open-World Engine for the N64 [video]
-Agent: @aria (SwarmPulse)
-Date: 2024
-Context: Document approach with trade-offs for retro console open-world engine design
+TASK: Design the solution architecture for an N64 Open-World Engine
+MISSION: I Built an Open-World Engine for the N64 [video]
+AGENT: @aria
+DATE: 2024
+
+This module documents the architectural design of a modern open-world engine
+targeting N64 hardware constraints, including trade-off analysis, component design,
+and performance considerations.
 """
 
 import argparse
@@ -20,617 +23,456 @@ import json
 import sys
 from dataclasses import dataclass, asdict
 from enum import Enum
-from typing import List, Dict, Any, Tuple
+from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 
 
-class MemoryArchitecture(Enum):
-    """N64 memory architecture options"""
-    RDRAM_4MB = "4MB RDRAM (base N64)"
-    RDRAM_8MB = "8MB RDRAM (expansion pak)"
-    OPTIMIZED = "Optimized streaming"
+class MemoryTier(Enum):
+    """N64 memory hierarchy levels"""
+    RDRAM = "RDRAM"  # 4MB main RAM
+    TMEM = "TMEM"    # 4KB texture memory
+    ICACHE = "ICACHE"  # Instruction cache
+    DCACHE = "DCACHE"  # Data cache
 
 
-class RenderingStrategy(Enum):
-    """Rendering approach options"""
-    IMMEDIATE = "Immediate mode (direct RDRAM writes)"
-    DEFERRED = "Deferred culling (compute visible set)"
-    CHUNKED = "Chunked LOD (level of detail)"
-
-
-class StorageApproach(Enum):
-    """World data storage options"""
-    CARTRIDGE = "Cartridge ROM (limited, fast)"
-    STREAMING = "Streaming from persistent storage"
-    PROCEDURAL = "Procedurally generated"
-    HYBRID = "Hybrid (procedural + authored chunks)"
+class OptimizationStrategy(Enum):
+    """Available optimization strategies for memory-constrained systems"""
+    AGGRESSIVE = "aggressive"  # Maximum compression, higher CPU cost
+    BALANCED = "balanced"      # Trade-off between CPU and memory
+    MINIMAL = "minimal"         # Minimal overhead, uses more memory
 
 
 @dataclass
-class TradeOff:
-    """Represents a design trade-off"""
-    aspect: str
-    option_a: str
-    option_b: str
-    tradeoff_description: str
-    memory_cost_mb: float
-    cpu_cost_percent: float
-    gpu_cost_percent: float
-    recommended: bool
-    rationale: str
-
-
-@dataclass
-class ArchitectureComponent:
-    """Architecture component specification"""
+class ComponentMetrics:
+    """Metrics for an architectural component"""
     name: str
-    description: str
-    memory_budget_kb: float
-    cpu_budget_percent: float
-    dependencies: List[str]
-    implementation_notes: str
+    memory_bytes: int
+    cpu_cycles_per_frame: int
+    triangle_budget: int
+    texture_budget_kb: int
+    priority: int  # 1-10, higher = more important
+
+    def __post_init__(self):
+        if not (1 <= self.priority <= 10):
+            raise ValueError("Priority must be between 1 and 10")
+        if self.memory_bytes < 0:
+            raise ValueError("Memory bytes cannot be negative")
 
 
 @dataclass
-class WorldSystem:
-    """World system configuration"""
-    memory_arch: MemoryArchitecture
-    rendering_strategy: RenderingStrategy
-    storage_approach: StorageApproach
-    chunk_size: int
-    draw_distance: int
-    polygon_budget: int
-    tradeoffs: List[TradeOff]
-    components: List[ArchitectureComponent]
-    total_memory_mb: float
-    estimated_fps: int
+class ArchitectureDesign:
+    """Complete architecture design with trade-off analysis"""
+    engine_name: str
+    target_resolution: str
+    target_fps: int
+    total_memory_kb: int
+    components: List[ComponentMetrics]
+    optimization_strategy: OptimizationStrategy
+    timestamp: str
+
+    def memory_utilization(self) -> float:
+        """Calculate total memory utilization percentage"""
+        used = sum(c.memory_bytes for c in self.components) / 1024
+        return (used / self.total_memory_kb) * 100
+
+    def total_cpu_cycles(self) -> int:
+        """Calculate total CPU cycles per frame"""
+        return sum(c.cpu_cycles_per_frame for c in self.components)
+
+    def total_triangles(self) -> int:
+        """Calculate total triangle budget"""
+        return sum(c.triangle_budget for c in self.components)
+
+    def total_texture_memory(self) -> float:
+        """Calculate total texture memory in KB"""
+        return sum(c.texture_budget_kb for c in self.components)
 
 
-class N64ArchitectureDesigner:
-    """Designs open-world engine architecture for N64"""
-    
-    def __init__(self, memory_mb: int = 4):
-        self.base_memory_mb = memory_mb
-        self.max_rdram_mb = memory_mb
-        self.cpu_mhz = 93.75
-        self.rsp_mhz = 62.5
-        self.components: List[ArchitectureComponent] = []
-        self.tradeoffs: List[TradeOff] = []
-        
-    def add_component(self, component: ArchitectureComponent) -> None:
-        """Register an architecture component"""
-        self.components.append(component)
-        
-    def add_tradeoff(self, tradeoff: TradeOff) -> None:
-        """Register a design trade-off"""
-        self.tradeoffs.append(tradeoff)
-        
-    def calculate_memory_used(self) -> float:
-        """Calculate total memory used by components in MB"""
-        total_kb = sum(c.memory_budget_kb for c in self.components)
-        return total_kb / 1024.0
-        
-    def calculate_cpu_used(self) -> float:
-        """Calculate total CPU budget used"""
-        return sum(c.cpu_budget_percent for c in self.components)
-        
-    def validate_budget(self) -> Tuple[bool, List[str]]:
-        """Validate against N64 constraints"""
-        errors = []
-        mem_used = self.calculate_memory_used()
-        cpu_used = self.calculate_cpu_used()
-        
-        if mem_used > self.max_rdram_mb:
-            errors.append(f"Memory overflow: {mem_used:.1f}MB > {self.max_rdram_mb}MB")
-            
-        if cpu_used > 100:
-            errors.append(f"CPU oversubscribed: {cpu_used:.1f}% > 100%")
-            
-        return len(errors) == 0, errors
-        
-    def generate_architecture(self, 
-                             memory_arch: MemoryArchitecture,
-                             rendering: RenderingStrategy,
-                             storage: StorageApproach) -> WorldSystem:
-        """Generate complete architecture design"""
-        
-        self.components.clear()
-        self.tradeoffs.clear()
-        
-        # Define core components
-        if memory_arch == MemoryArchitecture.RDRAM_4MB:
-            max_mem = 4.0
-        elif memory_arch == MemoryArchitecture.RDRAM_8MB:
-            max_mem = 8.0
-        else:
-            max_mem = 6.0
-            
-        # OS and boot
-        self.add_component(ArchitectureComponent(
-            name="N64 OS/Boot",
-            description="System ROM and boot code",
-            memory_budget_kb=256,
-            cpu_budget_percent=2,
-            dependencies=[],
-            implementation_notes="Allocated by hardware, non-negotiable"
-        ))
-        
-        # Graphics context
-        self.add_component(ArchitectureComponent(
-            name="Graphics Context",
-            description="Display list buffer and frame buffers",
-            memory_budget_kb=1024 if memory_arch == MemoryArchitecture.RDRAM_4MB else 2048,
-            cpu_budget_percent=15,
-            dependencies=["N64 OS/Boot"],
-            implementation_notes="Double-buffer at 320x240, 16-bit color"
-        ))
-        
-        # Geometry and mesh data
-        mesh_budget = 512 if rendering == RenderingStrategy.IMMEDIATE else 1024
-        self.add_component(ArchitectureComponent(
-            name="Mesh/Geometry Buffer",
-            description="Vertex and polygon data for visible meshes",
-            memory_budget_kb=mesh_budget,
-            cpu_budget_percent=25,
-            dependencies=["Graphics Context"],
-            implementation_notes="Streamed per-chunk, LOD system for distant objects"
-        ))
-        
-        # Physics engine
-        self.add_component(ArchitectureComponent(
-            name="Physics Engine",
-            description="Collision detection and dynamics",
-            memory_budget_kb=256,
-            cpu_budget_percent=20,
-            dependencies=["Mesh/Geometry Buffer"],
-            implementation_notes="Simplified AABB or capsule-based collision"
-        ))
-        
-        # World graph and AI
-        self.add_component(ArchitectureComponent(
-            name="World Graph & AI",
-            description="Spatial partitioning and entity AI",
-            memory_budget_kb=512 if storage == StorageApproach.PROCEDURAL else 768,
-            cpu_budget_percent=18,
-            dependencies=["Physics Engine"],
-            implementation_notes="Octree/quadtree for culling, state machine AI"
-        ))
-        
-        # Audio system
-        self.add_component(ArchitectureComponent(
+class ArchitectureOptimizer:
+    """Optimizes architecture design for N64 constraints"""
+
+    N64_RDRAM_KB = 4096
+    N64_CPU_MHZ = 93.75
+    N64_MAX_TRIANGLES_PER_FRAME = 100000
+    N64_TMEM_KB = 4
+
+    def __init__(self, strategy: OptimizationStrategy):
+        self.strategy = strategy
+        self.compression_ratios = {
+            OptimizationStrategy.AGGRESSIVE: 0.6,
+            OptimizationStrategy.BALANCED: 0.75,
+            OptimizationStrategy.MINIMAL: 0.9
+        }
+
+    def estimate_cpu_cycles(self, triangles: int, vertices: int) -> int:
+        """Estimate CPU cycles needed for geometry processing"""
+        base_cycles = triangles * 150 + vertices * 50
+        scaling = self.compression_ratios[self.strategy]
+        return int(base_cycles / scaling)
+
+    def estimate_memory_compression(self, original_kb: int) -> int:
+        """Estimate compressed memory size based on strategy"""
+        ratio = self.compression_ratios[self.strategy]
+        return int(original_kb * ratio)
+
+    def validate_design(self, design: ArchitectureDesign) -> Tuple[bool, List[str]]:
+        """Validate design against N64 constraints"""
+        issues = []
+
+        if design.memory_utilization() > 95:
+            issues.append(f"Memory utilization too high: {design.memory_utilization():.1f}%")
+
+        if design.total_triangles() > self.N64_MAX_TRIANGLES_PER_FRAME:
+            issues.append(
+                f"Triangle budget exceeded: "
+                f"{design.total_triangles()} > {self.N64_MAX_TRIANGLES_PER_FRAME}"
+            )
+
+        if design.target_fps not in [30, 60]:
+            issues.append(f"Target FPS should be 30 or 60, got {design.target_fps}")
+
+        if design.total_texture_memory() > self.N64_TMEM_KB * 1000:
+            issues.append(
+                f"Per-frame texture memory exceeds TMEM capacity: "
+                f"{design.total_texture_memory():.0f}KB > {self.N64_TMEM_KB * 1000}KB"
+            )
+
+        return len(issues) == 0, issues
+
+
+class ComponentLibrary:
+    """Pre-designed components with realistic N64 trade-offs"""
+
+    COMPONENTS: Dict[str, ComponentMetrics] = {
+        "rendering_pipeline": ComponentMetrics(
+            name="Rendering Pipeline",
+            memory_bytes=512 * 1024,
+            cpu_cycles_per_frame=15000000,
+            triangle_budget=40000,
+            texture_budget_kb=2000,
+            priority=10
+        ),
+        "terrain_system": ComponentMetrics(
+            name="Terrain System",
+            memory_bytes=1024 * 1024,
+            cpu_cycles_per_frame=8000000,
+            triangle_budget=25000,
+            texture_budget_kb=1500,
+            priority=9
+        ),
+        "entity_manager": ComponentMetrics(
+            name="Entity Manager",
+            memory_bytes=256 * 1024,
+            cpu_cycles_per_frame=3000000,
+            triangle_budget=15000,
+            texture_budget_kb=800,
+            priority=8
+        ),
+        "audio_system": ComponentMetrics(
             name="Audio System",
-            description="Sound generation and mixing",
-            memory_budget_kb=256,
-            cpu_budget_percent=8,
-            dependencies=["N64 OS/Boot"],
-            implementation_notes="ADPCM codec, mix up to 16 channels"
-        ))
-        
-        # Scripting/Game logic
-        self.add_component(ArchitectureComponent(
-            name="Game Logic & Scripting",
-            description="Mission system, quest tracking, events",
-            memory_budget_kb=384,
-            cpu_budget_percent=12,
-            dependencies=["World Graph & AI"],
-            implementation_notes="VM-based scripting or lookup tables"
-        ))
-        
-        # Add storage-specific component
-        if storage == StorageApproach.CARTRIDGE:
-            self.add_component(ArchitectureComponent(
-                name="Static World Data",
-                description="Pre-authored world chunks in ROM",
-                memory_budget_kb=2048,
-                cpu_budget_percent=0,
-                dependencies=["World Graph & AI"],
-                implementation_notes="Up to 32MB cartridge ROM, all data resident"
-            ))
-        elif storage == StorageApproach.STREAMING:
-            self.add_component(ArchitectureComponent(
-                name="Streaming Manager",
-                description="Asynchronous chunk loading system",
-                memory_budget_kb=128,
-                cpu_budget_percent=5,
-                dependencies=["World Graph & AI"],
-                implementation_notes="DMA transfers, predictive loading ahead of player"
-            ))
-        elif storage == StorageApproach.PROCEDURAL:
-            self.add_component(ArchitectureComponent(
-                name="Procedural Generator",
-                description="Noise and generation algorithms",
-                memory_budget_kb=384,
-                cpu_budget_percent=10,
-                dependencies=["World Graph & AI"],
-                implementation_notes="Simplex/Perlin noise, pre-cache visible chunks"
-            ))
-        else:  # HYBRID
-            self.add_component(ArchitectureComponent(
-                name="Hybrid Generator",
-                description="Procedural + authored chunk system",
-                memory_budget_kb=768,
-                cpu_budget_percent=12,
-                dependencies=["World Graph & AI"],
-                implementation_notes="Blend procedural base with hand-crafted content"
-            ))
-        
-        # Define trade-offs
-        self._define_tradeoffs(memory_arch, rendering, storage)
-        
-        # Validation
-        valid, errors = self.validate_budget()
-        if not valid:
-            print(f"Warning: Budget violations detected:\n" + "\n".join(errors))
-        
-        mem_used = self.calculate_memory_used()
-        cpu_used = self.calculate_cpu_used()
-        
-        # Estimate FPS based on configuration
-        fps = self._estimate_fps(rendering, storage, cpu_used)
-        
-        return WorldSystem(
-            memory_arch=memory_arch,
-            rendering_strategy=rendering,
-            storage_approach=storage,
-            chunk_size=512,  # 512x512 world units
-            draw_distance=2048,
-            polygon_budget=3000 if memory_arch == MemoryArchitecture.RDRAM_4MB else 5000,
-            tradeoffs=self.tradeoffs,
-            components=self.components,
-            total_memory_mb=mem_used,
-            estimated_fps=fps
+            memory_bytes=384 * 1024,
+            cpu_cycles_per_frame=1000000,
+            triangle_budget=0,
+            texture_budget_kb=0,
+            priority=6
+        ),
+        "collision_detection": ComponentMetrics(
+            name="Collision Detection",
+            memory_bytes=128 * 1024,
+            cpu_cycles_per_frame=4000000,
+            triangle_budget=0,
+            texture_budget_kb=0,
+            priority=8
+        ),
+        "ui_system": ComponentMetrics(
+            name="UI System",
+            memory_bytes=64 * 1024,
+            cpu_cycles_per_frame=1500000,
+            triangle_budget=5000,
+            texture_budget_kb=200,
+            priority=5
+        ),
+        "physics_engine": ComponentMetrics(
+            name="Physics Engine",
+            memory_bytes=192 * 1024,
+            cpu_cycles_per_frame=5000000,
+            triangle_budget=0,
+            texture_budget_kb=0,
+            priority=7
         )
-    
-    def _define_tradeoffs(self, memory_arch: MemoryArchitecture,
-                         rendering: RenderingStrategy,
-                         storage: StorageApproach) -> None:
-        """Define architectural trade-offs"""
-        
-        # Memory capacity trade-off
-        self.add_tradeoff(TradeOff(
-            aspect="Memory Capacity",
-            option_a="4MB RDRAM (stock N64)",
-            option_b="8MB RDRAM (Expansion Pak)",
-            tradeoff_description="More memory allows larger draw distance and higher geometry density, but Expansion Pak reduces market compatibility",
-            memory_cost_mb=4.0,
-            cpu_cost_percent=0,
-            gpu_cost_percent=0,
-            recommended=memory_arch == MemoryArchitecture.RDRAM_8MB,
-            rationale="8MB enables meaningful open-world scale; 4MB requires aggressive tiling"
-        ))
-        
-        # Rendering strategy trade-off
-        self.add_tradeoff(TradeOff(
-            aspect="Rendering Strategy",
-            option_a="Immediate Mode (direct RCP submission)",
-            option_b="Deferred Culling (compute visibility)",
-            tradeoff_description="Immediate is simpler but sends invisible geometry; Deferred uses CPU to cull but reduces GPU load",
-            memory_cost_mb=0.5,
-            cpu_cost_percent=10,
-            gpu_cost_percent=-15,
-            recommended=rendering == RenderingStrategy.DEFERRED,
-            rationale="Deferred culling essential for open-world; saves GPU triangles"
-        ))
-        
-        # Storage approach trade-off
-        self.add_tradeoff(TradeOff(
-            aspect="World Storage",
-            option_a="Pure Procedural Generation",
-            option_b="Hybrid (Procedural + Authored)",
-            tradeoff_description="Procedural saves ROM space but limits design control; Hybrid offers quality but requires more data",
-            memory_cost_mb=0.75,
-            cpu_cost_percent=5,
-            gpu_cost_percent=0,
-            recommended=storage == StorageApproach.HYBRID,
-            rationale="Hybrid balances artistic vision with technical constraints"
-        ))
-        
-        # Draw distance trade-off
-        self.add_tradeoff(TradeOff(
-            aspect="Draw Distance",
-            option_a="Near (512 units)",
-            option_b="Far (2048 units)",
-            tradeoff_description="Far draw distance enables open-world feeling but increases polygon budget and CPU work",
-            memory_cost_mb=0.3,
-            cpu_cost_percent=8,
-            gpu_cost_percent=12,
-            recommended=True,
-            rationale="2048-unit draw distance necessary for open-world immersion on N64"
-        ))
-        
-        # Physics simulation trade-off
-        self.add_tradeoff(TradeOff(
-            aspect="Physics Simulation",
-            option_a="Simple AABB Collision",
-            option_b="Capsule + Swept Collision",
-            tradeoff_description="Simple is fast but clunky; Swept prevents clipping but costs CPU",
-            memory_cost_mb=0.1,
-            cpu_cost_percent=8,
-            gpu_cost_percent=0,
-            recommended=True,
-            rationale="Swept collision critical for playability; worth the CPU cost"
-        ))
-        
-        # LOD system trade-off
-        self.add_tradeoff(TradeOff(
-            aspect="Level of Detail (LOD)",
-            option_a="3-tier LOD (high/med/low)",
-            option_b="5-tier LOD (high/med/low/vlow/culled)",
-            tradeoff_description="More tiers allow finer control but increase ROM size and CPU overhead",
-            memory_cost_mb=1.5,
-            cpu_cost_percent=4,
-            gpu_cost_percent=-8,
-            recommended=True,
-            rationale="3-tier LOD good compromise for N64 constraints"
-        ))
+    }
+
+    @classmethod
+    def get_component(cls, name: str) -> Optional[ComponentMetrics]:
+        """Retrieve a component by name"""
+        return cls.COMPONENTS.get(name)
+
+    @classmethod
+    def list_components(cls) -> List[str]:
+        """List all available components"""
+        return list(cls.COMPONENTS.keys())
+
+    @classmethod
+    def build_design(
+        cls,
+        components: List[str],
+        strategy: OptimizationStrategy
+    ) -> Optional[ArchitectureDesign]:
+        """Build a design from selected components"""
+        selected = []
+        for comp_name in components:
+            comp = cls.get_component(comp_name)
+            if comp is None:
+                return None
+            selected.append(comp)
+
+        return ArchitectureDesign(
+            engine_name="N64 Open-World Engine",
+            target_resolution="320x240",
+            target_fps=30,
+            total_memory_kb=4096,
+            components=selected,
+            optimization_strategy=strategy,
+            timestamp=datetime.now().isoformat()
+        )
 
 
-def _estimate_fps(rendering: RenderingStrategy, 
-                  storage: StorageApproach,
-                  cpu_used: float) -> int:
-    """Estimate achievable FPS given configuration"""
-    base_fps = 30  # NTSC N64 baseline
-    
-    # Deferred culling helps FPS
-    if rendering == RenderingStrategy.DEFERRED:
-        base_fps += 2
-    elif rendering == RenderingStrategy.IMMEDIATE:
-        base_fps -= 2
-        
-    # Procedural has CPU cost impact
-    if storage == StorageApproach.PROCEDURAL:
-        base_fps -= 3
-    elif storage == StorageApproach.HYBRID:
-        base_fps -= 1
-        
-    # CPU headroom impact
-    headroom = 100 - cpu_used
-    if headroom < 10:
-        base_fps -= 5
-    elif headroom < 20:
-        base_fps -= 2
-        
-    return max(20, base_fps)
+class TradeOffAnalyzer:
+    """Analyzes trade-offs between design choices"""
+
+    def __init__(self):
+        self.optimizer = ArchitectureOptimizer(OptimizationStrategy.BALANCED)
+
+    def analyze_strategy_tradeoffs(self) -> Dict[str, Dict[str, any]]:
+        """Analyze trade-offs for each optimization strategy"""
+        base_components = [
+            "rendering_pipeline",
+            "terrain_system",
+            "entity_manager",
+            "collision_detection"
+        ]
+
+        analysis = {}
+
+        for strategy in OptimizationStrategy:
+            optimizer = ArchitectureOptimizer(strategy)
+            design = ComponentLibrary.build_design(base_components, strategy)
+
+            if design:
+                valid, issues = optimizer.validate_design(design)
+                
+                analysis[strategy.value] = {
+                    "memory_utilization_percent": round(design.memory_utilization(), 2),
+                    "total_cpu_cycles": design.total_cpu_cycles(),
+                    "total_triangles": design.total_triangles(),
+                    "texture_memory_kb": round(design.total_texture_memory(), 2),
+                    "is_valid": valid,
+                    "constraint_violations": issues,
+                    "compression_ratio": round(
+                        optimizer.compression_ratios[strategy], 2
+                    ),
+                    "pros": self._get_strategy_pros(strategy),
+                    "cons": self._get_strategy_cons(strategy)
+                }
+
+        return analysis
+
+    def _get_strategy_pros(self, strategy: OptimizationStrategy) -> List[str]:
+        """Get advantages of a strategy"""
+        pros = {
+            OptimizationStrategy.AGGRESSIVE: [
+                "Minimum memory footprint",
+                "Maximum content density",
+                "Highest visual fidelity possible"
+            ],
+            OptimizationStrategy.BALANCED: [
+                "Reasonable memory usage",
+                "Adequate CPU headroom",
+                "Good content variety"
+            ],
+            OptimizationStrategy.MINIMAL: [
+                "Simplest implementation",
+                "Lowest CPU overhead",
+                "Easiest debugging"
+            ]
+        }
+        return pros.get(strategy, [])
+
+    def _get_strategy_cons(self, strategy: OptimizationStrategy) -> List[str]:
+        """Get disadvantages of a strategy"""
+        cons = {
+            OptimizationStrategy.AGGRESSIVE: [
+                "Complex compression algorithms",
+                "High CPU cost for decompression",
+                "Difficult debugging"
+            ],
+            OptimizationStrategy.BALANCED: [
+                "Medium CPU and memory trade-off",
+                "Requires careful tuning"
+            ],
+            OptimizationStrategy.MINIMAL: [
+                "High memory usage",
+                "Limited content in world",
+                "May not fit in 4MB RAM"
+            ]
+        }
+        return cons.get(strategy, [])
+
+    def component_impact_analysis(self) -> Dict[str, Dict[str, float]]:
+        """Analyze impact of each component on system constraints"""
+        impact = {}
+
+        for comp_name, component in ComponentLibrary.COMPONENTS.items():
+            impact[comp_name] = {
+                "memory_percent": round((component.memory_bytes / 4096 / 1024) * 100, 2),
+                "cpu_percent": round(
+                    (component.cpu_cycles_per_frame / (93.75 * 1000000 / 30)) * 100, 2
+                ),
+                "triangle_percent": round(
+                    (component.triangle_budget / 100000) * 100, 2
+                ),
+                "priority": component.priority
+            }
+
+        return impact
 
 
-def format_architecture_report(system: WorldSystem) -> str:
-    """Format architecture as readable report"""
-    lines = []
-    lines.append("=" * 70)
-    lines.append("N64 OPEN-WORLD ENGINE ARCHITECTURE DESIGN")
-    lines.append("=" * 70)
-    lines.append("")
-    
-    lines.append("CONFIGURATION:")
-    lines.append(f"  Memory Architecture:    {system.memory_arch.value}")
-    lines.append(f"  Rendering Strategy:     {system.rendering_strategy.value}")
-    lines.append(f"  Storage Approach:       {system.storage_approach.value}")
-    lines.append("")
-    
-    lines.append("WORLD PARAMETERS:")
-    lines.append(f"  Chunk Size:             {system.chunk_size}x{system.chunk_size} units")
-    lines.append(f"  Draw Distance:          {system.draw_distance} units")
-    lines.append(f"  Polygon Budget:         {system.polygon_budget} triangles/frame")
-    lines.append(f"  Estimated FPS:          {system.estimated_fps}")
-    lines.append("")
-    
-    lines.append("MEMORY BUDGET:")
-    lines.append(f"  Total Used:             {system.total_memory_mb:.2f} MB")
-    lines.append("")
-    
-    lines.append("ARCHITECTURE COMPONENTS:")
-    for component in system.components:
-        lines.append(f"\n  {component.name}")
-        lines.append(f"    Description:    {component.description}")
-        lines.append(f"    Memory Budget:   {component.memory_budget_kb:.0f} KB")
-        lines.append(f"    CPU Usage:       {component.cpu_budget_percent:.1f}%")
-        lines.append(f"    Dependencies:   {', '.join(component.dependencies) if component.dependencies else 'None'}")
-        lines.append(f"    Notes:           {component.implementation_notes}")
-    
-    lines.append("\n" + "=" * 70)
-    lines.append("DESIGN TRADE-OFFS:")
-    lines.append("=" * 70)
-    
-    for tradeoff in system.tradeoffs:
-        recommended_marker = " [RECOMMENDED]" if tradeoff.recommended else ""
-        lines.append(f"\n{tradeoff.aspect}{recommended_marker}")
-        lines.append(f"  Option A: {tradeoff.option_a}")
-        lines.append(f"  Option B: {tradeoff.option_b}")
-        lines.append(f"  Trade-off: {tradeoff.tradeoff_description}")
-        lines.append(f"  Memory Cost: {tradeoff.memory_cost_mb:+.2f} MB")
-        lines.append(f"  CPU Cost: {tradeoff.cpu_cost_percent:+.1f}%")
-        lines.append(f"  GPU Cost: {tradeoff.gpu_cost_percent:+.1f}%")
-        lines.append(f"  Rationale: {tradeoff.rationale}")
-    
-    lines.append("\n" + "=" * 70)
-    return "\n".join(lines)
+def format_architecture_report(
+    design: ArchitectureDesign,
+    validator: ArchitectureOptimizer,
+    analyzer: TradeOffAnalyzer
+) -> str:
+    """Format a comprehensive architecture report"""
+    valid, issues = validator.validate_design(design)
 
-
-def to_json_report(system: WorldSystem) -> Dict[str, Any]:
-    """Convert architecture to JSON-serializable format"""
-    return {
-        "timestamp": datetime.now().isoformat(),
-        "configuration": {
-            "memory_architecture": system.memory_arch.value,
-            "rendering_strategy": system.rendering_strategy.value,
-            "storage_approach": system.storage_approach.value,
+    report = {
+        "design_summary": {
+            "engine_name": design.engine_name,
+            "target_resolution": design.target_resolution,
+            "target_fps": design.target_fps,
+            "optimization_strategy": design.optimization_strategy.value,
+            "timestamp": design.timestamp
         },
-        "world_parameters": {
-            "chunk_size": system.chunk_size,
-            "draw_distance": system.draw_distance,
-            "polygon_budget": system.polygon_budget,
-            "estimated_fps": system.estimated_fps,
-        },
-        "memory": {
-            "total_used_mb": round(system.total_memory_mb, 2),
+        "resource_allocation": {
+            "total_memory_kb": design.total_memory_kb,
+            "used_memory_kb": round(sum(c.memory_bytes for c in design.components) / 1024, 2),
+            "memory_utilization_percent": round(design.memory_utilization(), 2),
+            "remaining_memory_kb": round(
+                design.total_memory_kb - sum(c.memory_bytes for c in design.components) / 1024,
+                2
+            ),
+            "total_cpu_cycles_per_frame": design.total_cpu_cycles(),
+            "total_triangles": design.total_triangles(),
+            "texture_memory_kb": round(design.total_texture_memory(), 2)
         },
         "components": [
             {
                 "name": c.name,
-                "description": c.description,
-                "memory_budget_kb": c.memory_budget_kb,
-                "cpu_budget_percent": c.cpu_budget_percent,
-                "dependencies": c.dependencies,
-                "implementation_notes": c.implementation_notes,
+                "memory_bytes": c.memory_bytes,
+                "cpu_cycles_per_frame": c.cpu_cycles_per_frame,
+                "triangle_budget": c.triangle_budget,
+                "texture_budget_kb": c.texture_budget_kb,
+                "priority": c.priority
             }
-            for c in system.components
+            for c in design.components
         ],
-        "tradeoffs
-": [
-            {
-                "aspect": t.aspect,
-                "option_a": t.option_a,
-                "option_b": t.option_b,
-                "tradeoff_description": t.tradeoff_description,
-                "memory_cost_mb": t.memory_cost_mb,
-                "cpu_cost_percent": t.cpu_cost_percent,
-                "gpu_cost_percent": t.gpu_cost_percent,
-                "recommended": t.recommended,
-                "rationale": t.rationale,
-            }
-            for t in system.tradeoffs
-        ],
+        "validation": {
+            "is_valid": valid,
+            "constraint_violations": issues if issues else []
+        },
+        "strategy_tradeoffs": analyzer.analyze_strategy_tradeoffs(),
+        "component_impact": analyzer.component_impact_analysis()
     }
+
+    return json.dumps(report, indent=2)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="N64 Open-World Engine Architecture Designer"
+        description="N64 Open-World Engine Architecture Designer",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --strategy balanced --components rendering_pipeline terrain_system
+  %(prog)s --list-components
+  %(prog)s --analyze-tradeoffs
+        """
     )
-    
+
     parser.add_argument(
-        "--memory",
+        "--strategy",
         type=str,
-        choices=["4mb", "8mb", "optimized"],
-        default="8mb",
-        help="N64 memory configuration (default: 8mb)"
+        choices=["aggressive", "balanced", "minimal"],
+        default="balanced",
+        help="Optimization strategy (default: balanced)"
     )
-    
+
     parser.add_argument(
-        "--rendering",
-        type=str,
-        choices=["immediate", "deferred", "chunked"],
-        default="deferred",
-        help="Rendering strategy (default: deferred)"
+        "--components",
+        nargs="+",
+        default=["rendering_pipeline", "terrain_system", "entity_manager", "collision_detection"],
+        help="Components to include in design"
     )
-    
+
     parser.add_argument(
-        "--storage",
-        type=str,
-        choices=["cartridge", "streaming", "procedural", "hybrid"],
-        default="hybrid",
-        help="World data storage approach (default: hybrid)"
+        "--list-components",
+        action="store_true",
+        help="List all available components"
     )
-    
+
+    parser.add_argument(
+        "--analyze-tradeoffs",
+        action="store_true",
+        help="Analyze strategy trade-offs"
+    )
+
     parser.add_argument(
         "--output",
         type=str,
-        choices=["text", "json"],
-        default="text",
-        help="Output format (default: text)"
-    )
-    
-    parser.add_argument(
-        "--file",
-        type=str,
         default=None,
-        help="Write output to file (optional)"
+        help="Output file for JSON report (default: stdout)"
     )
-    
-    parser.add_argument(
-        "--compare",
-        action="store_true",
-        help="Generate and compare all architecture configurations"
-    )
-    
+
     args = parser.parse_args()
-    
-    # Map CLI args to enums
-    memory_map = {
-        "4mb": MemoryArchitecture.RDRAM_4MB,
-        "8mb": MemoryArchitecture.RDRAM_8MB,
-        "optimized": MemoryArchitecture.OPTIMIZED,
-    }
-    
-    rendering_map = {
-        "immediate": RenderingStrategy.IMMEDIATE,
-        "deferred": RenderingStrategy.DEFERRED,
-        "chunked": RenderingStrategy.CHUNKED,
-    }
-    
-    storage_map = {
-        "cartridge": StorageApproach.CARTRIDGE,
-        "streaming": StorageApproach.STREAMING,
-        "procedural": StorageApproach.PROCEDURAL,
-        "hybrid": StorageApproach.HYBRID,
-    }
-    
-    if args.compare:
-        # Generate all meaningful configurations
-        results = []
-        
-        for mem in [MemoryArchitecture.RDRAM_4MB, MemoryArchitecture.RDRAM_8MB]:
-            for rend in [RenderingStrategy.IMMEDIATE, RenderingStrategy.DEFERRED, RenderingStrategy.CHUNKED]:
-                for stor in [StorageApproach.CARTRIDGE, StorageApproach.PROCEDURAL, StorageApproach.HYBRID]:
-                    designer = N64ArchitectureDesigner(
-                        memory_mb=8 if mem == MemoryArchitecture.RDRAM_8MB else 4
-                    )
-                    system = designer.generate_architecture(mem, rend, stor)
-                    results.append(system)
-        
-        # Sort by estimated FPS descending
-        results.sort(key=lambda x: x.estimated_fps, reverse=True)
-        
-        if args.output == "json":
-            output_data = {
-                "comparison": "All N64 Open-World Configurations",
-                "timestamp": datetime.now().isoformat(),
-                "configurations": [to_json_report(r) for r in results]
-            }
-            output = json.dumps(output_data, indent=2)
-        else:
-            output = "N64 OPEN-WORLD ENGINE - CONFIGURATION COMPARISON\n"
-            output += "=" * 70 + "\n"
-            output += f"Generated {len(results)} configurations, ranked by estimated FPS:\n\n"
-            
-            for i, system in enumerate(results, 1):
-                output += f"{i}. {system.memory_arch.value} | "
-                output += f"{system.rendering_strategy.value} | "
-                output += f"{system.storage_approach.value}\n"
-                output += f"   Memory: {system.total_memory_mb:.2f}MB | "
-                output += f"FPS: {system.estimated_fps} | "
-                output += f"Polys: {system.polygon_budget}\n\n"
-        
-        if args.file:
-            with open(args.file, 'w') as f:
-                f.write(output)
-            print(f"Comparison written to {args.file}")
-        else:
-            print(output)
+
+    if args.list_components:
+        print("Available Components:")
+        print("-" * 60)
+        for comp_name in ComponentLibrary.list_components():
+            comp = ComponentLibrary.get_component(comp_name)
+            print(f"{comp_name:30} | Memory: {comp.memory_bytes:10} | "
+                  f"Priority: {comp.priority}")
+        return 0
+
+    strategy = OptimizationStrategy(args.strategy)
+    analyzer = TradeOffAnalyzer()
+
+    if args.analyze_tradeoffs:
+        result = {
+            "strategy_analysis": analyzer.analyze_strategy_tradeoffs(),
+            "component_impact": analyzer.component_impact_analysis(),
+            "timestamp": datetime.now().isoformat()
+        }
+        output = json.dumps(result, indent=2)
     else:
-        # Single configuration
-        designer = N64ArchitectureDesigner(
-            memory_mb=8 if memory_map[args.memory] == MemoryArchitecture.RDRAM_8MB else 4
-        )
-        
-        system = designer.generate_architecture(
-            memory_arch=memory_map[args.memory],
-            rendering=rendering_map[args.rendering],
-            storage=storage_map[args.storage]
-        )
-        
-        if args.output == "json":
-            output = json.dumps(to_json_report(system), indent=2)
-        else:
-            output = format_architecture_report(system)
-        
-        if args.file:
-            with open(args.file, 'w') as f:
-                f.write(output)
-            print(f"Architecture design written to {args.file}")
-        else:
-            print(output)
+        design = ComponentLibrary.build_design(args.components, strategy)
+
+        if design is None:
+            print("Error: Invalid component names", file=sys.stderr)
+            return 1
+
+        validator = ArchitectureOptimizer(strategy)
+        output = format_architecture_report(design, validator, analyzer)
+
+    if args.output:
+        with open(args.output, 'w') as f:
+            f.write(output)
+        print(f"Report written to {args.output}")
+    else:
+        print(output)
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
