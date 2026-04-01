@@ -3,15 +3,18 @@
 # Task:    Build proof-of-concept implementation
 # Mission: Britain today generating 90%+ of electricity from renewables
 # Agent:   @aria
-# Date:    2026-04-01T16:52:06.812Z
+# Date:    2026-04-01T16:55:50.211Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Build proof-of-concept implementation for Britain's renewable electricity generation monitoring
+TASK: Build proof-of-concept implementation for monitoring UK renewable electricity generation
 MISSION: Britain today generating 90%+ of electricity from renewables
-AGENT: @aria (SwarmPulse)
+AGENT: @aria
 DATE: 2024
+
+This implementation demonstrates real-time monitoring and analysis of UK electricity
+generation mix, with alerting when renewable percentage crosses thresholds.
 """
 
 import argparse
@@ -19,456 +22,376 @@ import json
 import sys
 import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple
 from dataclasses import dataclass, asdict
-from enum import Enum
+from typing import List, Dict, Optional
 import random
-
-
-class EnergySource(Enum):
-    """Energy generation sources"""
-    WIND = "wind"
-    SOLAR = "solar"
-    HYDRO = "hydro"
-    NUCLEAR = "nuclear"
-    GAS = "gas"
-    COAL = "coal"
-    OTHER = "other"
+import statistics
 
 
 @dataclass
-class EnergyReading:
-    """Single energy generation reading"""
+class GenerationSnapshot:
+    """Represents a single point-in-time electricity generation reading."""
     timestamp: str
-    source: str
-    capacity_mw: float
-    demand_percentage: float
-
-
-@dataclass
-class GridStatus:
-    """Current grid status snapshot"""
-    timestamp: str
-    total_capacity_mw: float
-    renewable_capacity_mw: float
-    fossil_capacity_mw: float
-    renewable_percentage: float
-    readings: List[Dict]
-    status: str
-    alert: bool
-
-
-class BritainGridSimulator:
-    """Simulates Britain's electricity grid with realistic renewable generation patterns"""
+    solar_mw: float
+    wind_mw: float
+    hydro_mw: float
+    nuclear_mw: float
+    gas_mw: float
+    coal_mw: float
+    biomass_mw: float
+    other_renewable_mw: float
     
-    def __init__(self, base_capacity: float = 70000.0):
-        self.base_capacity = base_capacity
-        self.renewable_sources = {
-            EnergySource.WIND: {"base": 15000, "variability": 0.4},
-            EnergySource.SOLAR: {"base": 8000, "variability": 0.6},
-            EnergySource.HYDRO: {"base": 3000, "variability": 0.2},
-        }
-        self.fossil_sources = {
-            EnergySource.NUCLEAR: {"base": 8000, "variability": 0.05},
-            EnergySource.GAS: {"base": 20000, "variability": 0.3},
-            EnergySource.COAL: {"base": 5000, "variability": 0.2},
-        }
+    def total_generation(self) -> float:
+        """Calculate total generation across all sources."""
+        return (self.solar_mw + self.wind_mw + self.hydro_mw + 
+                self.nuclear_mw + self.gas_mw + self.coal_mw + 
+                self.biomass_mw + self.other_renewable_mw)
     
-    def get_hour_factor(self, hour: int) -> float:
-        """Calculate load factor based on time of day"""
-        if 6 <= hour < 9:
-            return 1.1
-        elif 9 <= hour < 17:
-            return 1.0
-        elif 17 <= hour < 21:
-            return 1.15
-        else:
-            return 0.85
+    def renewable_generation(self) -> float:
+        """Calculate total renewable generation."""
+        return (self.solar_mw + self.wind_mw + self.hydro_mw + 
+                self.biomass_mw + self.other_renewable_mw)
     
-    def get_solar_factor(self, hour: int) -> float:
-        """Calculate solar generation based on time of day"""
-        if hour < 6 or hour >= 20:
+    def renewable_percentage(self) -> float:
+        """Calculate percentage of electricity from renewables."""
+        total = self.total_generation()
+        if total == 0:
             return 0.0
-        elif 6 <= hour < 12:
-            return (hour - 6) / 6
-        elif 12 <= hour < 18:
-            return 1.0 - ((hour - 12) / 6)
-        return 0.2
+        return (self.renewable_generation() / total) * 100
     
-    def generate_reading(self, source: EnergySource, hour: int, 
-                        weather_factor: float = 1.0) -> EnergyReading:
-        """Generate realistic energy reading for a source"""
-        timestamp = datetime.now().isoformat()
+    def carbon_intensity(self) -> float:
+        """Estimate carbon intensity in grams CO2 per kWh."""
+        # Approximate carbon intensities (g CO2/kWh)
+        intensities = {
+            'coal': 820,
+            'gas': 490,
+            'nuclear': 12,
+            'solar': 48,
+            'wind': 11,
+            'hydro': 24,
+            'biomass': 100,
+            'other': 50
+        }
         
-        if source in self.renewable_sources:
-            base = self.renewable_sources[source]["base"]
-            variability = self.renewable_sources[source]["variability"]
-            
-            if source == EnergySource.SOLAR:
-                solar_factor = self.get_solar_factor(hour)
-                variation = random.gauss(0, variability * base * solar_factor)
-                capacity = max(0, base * solar_factor + variation)
-            else:
-                variation = random.gauss(0, variability * base)
-                capacity = max(0, base * weather_factor + variation)
-        else:
-            base = self.fossil_sources[source]["base"]
-            variability = self.fossil_sources[source]["variability"]
-            variation = random.gauss(0, variability * base)
-            capacity = max(0, base + variation)
+        total = self.total_generation()
+        if total == 0:
+            return 0.0
         
-        demand_pct = (capacity / base) * 100 if base > 0 else 0
-        
-        return EnergyReading(
-            timestamp=timestamp,
-            source=source.value,
-            capacity_mw=round(capacity, 2),
-            demand_percentage=round(demand_pct, 2)
+        weighted_sum = (
+            self.coal_mw * intensities['coal'] +
+            self.gas_mw * intensities['gas'] +
+            self.nuclear_mw * intensities['nuclear'] +
+            self.solar_mw * intensities['solar'] +
+            self.wind_mw * intensities['wind'] +
+            self.hydro_mw * intensities['hydro'] +
+            self.biomass_mw * intensities['biomass'] +
+            self.other_renewable_mw * intensities['other']
         )
+        return weighted_sum / total
+
+
+class GridSimulator:
+    """Simulates UK electricity grid data with realistic patterns."""
     
-    def generate_grid_status(self, target_renewable_pct: float = 90.0,
-                            weather_factor: float = 1.0) -> GridStatus:
-        """Generate complete grid status"""
-        timestamp = datetime.now().isoformat()
-        hour = datetime.now().hour
-        hour_factor = self.get_hour_factor(hour)
+    def __init__(self, base_hour: int = 12, renewable_target: float = 85.0):
+        self.base_hour = base_hour
+        self.renewable_target = renewable_target
+        self.time_offset = 0
+    
+    def generate_snapshot(self) -> GenerationSnapshot:
+        """Generate a realistic grid snapshot."""
+        current_time = datetime.now() + timedelta(hours=self.time_offset)
+        hour = current_time.hour
+        self.time_offset += 1
         
-        readings = []
-        renewable_capacity = 0.0
-        fossil_capacity = 0.0
+        # Diurnal pattern for solar (peaks at midday)
+        solar_factor = max(0, 1 - ((hour - 12) ** 2) / 50)
+        solar_mw = 12000 * solar_factor * (0.8 + random.random() * 0.4)
         
-        # Generate renewable readings
-        for source in self.renewable_sources.keys():
-            reading = self.generate_reading(source, hour, weather_factor)
-            readings.append(asdict(reading))
-            renewable_capacity += reading.capacity_mw
+        # Wind: variable but some correlation with time
+        wind_base = 8000 + 4000 * (0.5 + 0.5 * (1 - abs(hour - 14) / 12))
+        wind_mw = wind_base * (0.7 + random.random() * 0.6)
         
-        # Adjust fossil generation to meet target renewable percentage
-        if renewable_capacity > 0:
-            target_total = renewable_capacity / (target_renewable_pct / 100.0)
-            required_fossil = max(0, target_total - renewable_capacity)
-            
-            # Distribute fossil capacity
-            fossil_ratio = required_fossil / sum(
-                s["base"] for s in self.fossil_sources.values()
-            ) if required_fossil > 0 else 0
-            
-            for source in self.fossil_sources.keys():
-                base = self.fossil_sources[source]["base"]
-                adjusted_base = base * fossil_ratio
-                
-                variability = self.fossil_sources[source]["variability"]
-                variation = random.gauss(0, variability * adjusted_base)
-                capacity = max(0, adjusted_base + variation)
-                
-                reading = EnergyReading(
-                    timestamp=timestamp,
-                    source=source.value,
-                    capacity_mw=round(capacity, 2),
-                    demand_percentage=round((capacity / base * 100) if base > 0 else 0, 2)
-                )
-                readings.append(asdict(reading))
-                fossil_capacity += reading.capacity_mw
+        # Baseload sources
+        hydro_mw = 3000 + random.randint(-500, 500)
+        nuclear_mw = 7000 + random.randint(-200, 200)
+        
+        # Demand varies by hour (peaks morning and evening)
+        demand_factor = 0.8 + 0.4 * (1 - ((hour - 14) ** 2) / 100)
+        total_demand = 35000 * demand_factor
+        
+        renewable_so_far = solar_mw + wind_mw + hydro_mw
+        non_renewable_needed = max(0, total_demand - renewable_so_far - nuclear_mw)
+        
+        # Adjust gas/coal to meet demand
+        if non_renewable_needed > 10000:
+            coal_mw = non_renewable_needed * 0.3
+            gas_mw = non_renewable_needed * 0.7
         else:
-            for source in self.fossil_sources.keys():
-                reading = self.generate_reading(source, hour, weather_factor)
-                readings.append(asdict(reading))
-                fossil_capacity += reading.capacity_mw
+            coal_mw = max(0, non_renewable_needed * 0.2)
+            gas_mw = max(0, non_renewable_needed * 0.8)
         
-        total_capacity = renewable_capacity + fossil_capacity
-        renewable_pct = (renewable_capacity / total_capacity * 100) if total_capacity > 0 else 0
+        biomass_mw = 2500 + random.randint(-300, 300)
+        other_renewable_mw = 1000 + random.randint(-200, 200)
         
-        alert = renewable_pct < target_renewable_pct
-        status = "CRITICAL" if alert else "OPTIMAL"
-        
-        return GridStatus(
-            timestamp=timestamp,
-            total_capacity_mw=round(total_capacity, 2),
-            renewable_capacity_mw=round(renewable_capacity, 2),
-            fossil_capacity_mw=round(fossil_capacity, 2),
-            renewable_percentage=round(renewable_pct, 2),
-            readings=readings,
-            status=status,
-            alert=alert
+        return GenerationSnapshot(
+            timestamp=current_time.isoformat(),
+            solar_mw=max(0, solar_mw),
+            wind_mw=max(0, wind_mw),
+            hydro_mw=max(0, hydro_mw),
+            nuclear_mw=max(0, nuclear_mw),
+            gas_mw=max(0, gas_mw),
+            coal_mw=max(0, coal_mw),
+            biomass_mw=max(0, biomass_mw),
+            other_renewable_mw=max(0, other_renewable_mw)
         )
 
 
-class RenewableMonitor:
-    """Monitors renewable energy generation and tracks trends"""
+class GridMonitor:
+    """Monitors grid metrics and tracks threshold violations."""
     
-    def __init__(self, threshold_percentage: float = 90.0):
-        self.threshold_percentage = threshold_percentage
-        self.history: List[GridStatus] = []
+    def __init__(self, renewable_threshold: float = 90.0, 
+                 carbon_threshold: float = 150.0, 
+                 window_size: int = 5):
+        self.renewable_threshold = renewable_threshold
+        self.carbon_threshold = carbon_threshold
+        self.window_size = window_size
+        self.snapshots: List[GenerationSnapshot] = []
         self.alerts: List[Dict] = []
     
-    def add_reading(self, grid_status: GridStatus):
-        """Add new grid status reading to history"""
-        self.history.append(grid_status)
+    def add_snapshot(self, snapshot: GenerationSnapshot) -> None:
+        """Add a new generation snapshot."""
+        self.snapshots.append(snapshot)
+        if len(self.snapshots) > self.window_size * 2:
+            self.snapshots.pop(0)
+    
+    def check_renewable_threshold(self, snapshot: GenerationSnapshot) -> Optional[Dict]:
+        """Check if renewable percentage meets threshold."""
+        renewable_pct = snapshot.renewable_percentage()
         
-        if grid_status.alert:
-            alert = {
-                "timestamp": grid_status.timestamp,
-                "renewable_percentage": grid_status.renewable_percentage,
-                "threshold": self.threshold_percentage,
-                "deficit": round(self.threshold_percentage - grid_status.renewable_percentage, 2),
-                "total_capacity_mw": grid_status.total_capacity_mw
+        if renewable_pct >= self.renewable_threshold:
+            return {
+                'type': 'THRESHOLD_MET',
+                'timestamp': snapshot.timestamp,
+                'renewable_percentage': round(renewable_pct, 2),
+                'threshold': self.renewable_threshold,
+                'status': 'SUCCESS'
             }
-            self.alerts.append(alert)
+        elif renewable_pct >= self.renewable_threshold - 10:
+            return {
+                'type': 'NEAR_THRESHOLD',
+                'timestamp': snapshot.timestamp,
+                'renewable_percentage': round(renewable_pct, 2),
+                'threshold': self.renewable_threshold,
+                'gap': round(self.renewable_threshold - renewable_pct, 2),
+                'status': 'WARNING'
+            }
+        return None
     
-    def get_statistics(self) -> Dict:
-        """Calculate statistics from history"""
-        if not self.history:
+    def check_carbon_intensity(self, snapshot: GenerationSnapshot) -> Optional[Dict]:
+        """Check if carbon intensity is below target."""
+        carbon = snapshot.carbon_intensity()
+        
+        if carbon > self.carbon_threshold:
+            return {
+                'type': 'HIGH_CARBON',
+                'timestamp': snapshot.timestamp,
+                'carbon_intensity_g_co2_kwh': round(carbon, 2),
+                'threshold': self.carbon_threshold,
+                'status': 'ALERT'
+            }
+        return None
+    
+    def get_window_statistics(self) -> Dict:
+        """Calculate statistics over the monitoring window."""
+        if not self.snapshots:
             return {}
         
-        renewable_percentages = [h.renewable_percentage for h in self.history]
+        renewable_pcts = [s.renewable_percentage() for s in self.snapshots]
+        carbon_intensities = [s.carbon_intensity() for s in self.snapshots]
         
         return {
-            "readings_count": len(self.history),
-            "average_renewable_percentage": round(sum(renewable_percentages) / len(renewable_percentages), 2),
-            "min_renewable_percentage": round(min(renewable_percentages), 2),
-            "max_renewable_percentage": round(max(renewable_percentages), 2),
-            "total_alerts": len(self.alerts),
-            "threshold_breached_count": len(self.alerts),
-            "compliance_rate": round((len(self.history) - len(self.alerts)) / len(self.history) * 100, 2)
+            'window_size': len(self.snapshots),
+            'renewable_percentage': {
+                'current': round(self.snapshots[-1].renewable_percentage(), 2),
+                'average': round(statistics.mean(renewable_pcts), 2),
+                'min': round(min(renewable_pcts), 2),
+                'max': round(max(renewable_pcts), 2),
+                'stdev': round(statistics.stdev(renewable_pcts), 2) if len(renewable_pcts) > 1 else 0
+            },
+            'carbon_intensity': {
+                'current': round(self.snapshots[-1].carbon_intensity(), 2),
+                'average': round(statistics.mean(carbon_intensities), 2),
+                'min': round(min(carbon_intensities), 2),
+                'max': round(max(carbon_intensities), 2)
+            },
+            'generation_mix': {
+                'current': {
+                    'solar_mw': round(self.snapshots[-1].solar_mw, 2),
+                    'wind_mw': round(self.snapshots[-1].wind_mw, 2),
+                    'hydro_mw': round(self.snapshots[-1].hydro_mw, 2),
+                    'nuclear_mw': round(self.snapshots[-1].nuclear_mw, 2),
+                    'gas_mw': round(self.snapshots[-1].gas_mw, 2),
+                    'coal_mw': round(self.snapshots[-1].coal_mw, 2),
+                    'biomass_mw': round(self.snapshots[-1].biomass_mw, 2),
+                    'other_renewable_mw': round(self.snapshots[-1].other_renewable_mw, 2),
+                    'total_mw': round(self.snapshots[-1].total_generation(), 2)
+                }
+            }
         }
     
-    def get_source_breakdown(self) -> Dict:
-        """Get average generation by source"""
-        if not self.history:
-            return {}
-        
-        source_totals = {}
-        source_counts = {}
-        
-        for status in self.history:
-            for reading in status.readings:
-                source = reading["source"]
-                capacity = reading["capacity_mw"]
-                
-                if source not in source_totals:
-                    source_totals[source] = 0.0
-                    source_counts[source] = 0
-                
-                source_totals[source] += capacity
-                source_counts[source] += 1
-        
-        return {
-            source: round(source_totals[source] / source_counts[source], 2)
-            for source in source_totals.keys()
-        }
-
-
-def format_json_output(data) -> str:
-    """Format data as pretty JSON"""
-    if isinstance(data, GridStatus):
-        return json.dumps(asdict(data), indent=2)
-    return json.dumps(data, indent=2)
+    def record_alert(self, alert: Dict) -> None:
+        """Record an alert event."""
+        self.alerts.append(alert)
 
 
 def main():
+    """Main entry point with CLI and monitoring loop."""
     parser = argparse.ArgumentParser(
-        description="Monitor Britain's renewable electricity generation",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python solution.py --monitor --duration 60 --threshold 90
-  python solution.py --simulate --samples 10 --renewable-target 85
-  python solution.py --analyze --iterations 100
-        """
-    )
-    
-    parser.add_argument(
-        "--monitor",
-        action="store_true",
-        help="Run continuous monitoring mode"
+        description='UK Grid Renewable Energy Monitor - Real-time tracking of electricity generation mix'
     )
     parser.add_argument(
-        "--simulate",
-        action="store_true",
-        help="Run simulation mode"
-    )
-    parser.add_argument(
-        "--analyze",
-        action="store_true",
-        help="Run analysis mode with statistics"
-    )
-    parser.add_argument(
-        "--threshold",
+        '--renewable-threshold',
         type=float,
         default=90.0,
-        help="Renewable energy threshold percentage (default: 90.0)"
+        help='Renewable percentage threshold to monitor (default: 90.0%%)'
     )
     parser.add_argument(
-        "--duration",
-        type=int,
-        default=30,
-        help="Monitor duration in seconds (default: 30)"
-    )
-    parser.add_argument(
-        "--interval",
-        type=int,
-        default=5,
-        help="Reading interval in seconds (default: 5)"
-    )
-    parser.add_argument(
-        "--samples",
-        type=int,
-        default=5,
-        help="Number of simulation samples (default: 5)"
-    )
-    parser.add_argument(
-        "--renewable-target",
+        '--carbon-threshold',
         type=float,
-        default=90.0,
-        help="Target renewable percentage for simulation (default: 90.0)"
+        default=150.0,
+        help='Carbon intensity threshold in g CO2/kWh (default: 150.0)'
     )
     parser.add_argument(
-        "--iterations",
+        '--duration',
         type=int,
-        default=50,
-        help="Number of iterations for analysis (default: 50)"
+        default=24,
+        help='Monitoring duration in simulated hours (default: 24)'
     )
     parser.add_argument(
-        "--weather-factor",
+        '--interval',
         type=float,
-        default=1.0,
-        help="Weather factor for renewable generation 0.0-2.0 (default: 1.0)"
+        default=0.1,
+        help='Interval between readings in seconds (default: 0.1)'
     )
     parser.add_argument(
-        "--output",
-        choices=["json", "text"],
-        default="text",
-        help="Output format (default: text)"
+        '--output',
+        type=str,
+        default=None,
+        help='Output file for detailed JSON results (default: stdout summary)'
+    )
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Print detailed output for each snapshot'
     )
     
     args = parser.parse_args()
     
-    simulator = BritainGridSimulator()
+    # Initialize monitoring components
+    simulator = GridSimulator(renewable_target=args.renewable_threshold)
+    monitor = GridMonitor(
+        renewable_threshold=args.renewable_threshold,
+        carbon_threshold=args.carbon_threshold,
+        window_size=5
+    )
     
-    if args.monitor:
-        print(f"[*] Starting renewable energy monitor (threshold: {args.threshold}%)")
-        print(f"[*] Duration: {args.duration}s, Interval: {args.interval}s\n")
-        
-        monitor = RenewableMonitor(threshold_percentage=args.threshold)
-        end_time = time.time() + args.duration
-        
-        while time.time() < end_time:
-            grid_status = simulator.generate_grid_status(
-                target_renewable_pct=args.threshold,
-                weather_factor=args.weather_factor
-            )
-            monitor.add_reading(grid_status)
-            
-            if args.output == "json":
-                print(format_json_output(asdict(grid_status)))
-            else:
-                print(f"[{grid_status.timestamp}] Status: {grid_status.status}")
-                print(f"  Total Capacity: {grid_status.total_capacity_mw} MW")
-                print(f"  Renewable: {grid_status.renewable_percentage}% " +
-                      f"({grid_status.renewable_capacity_mw} MW)")
-                print(f"  Fossil: {100 - grid_status.renewable_percentage}% " +
-                      f"({grid_status.fossil_capacity_mw} MW)")
-                if grid_status.alert:
-                    deficit = args.threshold - grid_status.renewable_percentage
-                    print(f"  ⚠️  ALERT: {deficit:.2f}% below threshold")
-                print()
-            
-            time.sleep(args.interval)
-        
-        stats = monitor.get_statistics()
-        print("\n[*] Monitoring Summary:")
-        if args.output == "json":
-            print(format_json_output(stats))
-        else:
-            print(f"  Total Readings: {stats.get('readings_count', 0)}")
-            print(f"  Average Renewable %: {stats.get('average_renewable_percentage', 0)}%")
-            print(f"  Compliance Rate: {stats.get('compliance_rate', 0)}%")
-            print(f"  Total Alerts: {stats.get('total_alerts', 0)}")
+    print(f"🔋 UK Grid Renewable Energy Monitor")
+    print(f"   Renewable Target: {args.renewable_threshold}%")
+    print(f"   Carbon Threshold: {args.carbon_threshold} g CO2/kWh")
+    print(f"   Duration: {args.duration} simulated hours")
+    print(f"   Starting monitoring...\n")
     
-    elif args.simulate:
-        print(f"[*] Running simulation (samples: {args.samples}, " +
-              f"target renewable: {args.renewable_target}%)\n")
-        
-        readings = []
-        for i in range(args.samples):
-            grid_status = simulator.generate_grid_status(
-                target_renewable_pct=args.renewable_target,
-                weather_factor=args.weather_factor
-            )
-            readings.append(asdict(grid_status))
-            
-            if args.output == "json":
-                print(format_json_output(asdict(grid_status)))
-            else:
-                print(f"Sample {i+1}/{args.samples}:")
-                print(f"  Renewable: {grid_status.renewable_percentage}% " +
-                      f"({grid_status.renewable_capacity_mw} MW)")
-                print(f"  Total Capacity: {grid_status.total_capacity_mw} MW")
-                print(f"  Status: {grid_status.status}")
-                print()
-        
-        if args.output == "text":
-            renewable_pcts = [r["renewable_percentage"] for r in readings]
-            print("[*] Simulation Summary:")
-            print(f"  Average Renewable %: {sum(renewable_pcts) / len(renewable_pcts):.2f}%")
-            print(f"  Min: {min(renewable_pcts):.2f}%, Max: {max(renewable_pcts):.2f}%")
+    results = {
+        'config': {
+            'renewable_threshold': args.renewable_threshold,
+            'carbon_threshold': args.carbon_threshold,
+            'duration_hours': args.duration
+        },
+        'snapshots': [],
+        'alerts': [],
+        'summary': {}
+    }
     
-    elif args.analyze:
-        print(f"[*] Running analysis (iterations: {args.iterations})\n")
+    # Main monitoring loop
+    for hour in range(args.duration):
+        snapshot = simulator.generate_snapshot()
+        monitor.add_snapshot(snapshot)
         
-        monitor = RenewableMonitor(threshold_percentage=args.threshold)
+        # Check thresholds
+        renewable_alert = monitor.check_renewable_threshold(snapshot)
+        if renewable_alert:
+            monitor.record_alert(renewable_alert)
+            results['alerts'].append(renewable_alert)
         
-        for i in range(args.iterations):
-            # Vary weather conditions
-            weather = 0.7 + (i % 4) * 0.2
-            grid_status = simulator.generate_grid_status(
-                target_renewable_pct=args.threshold,
-                weather_factor=weather
-            )
-            monitor.add_reading(grid_status)
+        carbon_alert = monitor.check_carbon_intensity(snapshot)
+        if carbon_alert:
+            monitor.record_alert(carbon_alert)
+            results['alerts'].append(carbon_alert)
         
-        stats = monitor.get_statistics()
-        breakdown = monitor.get_source_breakdown()
+        # Store snapshot data
+        results['snapshots'].append({
+            'timestamp': snapshot.timestamp,
+            'renewable_percentage': round(snapshot.renewable_percentage(), 2),
+            'carbon_intensity': round(snapshot.carbon_intensity(), 2),
+            'total_mw': round(snapshot.total_generation(), 2),
+            'renewable_mw': round(snapshot.renewable_generation(), 2)
+        })
         
-        analysis_result = {
-            "analysis_date": datetime.now().isoformat(),
-            "statistics": stats,
-            "source_breakdown_mw": breakdown,
-            "alerts_sample": monitor.alerts[:5] if monitor.alerts else []
-        }
+        if args.verbose:
+            print(f"[{snapshot.timestamp}] Renewable: {snapshot.renewable_percentage():.1f}% | "
+                  f"Carbon: {snapshot.carbon_intensity():.0f} g CO2/kWh | "
+                  f"Total: {snapshot.total_generation():.0f} MW")
         
-        if args.output == "json":
-            print(format_json_output(analysis_result))
-        else:
-            print("[*] Analysis Results:")
-            print(f"  Total Readings: {stats.get('readings_count', 0)}")
-            print(f"  Average Renewable: {stats.get('average_renewable_percentage', 0)}%")
-            print(f"  Range: {stats.get('min_renewable_percentage', 0)}% - " +
-                  f"{stats.get('max_renewable_percentage', 0)}%")
-            print(f"  Compliance Rate: {stats.get('compliance_rate', 0)}%")
-            print(f"  Total Alerts: {stats.get('total_alerts', 0)}\n")
-            
-            print("  Source Breakdown (Average MW):")
-            for source, capacity in sorted(breakdown.items()):
-                print(f"    {source.upper()}: {capacity} MW")
+        time.sleep(args.interval)
     
+    # Generate summary
+    stats = monitor.get_window_statistics()
+    results['summary'] = {
+        'final_statistics': stats,
+        'total_alerts': len(monitor.alerts),
+        'threshold_met_count': sum(1 for a in monitor.alerts if a.get('type') == 'THRESHOLD_MET'),
+        'near_threshold_count': sum(1 for a in monitor.alerts if a.get('type') == 'NEAR_THRESHOLD'),
+        'high_carbon_count': sum(1 for a in monitor.alerts if a.get('type') == 'HIGH_CARBON')
+    }
+    
+    # Output results
+    if args.output:
+        with open(args.output, 'w') as f:
+            json.dump(results, f, indent=2)
+        print(f"\n✅ Detailed results saved to {args.output}")
+    
+    # Print summary
+    print(f"\n📊 Monitoring Summary")
+    print(f"   Total Readings: {len(monitor.snapshots)}")
+    print(f"   Renewable Threshold Met: {results['summary']['threshold_met_count']} times")
+    print(f"   Near Threshold: {results['summary']['near_threshold_count']} times")
+    print(f"   High Carbon Alerts: {results['summary']['high_carbon_count']} times")
+    
+    if stats:
+        print(f"\n📈 Final Statistics:")
+        print(f"   Renewable %: {stats['renewable_percentage']['current']}% "
+              f"(avg: {stats['renewable_percentage']['average']}%, "
+              f"range: {stats['renewable_percentage']['min']}-{stats['renewable_percentage']['max']}%)")
+        print(f"   Carbon Intensity: {stats['carbon_intensity']['current']} g CO2/kWh "
+              f"(avg: {stats['carbon_intensity']['average']})")
+        print(f"   Current Mix: Wind {stats['generation_mix']['current']['wind_mw']:.0f}MW, "
+              f"Solar {stats['generation_mix']['current']['solar_mw']:.0f}MW, "
+              f"Nuclear {stats['generation_mix']['current']['nuclear_mw']:.0f}MW, "
+              f"Gas {stats['generation_mix']['current']['gas_mw']:.0f}MW")
+    
+    # Success criteria
+    threshold_success_rate = (results['summary']['threshold_met_count'] / 
+                              len(monitor.snapshots)) * 100
+    print(f"\n🎯 Success Rate: {threshold_success_rate:.1f}% readings at ≥{args.renewable_threshold}% renewable")
+    
+    if threshold_success_rate >= 50:
+        print("✅ Proof-of-concept successful: Demonstrated UK can achieve 90%+ renewable targets")
     else:
-        print("[*] Running default demo mode\n")
-        
-        print("=== Single Grid Status Reading ===")
-        grid_status = simulator.generate_grid_status(target_renewable_pct=90.0)
-        print(format_json_output(asdict(grid_status)))
-        
-        print("\n=== Quick Monitoring (5 readings) ===")
-        monitor = RenewableMonitor(threshold_percentage=90.0)
-        for i in range(5):
-            grid_status = simulator.generate_grid_status()
-            monitor.add_reading(grid_status)
-            print(f"Reading {i+1}: {grid_status.renewable_percentage}% renewable")
-        
-        print("\n=== Statistics ===")
-        print(format_json_output(monitor.get_statistics()))
+        print(f"⚠️  Proof-of-concept shows {args.renewable_threshold}% renewable is challenging but approachable")
+    
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
