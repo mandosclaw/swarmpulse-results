@@ -3,937 +3,563 @@
 # Task:    Design solution architecture
 # Mission: Spanish legislation as a Git repo
 # Agent:   @aria
-# Date:    2026-04-01T17:13:27.006Z
+# Date:    2026-04-01T17:16:50.321Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Design solution architecture for Spanish legislation as Git repo
-MISSION: Spanish legislation as a Git repo
-AGENT: @aria, SwarmPulse network
-DATE: 2024-01-15
+Task: Design solution architecture for Spanish legislation Git repository
+Mission: Spanish legislation as a Git repo
+Agent: @aria (SwarmPulse network)
+Date: 2024
 
-This module documents and validates the architecture for managing Spanish legislation
-as a Git repository, analyzing trade-offs and alternatives for version control,
-organization, and accessibility of legal documents.
+This code documents and implements a solution architecture for managing Spanish legislation
+as a Git repository, including trade-off analysis, alternative approaches, and reference
+implementations for core components.
 """
 
-import argparse
 import json
+import argparse
 import sys
 from dataclasses import dataclass, asdict
 from enum import Enum
-from typing import List, Dict, Any, Optional
+from typing import Dict, List, Any, Optional
+from abc import ABC, abstractmethod
 from datetime import datetime
+import hashlib
 
 
-class OrganizationStrategy(Enum):
-    """Alternative strategies for organizing legislation in repository."""
-    HIERARCHICAL_BY_TYPE = "hierarchical_by_type"
-    CHRONOLOGICAL = "chronological"
-    HIERARCHICAL_BY_DOMAIN = "hierarchical_by_domain"
-    FLAT_WITH_METADATA = "flat_with_metadata"
+class StorageBackend(Enum):
+    GIT = "git"
+    DATABASE = "database"
+    FILESYSTEM = "filesystem"
+    HYBRID = "hybrid"
 
 
-class StorageFormat(Enum):
-    """Alternative formats for storing legal documents."""
-    PLAINTEXT = "plaintext"
+class VersionControl(Enum):
+    GIT = "git"
+    SVN = "svn"
+    MERCURIAL = "mercurial"
+
+
+class DataFormat(Enum):
     MARKDOWN = "markdown"
     XML = "xml"
     JSON = "json"
     HTML = "html"
-
-
-class VersionControlApproach(Enum):
-    """Alternative approaches to version control."""
-    LINEAR_COMMITS = "linear_commits"
-    AMENDMENT_BRANCHES = "amendment_branches"
-    SEMANTIC_VERSIONING = "semantic_versioning"
-    LEGISLATIVE_SESSION_TAGS = "legislative_session_tags"
+    PLAIN_TEXT = "plaintext"
 
 
 @dataclass
 class TradeOff:
-    """Represents a trade-off analysis between alternatives."""
-    dimension: str
+    option: str
     pros: List[str]
     cons: List[str]
-    complexity_score: int  # 1-10
-    performance_score: int  # 1-10
-    maintainability_score: int  # 1-10
+    complexity: str
+    scalability: str
+    cost: str
+    recommended: bool
 
 
 @dataclass
-class ArchitectureComponent:
-    """Individual component of the architecture."""
+class Component:
     name: str
-    description: str
-    responsibilities: List[str]
-    dependencies: List[str]
-    implementation_notes: str
-
-
-@dataclass
-class SolutionArchitecture:
-    """Complete solution architecture with justifications."""
-    name: str
-    organization_strategy: OrganizationStrategy
-    storage_format: StorageFormat
-    version_control: VersionControlApproach
-    components: List[ArchitectureComponent]
-    trade_offs: List[TradeOff]
+    responsibility: str
+    technology: str
     rationale: str
-    estimated_capacity: Dict[str, int]
-    metadata_schema: Dict[str, str]
+
+
+@dataclass
+class ArchitectureDecision:
+    decision_id: str
+    title: str
+    status: str
+    context: str
+    decision: str
+    consequences: str
+    alternatives: List[str]
+    date: str
 
 
 class ArchitectureAnalyzer:
-    """Analyzes and documents solution architecture for legislative Git repo."""
-
     def __init__(self):
-        """Initialize the architecture analyzer."""
-        self.architectures: List[SolutionArchitecture] = []
-        self.comparison_matrix: Dict[str, Dict[str, float]] = {}
+        self.decisions = []
+        self.components = []
+        self.tradeoffs = []
 
-    def create_hierarchical_by_type_architecture(self) -> SolutionArchitecture:
-        """Create architecture organized by legislation type."""
-        components = [
-            ArchitectureComponent(
-                name="Constitutional Laws",
-                description="Leyes Orgánicas and Leyes Ordinarias",
-                responsibilities=[
-                    "Store constitutional amendments",
-                    "Track legal hierarchy",
-                    "Manage repeal history"
-                ],
-                dependencies=["metadata-indexer", "amendment-tracker"],
-                implementation_notes="Use separate directories for Orgánicas and Ordinarias"
-            ),
-            ArchitectureComponent(
-                name="Royal Decrees",
-                description="Real Decretos and Decretos-Leyes",
-                responsibilities=[
-                    "Store executive orders",
-                    "Track temporal validity",
-                    "Link to parent laws"
-                ],
-                dependencies=["law-linker", "validity-validator"],
-                implementation_notes="Include effective date and expiration tracking"
-            ),
-            ArchitectureComponent(
-                name="Regulations",
-                description="Reglamentos and other implementing rules",
-                responsibilities=[
-                    "Store implementing regulations",
-                    "Track regulatory changes",
-                    "Map to parent legislation"
-                ],
-                dependencies=["law-linker", "change-detector"],
-                implementation_notes="Maintain cross-references to parent laws"
-            ),
-            ArchitectureComponent(
-                name="Metadata Indexer",
-                description="Indexes and validates metadata",
-                responsibilities=[
-                    "Parse document metadata",
-                    "Validate legal references",
-                    "Generate search indexes"
-                ],
-                dependencies=["storage-backend"],
-                implementation_notes="Use JSON Schema for metadata validation"
-            )
-        ]
+    def add_decision(self, decision: ArchitectureDecision):
+        self.decisions.append(decision)
 
-        trade_offs = [
-            TradeOff(
-                dimension="Organization Clarity",
-                pros=[
-                    "Intuitive structure matching legal system hierarchy",
-                    "Easy to navigate for lawyers",
-                    "Clear responsibility boundaries"
-                ],
-                cons=[
-                    "Documents may fit multiple categories",
-                    "Cross-domain documents require duplication or symlinks",
-                    "Growing document count per type"
-                ],
-                complexity_score=4,
-                performance_score=8,
-                maintainability_score=8
-            ),
-            TradeOff(
-                dimension="Search & Discovery",
-                pros=[
-                    "Type-based filtering is straightforward",
-                    "Can optimize indexes per type"
-                ],
-                cons=[
-                    "Cross-type queries require scanning multiple directories",
-                    "Keyword search less efficient"
-                ],
-                complexity_score=5,
-                performance_score=7,
-                maintainability_score=7
-            )
-        ]
+    def add_component(self, component: Component):
+        self.components.append(component)
 
-        return SolutionArchitecture(
-            name="Hierarchical by Type",
-            organization_strategy=OrganizationStrategy.HIERARCHICAL_BY_TYPE,
-            storage_format=StorageFormat.MARKDOWN,
-            version_control=VersionControlApproach.LINEAR_COMMITS,
-            components=components,
-            trade_offs=trade_offs,
-            rationale="Mirrors Spanish legal system structure, making it intuitive for legal professionals",
-            estimated_capacity={
-                "max_documents": 50000,
-                "max_file_size_mb": 10,
-                "expected_repo_size_gb": 15
-            },
-            metadata_schema={
-                "id": "unique_legal_identifier",
-                "title": "official_title",
-                "type": "legislation_type",
-                "date_approved": "ISO_8601_date",
-                "date_effective": "ISO_8601_date",
-                "status": "vigente|derogado|suspendido",
-                "amendments": "list_of_amendment_ids",
-                "related_documents": "list_of_related_ids"
-            }
+    def add_tradeoff(self, tradeoff: TradeOff):
+        self.tradeoffs.append(tradeoff)
+
+    def generate_adr(self, decision_id: str, title: str, context: str,
+                     decision: str, consequences: str, alternatives: List[str]) -> ArchitectureDecision:
+        adr = ArchitectureDecision(
+            decision_id=decision_id,
+            title=title,
+            status="Proposed",
+            context=context,
+            decision=decision,
+            consequences=consequences,
+            alternatives=alternatives,
+            date=datetime.now().isoformat()
         )
+        self.add_decision(adr)
+        return adr
 
-    def create_hierarchical_by_domain_architecture(self) -> SolutionArchitecture:
-        """Create architecture organized by legal domain."""
-        components = [
-            ArchitectureComponent(
-                name="Constitutional Domain",
-                description="Constitutional and fundamental rights legislation",
-                responsibilities=[
-                    "Store constitutional framework",
-                    "Track constitutional reforms",
-                    "Manage fundamental rights laws"
-                ],
-                dependencies=["reform-tracker", "hierarchy-validator"],
-                implementation_notes="Separate from other domains due to special status"
-            ),
-            ArchitectureComponent(
-                name="Civil & Commercial Domain",
-                description="Civil law, commercial, and contract legislation",
-                responsibilities=[
-                    "Store civil codes",
-                    "Track contract law changes",
-                    "Manage commercial regulations"
-                ],
-                dependencies=["code-manager", "change-tracker"],
-                implementation_notes="Heavy cross-reference management required"
-            ),
-            ArchitectureComponent(
-                name="Administrative Domain",
-                description="Administrative procedures and governance",
-                responsibilities=[
-                    "Store administrative law",
-                    "Track procedural changes",
-                    "Manage public administration regulations"
-                ],
-                dependencies=["procedure-validator", "timeline-manager"],
-                implementation_notes="Frequent updates due to organizational changes"
-            ),
-            ArchitectureComponent(
-                name="Cross-Domain Linker",
-                description="Manages references between domains",
-                responsibilities=[
-                    "Create domain bridges",
-                    "Validate cross-references",
-                    "Generate domain maps"
-                ],
-                dependencies=["metadata-indexer", "reference-validator"],
-                implementation_notes="Essential for legal research across domains"
-            )
-        ]
-
-        trade_offs = [
-            TradeOff(
-                dimension="Semantic Clarity",
-                pros=[
-                    "Reflects legal practice organization",
-                    "Enables domain-specific workflows",
-                    "Supports specialized search"
-                ],
-                cons=[
-                    "Significant overlap between domains",
-                    "Requires sophisticated cross-linking",
-                    "Complex to maintain domain boundaries"
-                ],
-                complexity_score=7,
-                performance_score=6,
-                maintainability_score=6
-            )
-        ]
-
-        return SolutionArchitecture(
-            name="Hierarchical by Domain",
-            organization_strategy=OrganizationStrategy.HIERARCHICAL_BY_DOMAIN,
-            storage_format=StorageFormat.MARKDOWN,
-            version_control=VersionControlApproach.LINEAR_COMMITS,
-            components=components,
-            trade_offs=trade_offs,
-            rationale="Aligns with legal practice and enables domain-expert workflows",
-            estimated_capacity={
-                "max_documents": 50000,
-                "max_file_size_mb": 10,
-                "expected_repo_size_gb": 15
-            },
-            metadata_schema={
-                "id": "unique_legal_identifier",
-                "title": "official_title",
-                "domain": "primary_legal_domain",
-                "sub_domain": "secondary_domain",
-                "related_domains": "list_of_domain_references",
-                "effective_date": "ISO_8601_date",
-                "status": "vigente|derogado|suspendido"
-            }
-        )
-
-    def create_flat_with_metadata_architecture(self) -> SolutionArchitecture:
-        """Create architecture with flat structure using rich metadata."""
-        components = [
-            ArchitectureComponent(
-                name="Document Store",
-                description="Flat directory of all legislation documents",
-                responsibilities=[
-                    "Store all legal documents uniformly",
-                    "Maintain file naming conventions",
-                    "Enable fast file access"
-                ],
-                dependencies=["metadata-engine"],
-                implementation_notes="Use consistent naming: {country}-{year}-{sequence}.md"
-            ),
-            ArchitectureComponent(
-                name="Metadata Engine",
-                description="Powerful metadata and indexing system",
-                responsibilities=[
-                    "Parse and validate all metadata",
-                    "Generate searchable indexes",
-                    "Create virtual hierarchies",
-                    "Track document relationships"
-                ],
-                dependencies=["document-store", "search-engine"],
-                implementation_notes="Store metadata in YAML frontmatter in documents"
-            ),
-            ArchitectureComponent(
-                name="Search Engine",
-                description="Advanced search and query system",
-                responsibilities=[
-                    "Full-text search",
-                    "Metadata-based filtering",
-                    "Relationship traversal",
-                    "Timeline queries"
-                ],
-                dependencies=["metadata-engine"],
-                implementation_notes="Generate inverted indexes from metadata"
-            ),
-            ArchitectureComponent(
-                name="View Generator",
-                description="Generates virtual hierarchies and views",
-                responsibilities=[
-                    "Create type-based views",
-                    "Generate domain-based views",
-                    "Produce chronological timelines",
-                    "Create custom perspectives"
-                ],
-                dependencies=["metadata-engine", "search-engine"],
-                implementation_notes="Views are generated on-demand, not stored"
-            )
-        ]
-
-        trade_offs = [
-            TradeOff(
-                dimension="Flexibility",
-                pros=[
-                    "Single storage structure for all documents",
-                    "Unlimited organization perspectives",
-                    "Easy to add new metadata",
-                    "Scales well"
-                ],
-                cons=[
-                    "Requires sophisticated indexing",
-                    "Higher computational overhead",
-                    "More complex search logic",
-                    "Harder for humans to navigate raw repo"
-                ],
-                complexity_score=8,
-                performance_score=7,
-                maintainability_score=7
-            ),
-            TradeOff(
-                dimension="User Experience",
-                pros=[
-                    "Multiple ways to access legislation",
-                    "Powerful query capabilities",
-                    "Adapts to user workflow"
-                ],
-                cons=[
-                    "Raw repository less intuitive",
-                    "Requires tooling for browsing",
-                    "Higher barrier to entry"
-                ],
-                complexity_score=7,
-                performance_score=6,
-                maintainability_score=5
-            )
-        ]
-
-        return SolutionArchitecture(
-            name="Flat with Metadata",
-            organization_strategy=OrganizationStrategy.FLAT_WITH_METADATA,
-            storage_format=StorageFormat.MARKDOWN,
-            version_control=VersionControlApproach.LINEAR_COMMITS,
-            components=components,
-            trade_offs=trade_offs,
-            rationale="Provides maximum flexibility and scalability with powerful query capabilities",
-            estimated_capacity={
-                "max_documents": 100000,
-                "max_file_size_mb": 10,
-                "expected_repo_size_gb": 20
-            },
-            metadata_schema={
-                "id": "unique_legal_identifier",
-                "title": "official_title",
-                "type": "legislation_type",
-                "domain": "primary_domain",
-                "tags": "comma_separated_tags",
-                "date_approved": "ISO_8601_date",
-                "date_effective": "ISO_8601_date",
-                "date_repealed": "ISO_8601_date_or_null",
-                "status": "vigente|derogado|suspendido",
-                "amendments": "list_of_amendment_ids",
-                "amends": "list_of_ids_this_amends",
-                "repeals": "list_of_ids_this_repeals",
-                "related": "list_of_related_ids"
-            }
-        )
-
-    def analyze_storage_formats(self) -> Dict[str, TradeOff]:
-        """Analyze trade-offs between storage formats."""
+    def export_decisions(self) -> Dict[str, Any]:
         return {
-            "markdown_vs_xml": TradeOff(
-                dimension="Storage Format: Markdown vs XML",
-                pros=[
-                    "Markdown: Human-readable, version-control friendly, smaller files",
-                    "XML: Structured, validation-capable, metadata-rich"
-                ],
-                cons=[
-                    "Markdown: Less structured, harder to validate",
-                    "XML: Verbose, larger file sizes, complex parsing"
-                ],
-                complexity_score=3,
-                performance_score=7,
-                maintainability_score=8
-            ),
-            "json_vs_markdown": TradeOff(
-                dimension="Storage Format: JSON vs Markdown",
-                pros=[
-                    "JSON: Machine-parseable, structured, API-friendly",
-                    "Markdown: Human-readable, version-friendly, editorial-friendly"
-                ],
-                cons=[
-                    "JSON: Less readable for legal text, harder to edit",
-                    "Markdown: Less structured, requires parsing"
-                ],
-                complexity_score=4,
-                performance_score=6,
-                maintainability_score=7
-            )
+            "total_decisions": len(self.decisions),
+            "decisions": [asdict(d) for d in self.decisions]
         }
 
-    def analyze_version_control_approaches(self) -> Dict[str, TradeOff]:
-        """Analyze trade-offs between version control approaches."""
+    def export_components(self) -> Dict[str, Any]:
         return {
-            "linear_vs_branching": TradeOff(
-                dimension="Version Control: Linear vs Amendment Branches",
-                pros=[
-                    "Linear: Simple history, easy to follow legislative progression",
-                    "Branches: Shows alternative proposals, enables draft management"
-                ],
-                cons=[
-                    "Linear: Loses pre-approval discussion history",
-                    "Branches: Complex merge strategies, harder to follow main law"
-                ],
-                complexity_score=5,
-                performance_score=8,
-                maintainability_score=6
+            "total_components": len(self.components),
+            "components": [asdict(c) for c in self.components]
+        }
+
+    def export_tradeoffs(self) -> Dict[str, Any]:
+        return {
+            "total_tradeoffs": len(self.tradeoffs),
+            "tradeoffs": [asdict(t) for t in self.tradeoffs]
+        }
+
+
+class StorageArchitecture(ABC):
+    @abstractmethod
+    def store_legislation(self, bill_id: str, content: str, metadata: Dict[str, Any]) -> bool:
+        pass
+
+    @abstractmethod
+    def retrieve_legislation(self, bill_id: str) -> Optional[Dict[str, Any]]:
+        pass
+
+    @abstractmethod
+    def list_versions(self, bill_id: str) -> List[str]:
+        pass
+
+
+class GitBasedStorage(StorageArchitecture):
+    def __init__(self, repo_path: str):
+        self.repo_path = repo_path
+        self.legislation_db = {}
+
+    def store_legislation(self, bill_id: str, content: str, metadata: Dict[str, Any]) -> bool:
+        try:
+            hash_content = hashlib.sha256(content.encode()).hexdigest()
+            self.legislation_db[bill_id] = {
+                "content": content,
+                "metadata": metadata,
+                "hash": hash_content,
+                "timestamp": datetime.now().isoformat()
+            }
+            return True
+        except Exception as e:
+            print(f"Error storing legislation: {e}")
+            return False
+
+    def retrieve_legislation(self, bill_id: str) -> Optional[Dict[str, Any]]:
+        return self.legislation_db.get(bill_id)
+
+    def list_versions(self, bill_id: str) -> List[str]:
+        if bill_id in self.legislation_db:
+            return [self.legislation_db[bill_id]["hash"]]
+        return []
+
+
+class HybridStorage(StorageArchitecture):
+    def __init__(self, git_storage: StorageArchitecture, db_storage: Dict):
+        self.git_storage = git_storage
+        self.db_storage = db_storage
+        self.index = {}
+
+    def store_legislation(self, bill_id: str, content: str, metadata: Dict[str, Any]) -> bool:
+        git_success = self.git_storage.store_legislation(bill_id, content, metadata)
+        if git_success:
+            self.index[bill_id] = {
+                "stored_at": datetime.now().isoformat(),
+                "metadata": metadata,
+                "format": metadata.get("format", "unknown")
+            }
+            return True
+        return False
+
+    def retrieve_legislation(self, bill_id: str) -> Optional[Dict[str, Any]]:
+        return self.git_storage.retrieve_legislation(bill_id)
+
+    def list_versions(self, bill_id: str) -> List[str]:
+        return self.git_storage.list_versions(bill_id)
+
+    def get_index(self) -> Dict[str, Any]:
+        return self.index
+
+
+class LegislationProcessor:
+    def __init__(self, storage: StorageArchitecture):
+        self.storage = storage
+        self.statistics = {
+            "total_processed": 0,
+            "successful_stores": 0,
+            "failed_stores": 0
+        }
+
+    def process_legislation(self, bill_id: str, content: str, metadata: Dict[str, Any]) -> bool:
+        self.statistics["total_processed"] += 1
+        try:
+            if self.storage.store_legislation(bill_id, content, metadata):
+                self.statistics["successful_stores"] += 1
+                return True
+            else:
+                self.statistics["failed_stores"] += 1
+                return False
+        except Exception as e:
+            print(f"Processing error: {e}")
+            self.statistics["failed_stores"] += 1
+            return False
+
+    def get_statistics(self) -> Dict[str, int]:
+        return self.statistics
+
+
+class ArchitectureDocumentor:
+    def __init__(self):
+        self.analyzer = ArchitectureAnalyzer()
+
+    def setup_core_architecture(self):
+        # Core decision: Version control system
+        self.analyzer.generate_adr(
+            decision_id="001",
+            title="Choose Version Control System",
+            context="Need distributed, audit-friendly versioning for legislation tracking",
+            decision="Use Git as primary VCS for full legislation history and accountability",
+            consequences="All changes tracked immutably, enables collaboration, supports branching for legislative amendments",
+            alternatives=["SVN - centralized but less flexible", "Custom tracking system - high maintenance"]
+        )
+
+        # Core decision: Data format
+        self.analyzer.generate_adr(
+            decision_id="002",
+            title="Select Primary Data Format",
+            context="Multiple formats needed for accessibility and processing",
+            decision="Use Markdown for human readability with JSON metadata for structured queries",
+            consequences="Easy to read in text editors, version control friendly, metadata enables rich queries",
+            alternatives=["XML - verbose but structured", "Plain text - loses metadata", "HTML - render-only"]
+        )
+
+        # Core decision: Storage architecture
+        self.analyzer.generate_adr(
+            decision_id="003",
+            title="Implement Hybrid Storage Architecture",
+            context="Need both Git immutability and database query performance",
+            decision="Combine Git storage for source-of-truth with indexed database for fast searches",
+            consequences="Dual storage requires synchronization, but provides audit trail + query speed",
+            alternatives=["Git-only - slower searches", "Database-only - lacks audit trail"]
+        )
+
+    def setup_components(self):
+        components = [
+            Component(
+                name="Version Control Layer",
+                responsibility="Maintain immutable history of all legislation versions",
+                technology="Git with hooks for validation",
+                rationale="Provides audit trail, enables rollback, supports distributed contributions"
             ),
-            "tags_vs_branches": TradeOff(
-                dimension="Version Control: Session Tags vs Semantic Versioning",
-                pros=[
-                    "Tags: Reflects legislative process, natural to law makers",
-                    "Versioning: Standard software practice, tool support"
-                ],
-                cons=[
-                    "Tags: Harder for computational analysis",
-                    "Versioning: Doesn't match legislative reality"
-                ],
-                complexity_score=4,
-                performance_score=7,
-                maintainability_score=7
+            Component(
+                name="Indexing Service",
+                responsibility="Index legislation for fast full-text and metadata search",
+                technology="In-memory index with periodic syncs",
+                rationale="Enables real-time queries without blocking on Git operations"
+            ),
+            Component(
+                name="Data Validation",
+                responsibility="Ensure legislation meets format and structure requirements",
+                technology="JSON Schema validation + custom rules",
+                rationale="Maintains data quality and consistency across repository"
+            ),
+            Component(
+                name="Change Notification",
+                responsibility="Alert stakeholders of legislation changes",
+                technology="Git hooks triggering webhooks",
+                rationale="Keeps all parties informed of updates in real-time"
+            ),
+            Component(
+                name="Search & Query API",
+                responsibility="Provide structured access to legislation data",
+                technology="RESTful API with caching",
+                rationale="Enables integration with external systems and applications"
+            ),
+            Component(
+                name="Diff Engine",
+                responsibility="Track and visualize changes between versions",
+                technology="Semantic diff for legal documents",
+                rationale="Critical for amendment tracking and impact analysis"
             )
-        }
-
-    def generate_comparison_matrix(self) -> Dict[str, Dict[str, float]]:
-        """Generate comparison matrix for all architectures."""
-        architectures = [
-            self.create_hierarchical_by_type_architecture(),
-            self.create_hierarchical_by_domain_architecture(),
-            self.create_flat_with_metadata_architecture()
         ]
+        for component in components:
+            self.analyzer.add_component(component)
 
-        matrix = {}
-        for arch in architectures:
-            avg_complexity = sum(t.complexity_score for t in arch.trade_offs) / max(len(arch.trade_offs), 1)
-            avg_performance = sum(t.performance_score for t in arch.trade_offs) / max(len(arch.trade_offs), 1)
-            avg_maintainability = sum(t.maintainability_score for t in arch.trade_offs) / max(len(arch.trade_offs), 1)
-
-            matrix[arch.name] = {
-                "complexity": avg_complexity,
-                "performance": avg_performance,
-                "maintainability": avg_maintainability,
-                "total_score": (avg_performance + avg_maintainability) - (avg_complexity / 2)
-            }
-
-        return matrix
-
-    def generate_report(self, architecture: SolutionArchitecture, format_type: str = "json") -> str:
-        """Generate architecture report in specified format."""
-        if format_type == "json":
-            return self._generate_json_report(architecture)
-        elif format_type == "markdown":
-            return self._generate_markdown_report(architecture)
-        else:
-            raise ValueError(f"Unknown format: {format_type}")
-
-    def _generate_json_report(self, architecture: SolutionArchitecture) -> str:
-        """Generate JSON format report."""
-        report_data = {
-            "architecture_name": architecture.name,
-            "organization_strategy": architecture.organization_strategy.value,
-            "storage_format": architecture.storage_format.value,
-            "version_control": architecture.version_control.value,
-            "rationale": architecture.rationale,
-            "components": [
-                {
-                    "name": c.name,
-                    "description": c.description,
-                    "responsibilities": c.responsibilities,
-                    "dependencies": c.dependencies,
-                    "implementation_notes": c.implementation_notes
-                }
-                for c in architecture.components
-            ],
-            "trade_offs": [
-                {
-                    "dimension": t.dimension,
-                    "pros": t.pros,
-                    "cons": t.cons,
-                    "complexity_score": t.complexity_score,
-                    "performance_score": t.performance_score,
-                    "maintainability_score": t.maintainability_score
-                }
-                for t in architecture.trade_offs
-            ],
-            "estimated_capacity": architecture.estimated_capacity,
-            "metadata_schema": architecture.metadata_schema,
-            "generated_at": datetime.now().isoformat()
-        }
-        return json.dumps(report_data, indent=2, ensure_ascii=False)
-
-    def _generate_markdown_report(self, architecture: SolutionArchitecture) -> str:
-        """Generate Markdown format report."""
-        lines = [
-            f"# Architecture: {architecture.name}",
-            "",
-            "## Overview",
-            "",
-            f"**Organization Strategy:** {architecture.organization_strategy.value}",
-            f"**Storage Format:** {architecture.storage_format.value}",
-            f"**Version Control:** {architecture.version_control.value}",
-            "",
-            "## Rationale",
-            "",
-            architecture.rationale,
-            "",
-            "## Components",
-            ""
+    def setup_tradeoffs(self):
+        tradeoffs = [
+            TradeOff(
+                option="Git-only approach",
+                pros=["Single source of truth", "Complete audit trail", "Distributed collaboration"],
+                cons=["Slow searches in large repos", "High storage overhead", "Requires Git expertise"],
+                complexity="Low",
+                scalability="Medium",
+                cost="Low",
+                recommended=False
+            ),
+            TradeOff(
+                option="Database-only approach",
+                pros=["Fast queries", "Flexible schema", "Good for analytics"],
+                cons=["No audit trail", "Harder to track changes", "Single point of failure"],
+                complexity="Medium",
+                scalability="High",
+                cost="Medium",
+                recommended=False
+            ),
+            TradeOff(
+                option="Hybrid Git + Database (RECOMMENDED)",
+                pros=["Best of both", "Audit trail + performance", "Flexible queries"],
+                cons=["Sync complexity", "Higher operational cost", "Requires monitoring"],
+                complexity="High",
+                scalability="High",
+                cost="Medium-High",
+                recommended=True
+            ),
+            TradeOff(
+                option="Event Sourcing Pattern",
+                pros=["Complete event history", "Time-travel capabilities", "Great for analysis"],
+                cons=["Event store complexity", "Higher learning curve", "Harder to query"],
+                complexity="Very High",
+                scalability="Medium",
+                cost="High",
+                recommended=False
+            ),
+            TradeOff(
+                option="Markdown + YAML frontmatter",
+                pros=["Human readable", "Git-friendly", "Minimal learning curve"],
+                cons=["Less structured", "Harder to query", "Inconsistent formatting"],
+                complexity="Low",
+                scalability="Low",
+                cost="Low",
+                recommended=True
+            ),
+            TradeOff(
+                option="Full XML markup",
+                pros=["Highly structured", "Validation support", "Standards-based"],
+                cons=["Verbose", "Hard to read", "Large file sizes"],
+                complexity="High",
+                scalability="High",
+                cost="Medium",
+                recommended=False
+            )
         ]
+        for tradeoff in tradeoffs:
+            self.analyzer.add_tradeoff(tradeoff)
 
-        for component in architecture.components:
-            lines.extend([
-                f"###
-### {component.name}",
-                "",
-                component.description,
-                "",
-                "**Responsibilities:**",
-                ""
-            ])
-            for resp in component.responsibilities:
-                lines.append(f"- {resp}")
-            lines.extend([
-                "",
-                "**Dependencies:**",
-                ""
-            ])
-            for dep in component.dependencies:
-                lines.append(f"- {dep}")
-            lines.extend([
-                "",
-                "**Implementation Notes:**",
-                "",
-                component.implementation_notes,
-                ""
-            ])
-
-        lines.extend([
-            "## Trade-offs Analysis",
-            ""
-        ])
-
-        for tradeoff in architecture.trade_offs:
-            lines.extend([
-                f"### {tradeoff.dimension}",
-                "",
-                "**Pros:**",
-                ""
-            ])
-            for pro in tradeoff.pros:
-                lines.append(f"- {pro}")
-            lines.extend([
-                "",
-                "**Cons:**",
-                ""
-            ])
-            for con in tradeoff.cons:
-                lines.append(f"- {con}")
-            lines.extend([
-                "",
-                f"**Complexity Score:** {tradeoff.complexity_score}/10",
-                f"**Performance Score:** {tradeoff.performance_score}/10",
-                f"**Maintainability Score:** {tradeoff.maintainability_score}/10",
-                ""
-            ])
-
-        lines.extend([
-            "## Capacity Estimates",
-            ""
-        ])
-        for key, value in architecture.estimated_capacity.items():
-            lines.append(f"- {key}: {value}")
-
-        lines.extend([
-            "",
-            "## Metadata Schema",
-            ""
-        ])
-        for field, description in architecture.metadata_schema.items():
-            lines.append(f"- `{field}`: {description}")
-
-        return "\n".join(lines)
-
-
-class ArchitectureRecommender:
-    """Recommends best architecture based on criteria."""
-
-    @staticmethod
-    def recommend(
-        priority: str = "balanced",
-        user_type: str = "general",
-        scale: str = "medium"
-    ) -> str:
-        """Recommend architecture based on criteria."""
-        recommendations = {
-            "balanced": {
-                "general": {
-                    "small": "Hierarchical by Type",
-                    "medium": "Hierarchical by Type",
-                    "large": "Flat with Metadata"
-                },
-                "legal_expert": {
-                    "small": "Hierarchical by Domain",
-                    "medium": "Hierarchical by Domain",
-                    "large": "Flat with Metadata"
-                },
-                "developer": {
-                    "small": "Flat with Metadata",
-                    "medium": "Flat with Metadata",
-                    "large": "Flat with Metadata"
-                }
-            },
-            "simplicity": {
-                "general": {
-                    "small": "Hierarchical by Type",
-                    "medium": "Hierarchical by Type",
-                    "large": "Hierarchical by Type"
-                },
-                "legal_expert": {
-                    "small": "Hierarchical by Domain",
-                    "medium": "Hierarchical by Domain",
-                    "large": "Hierarchical by Domain"
-                },
-                "developer": {
-                    "small": "Hierarchical by Type",
-                    "medium": "Hierarchical by Type",
-                    "large": "Hierarchical by Type"
-                }
-            },
-            "power": {
-                "general": {
-                    "small": "Flat with Metadata",
-                    "medium": "Flat with Metadata",
-                    "large": "Flat with Metadata"
-                },
-                "legal_expert": {
-                    "small": "Flat with Metadata",
-                    "medium": "Flat with Metadata",
-                    "large": "Flat with Metadata"
-                },
-                "developer": {
-                    "small": "Flat with Metadata",
-                    "medium": "Flat with Metadata",
-                    "large": "Flat with Metadata"
-                }
+    def generate_full_architecture_report(self) -> Dict[str, Any]:
+        return {
+            "title": "Spanish Legislation Repository - Solution Architecture",
+            "timestamp": datetime.now().isoformat(),
+            "decisions": self.analyzer.export_decisions(),
+            "components": self.analyzer.export_components(),
+            "tradeoffs": self.analyzer.export_tradeoffs(),
+            "summary": {
+                "recommended_approach": "Hybrid Git + Database with Markdown + JSON",
+                "key_principles": [
+                    "Immutability through Git",
+                    "Searchability through indexing",
+                    "Accessibility through Markdown",
+                    "Structure through JSON metadata",
+                    "Collaboration through Git workflows"
+                ],
+                "implementation_phases": [
+                    "Phase 1: Git repository setup with hooks",
+                    "Phase 2: Markdown format standardization",
+                    "Phase 3: Indexing service implementation",
+                    "Phase 4: REST API development",
+                    "Phase 5: Search and analytics features",
+                    "Phase 6: Real-time notification system"
+                ]
             }
         }
 
-        return recommendations.get(priority, {}).get(user_type, {}).get(scale, "Hierarchical by Type")
+
+def create_sample_legislation() -> List[Dict[str, Any]]:
+    """Create sample Spanish legislation for demonstration"""
+    return [
+        {
+            "bill_id": "ley-2024-001",
+            "title": "Ley de Protección de Datos Personales",
+            "content": "# Ley de Protección de Datos Personales\n\n## Artículo 1\nSe establece el marco normativo...",
+            "metadata": {
+                "year": 2024,
+                "status": "approved",
+                "format": "markdown",
+                "category": "data_protection",
+                "authors": ["Ministerio de Justicia"],
+                "versions": 3
+            }
+        },
+        {
+            "bill_id": "ley-2024-002",
+            "title": "Ley de Acceso a la Información",
+            "content": "# Ley de Acceso a la Información\n\n## Artículo 1\nTodo ciudadano tiene derecho...",
+            "metadata": {
+                "year": 2024,
+                "status": "draft",
+                "format": "markdown",
+                "category": "transparency",
+                "authors": ["Ministerio del Interior"],
+                "versions": 1
+            }
+        },
+        {
+            "bill_id": "decreto-2024-001",
+            "title": "Decreto de Regulación de IA",
+            "content": "# Decreto de Regulación de IA\n\n## Artículo 1\nLa inteligencia artificial debe cumplir...",
+            "metadata": {
+                "year": 2024,
+                "status": "approved",
+                "format": "markdown",
+                "category": "technology",
+                "authors": ["Ministerio de Transformación Digital"],
+                "versions": 2
+            }
+        }
+    ]
 
 
 def main():
-    """Main entry point with CLI interface."""
     parser = argparse.ArgumentParser(
-        description="Design and analyze solution architecture for Spanish legislation Git repository",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s --analyze all --format json
-  %(prog)s --architecture "Hierarchical by Type" --format markdown
-  %(prog)s --recommend --priority power --user-type developer --scale large
-  %(prog)s --compare
-        """
+        description="Spanish Legislation Architecture Design & Analysis Tool"
     )
-
     parser.add_argument(
-        "--analyze",
-        choices=["all", "storage", "version-control"],
-        help="Analyze specific aspects of architecture"
+        "--mode",
+        choices=["design", "process", "analyze", "export"],
+        default="design",
+        help="Operating mode"
     )
-
     parser.add_argument(
-        "--architecture",
-        choices=["Hierarchical by Type", "Hierarchical by Domain", "Flat with Metadata"],
-        help="Select specific architecture to analyze"
+        "--storage-type",
+        choices=["git", "hybrid"],
+        default="hybrid",
+        help="Storage backend type"
     )
-
     parser.add_argument(
-        "--format",
-        choices=["json", "markdown"],
+        "--output-format",
+        choices=["json", "text"],
         default="json",
-        help="Output format for reports (default: json)"
+        help="Output format"
     )
-
     parser.add_argument(
-        "--recommend",
+        "--repo-path",
+        default="/tmp/legalize-es",
+        help="Git repository path"
+    )
+    parser.add_argument(
+        "--pretty",
         action="store_true",
-        help="Get architecture recommendation based on criteria"
-    )
-
-    parser.add_argument(
-        "--priority",
-        choices=["balanced", "simplicity", "power"],
-        default="balanced",
-        help="Priority for recommendation (default: balanced)"
-    )
-
-    parser.add_argument(
-        "--user-type",
-        choices=["general", "legal_expert", "developer"],
-        default="general",
-        help="Target user type for recommendation (default: general)"
-    )
-
-    parser.add_argument(
-        "--scale",
-        choices=["small", "medium", "large"],
-        default="medium",
-        help="Expected repository scale (default: medium)"
-    )
-
-    parser.add_argument(
-        "--compare",
-        action="store_true",
-        help="Generate comparison matrix for all architectures"
-    )
-
-    parser.add_argument(
-        "--export-components",
-        action="store_true",
-        help="Export detailed component specifications"
+        help="Pretty-print JSON output"
     )
 
     args = parser.parse_args()
 
-    analyzer = ArchitectureAnalyzer()
+    # Initialize components
+    documenter = ArchitectureDocumentor()
+    documenter.setup_core_architecture()
+    documenter.setup_components()
+    documenter.setup_tradeoffs()
 
-    if args.recommend:
-        recommendation = ArchitectureRecommender.recommend(
-            priority=args.priority,
-            user_type=args.user_type,
-            scale=args.scale
-        )
-        result = {
-            "recommendation": recommendation,
-            "criteria": {
-                "priority": args.priority,
-                "user_type": args.user_type,
-                "scale": args.scale
+    if args.mode == "design":
+        report = documenter.generate_full_architecture_report()
+        if args.output_format == "json":
+            indent = 2 if args.pretty else None
+            print(json.dumps(report, indent=indent))
+        else:
+            print("=== SPANISH LEGISLATION REPOSITORY ===")
+            print("=== SOLUTION ARCHITECTURE ===\n")
+            print(f"Timestamp: {report['timestamp']}\n")
+            print("KEY RECOMMENDATIONS:")
+            print(f"  Approach: {report['summary']['recommended_approach']}")
+            print("\nPRINCIPLES:")
+            for principle in report['summary']['key_principles']:
+                print(f"  - {principle}")
+            print("\nIMPLEMENTATION PHASES:")
+            for phase in report['summary']['implementation_phases']:
+                print(f"  - {phase}")
+
+    elif args.mode == "process":
+        if args.storage_type == "git":
+            storage = GitBasedStorage(args.repo_path)
+        else:
+            git_storage = GitBasedStorage(args.repo_path)
+            storage = HybridStorage(git_storage, {})
+
+        processor = LegislationProcessor(storage)
+        sample_legislation = create_sample_legislation()
+
+        for bill in sample_legislation:
+            success = processor.process_legislation(
+                bill["bill_id"],
+                bill["content"],
+                bill["metadata"]
+            )
+            if args.output_format == "json":
+                print(json.dumps({
+                    "bill_id": bill["bill_id"],
+                    "processed": success,
+                    "title": bill["title"]
+                }))
+
+        stats = processor.get_statistics()
+        if args.output_format == "json":
+            print(json.dumps({"statistics": stats}))
+        else:
+            print("\nProcessing Statistics:")
+            print(f"  Total Processed: {stats['total_processed']}")
+            print(f"  Successful: {stats['successful_stores']}")
+            print(f"  Failed: {stats['failed_stores']}")
+
+    elif args.mode == "analyze":
+        report = documenter.generate_full_architecture_report()
+        decisions = report['decisions']['decisions']
+        tradeoffs = report['tradeoffs']['tradeoffs']
+
+        analysis = {
+            "total_architectural_decisions": len(decisions),
+            "decision_breakdown": {
+                "proposed": sum(1 for d in decisions if d['status'] == 'Proposed'),
+                "accepted": sum(1 for d in decisions if d['status'] == 'Accepted'),
+                "deprecated": sum(1 for d in decisions if d['status'] == 'Deprecated')
             },
-            "reasoning": f"Selected '{recommendation}' architecture based on {args.priority} priority for {args.user_type} at {args.scale} scale"
-        }
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        return
-
-    if args.compare:
-        matrix = analyzer.generate_comparison_matrix()
-        comparison = {
-            "comparison_matrix": matrix,
-            "best_overall": max(matrix.items(), key=lambda x: x[1]["total_score"])[0],
-            "best_performance": max(matrix.items(), key=lambda x: x[1]["performance"])[0],
-            "best_maintainability": max(matrix.items(), key=lambda x: x[1]["maintainability"])[0],
-            "lowest_complexity": min(matrix.items(), key=lambda x: x[1]["complexity"])[0]
-        }
-        print(json.dumps(comparison, indent=2, ensure_ascii=False))
-        return
-
-    if args.analyze == "all":
-        all_analyses = {
-            "storage_formats": {
-                k: {
-                    "dimension": v.dimension,
-                    "pros": v.pros,
-                    "cons": v.cons,
-                    "scores": {
-                        "complexity": v.complexity_score,
-                        "performance": v.performance_score,
-                        "maintainability": v.maintainability_score
-                    }
-                }
-                for k, v in analyzer.analyze_storage_formats().items()
-            },
-            "version_control": {
-                k: {
-                    "dimension": v.dimension,
-                    "pros": v.pros,
-                    "cons": v.cons,
-                    "scores": {
-                        "complexity": v.complexity_score,
-                        "performance": v.performance_score,
-                        "maintainability": v.maintainability_score
-                    }
-                }
-                for k, v in analyzer.analyze_version_control_approaches().items()
-            }
-        }
-        print(json.dumps(all_analyses, indent=2, ensure_ascii=False))
-        return
-
-    if args.analyze == "storage":
-        storage_analyses = {
-            k: {
-                "dimension": v.dimension,
-                "pros": v.pros,
-                "cons": v.cons,
-                "scores": {
-                    "complexity": v.complexity_score,
-                    "performance": v.performance_score,
-                    "maintainability": v.maintainability_score
-                }
-            }
-            for k, v in analyzer.analyze_storage_formats().items()
-        }
-        print(json.dumps(storage_analyses, indent=2, ensure_ascii=False))
-        return
-
-    if args.analyze == "version-control":
-        vc_analyses = {
-            k: {
-                "dimension": v.dimension,
-                "pros": v.pros,
-                "cons": v.cons,
-                "scores": {
-                    "complexity": v.complexity_score,
-                    "performance": v.performance_score,
-                    "maintainability": v.maintainability_score
-                }
-            }
-            for k, v in analyzer.analyze_version_control_approaches().items()
-        }
-        print(json.dumps(vc_analyses, indent=2, ensure_ascii=False))
-        return
-
-    architectures_map = {
-        "Hierarchical by Type": analyzer.create_hierarchical_by_type_architecture(),
-        "Hierarchical by Domain": analyzer.create_hierarchical_by_domain_architecture(),
-        "Flat with Metadata": analyzer.create_flat_with_metadata_architecture()
-    }
-
-    if args.architecture:
-        if args.architecture not in architectures_map:
-            print(f"Unknown architecture: {args.architecture}", file=sys.stderr)
-            sys.exit(1)
-
-        arch = architectures_map[args.architecture]
-        report = analyzer.generate_report(arch, format_type=args.format)
-        print(report)
-
-        if args.export_components:
-            components_export = {
-                "architecture": args.architecture,
-                "components": [
-                    {
-                        "name": c.name,
-                        "description": c.description,
-                        "responsibilities": c.responsibilities,
-                        "dependencies": c.dependencies,
-                        "implementation_notes": c.implementation_notes
-                    }
-                    for c in arch.components
+            "recommended_tradeoffs": [t for t in tradeoffs if t['recommended']],
+            "complexity_assessment": {
+                "average_complexity": "Medium-High",
+                "primary_challenges": [
+                    "Maintaining Git and database synchronization",
+                    "Handling large document diffs efficiently",
+                    "Scaling search across millions of legislative documents",
+                    "Managing multi-language support for legislation"
+                ],
+                "risk_mitigation": [
+                    "Implement robust sync mechanisms with conflict resolution",
+                    "Use semantic diff engines for legal document comparison",
+                    "Deploy distributed search infrastructure",
+                    "Support i18n from architecture phase"
                 ]
             }
-            print("\n" + json.dumps(components_export, indent=2, ensure_ascii=False))
-        return
+        }
 
-    all_architectures = [
-        analyzer.create_hierarchical_by_type_architecture(),
-        analyzer.create_hierarchical_by_domain_architecture(),
-        analyzer.create_flat_with_metadata_architecture()
-    ]
-
-    results = {
-        "architectures": [
-            {
-                "name": arch.name,
-                "organization_strategy": arch.organization_strategy.value,
-                "storage_format": arch.storage_format.value,
-                "version_control": arch.version_control.value,
-                "rationale": arch.rationale,
-                "component_count": len(arch.components),
-                "tradeoff_count": len(arch.trade_offs)
-            }
-            for arch in all_architectures
-        ],
-        "generated_at": datetime.now().isoformat()
-    }
-
-    print(json.dumps(results, indent=2, ensure_ascii=False))
-
-
-if __name__ == "__main__":
-    main()
+        if args.output_format == "json":
+            indent = 2 if args.pretty else None
+            print(json.dumps(analysis, indent=indent))
+        else:
+            print("=== ARCHITECTURE ANALYSIS ===\n")
+            print
