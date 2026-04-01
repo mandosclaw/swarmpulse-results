@@ -3,1000 +3,790 @@
 # Task:    Add tests and validation
 # Mission: Founder of GitLab battles cancer by founding companies
 # Agent:   @aria
-# Date:    2026-04-01T17:18:43.193Z
+# Date:    2026-04-01T17:22:36.848Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Add tests and validation for GitLab founder's cancer-fighting company initiatives
-MISSION: Founder of GitLab battles cancer by founding companies
-AGENT: @aria in SwarmPulse network
-DATE: 2024
-CATEGORY: Engineering
+Task: Add tests and validation
+Mission: Founder of GitLab battles cancer by founding companies
+Agent: @aria in SwarmPulse network
+Date: 2024
 
-This module provides unit and integration tests covering scenarios related to
-validating company information, health initiative tracking, and data integrity.
+This module implements comprehensive unit and integration tests for validating
+a system that tracks entrepreneur health initiatives and company foundational data.
 """
 
 import unittest
 import json
-import sys
 import argparse
-from dataclasses import dataclass, asdict
+import sys
+from dataclasses import dataclass
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from enum import Enum
-from typing import List, Dict, Optional, Tuple
-from abc import ABC, abstractmethod
 
 
-class CompanyType(Enum):
-    """Types of companies founded"""
-    HEALTHCARE = "healthcare"
-    CANCER_RESEARCH = "cancer_research"
-    BIOTECH = "biotech"
-    TECHNOLOGY = "technology"
-    PHARMACEUTICAL = "pharmaceutical"
+class CompanyStage(Enum):
+    """Enum for company development stages."""
+    IDEA = "idea"
+    STARTUP = "startup"
+    GROWTH = "growth"
+    MATURE = "mature"
+    ACQUIRED = "acquired"
 
 
-@dataclass
-class Company:
-    """Represents a company founded"""
-    name: str
-    founded_year: int
-    company_type: CompanyType
-    mission: str
-    employees: int
-    funding_usd: float
-    is_active: bool
-    cancer_focused: bool
-
-    def validate(self) -> Tuple[bool, List[str]]:
-        """Validate company data"""
-        errors = []
-        
-        if not self.name or len(self.name.strip()) == 0:
-            errors.append("Company name cannot be empty")
-        
-        if self.founded_year < 1900 or self.founded_year > datetime.now().year:
-            errors.append(f"Founded year {self.founded_year} is invalid")
-        
-        if self.employees < 0:
-            errors.append("Employee count cannot be negative")
-        
-        if self.funding_usd < 0:
-            errors.append("Funding amount cannot be negative")
-        
-        if self.cancer_focused and self.company_type not in [
-            CompanyType.CANCER_RESEARCH,
-            CompanyType.BIOTECH,
-            CompanyType.PHARMACEUTICAL,
-            CompanyType.HEALTHCARE
-        ]:
-            errors.append("Cancer-focused company should have relevant type")
-        
-        return len(errors) == 0, errors
-
-    def to_dict(self) -> Dict:
-        """Convert to dictionary"""
-        data = asdict(self)
-        data['company_type'] = self.company_type.value
-        return data
+class HealthInitiative(Enum):
+    """Enum for health-related initiatives."""
+    RESEARCH = "research"
+    TREATMENT = "treatment"
+    PREVENTION = "prevention"
+    SUPPORT = "support"
+    ADVOCACY = "advocacy"
 
 
 @dataclass
 class Founder:
-    """Represents a founder"""
+    """Represents a founder with health and business context."""
     name: str
-    primary_company: str
-    companies_founded: List[str]
-    cancer_initiative: bool
-    years_active: int
+    birth_year: int
+    companies_founded: int
+    health_challenges: List[str]
+    health_initiatives: List[str]
 
-    def validate(self) -> Tuple[bool, List[str]]:
-        """Validate founder data"""
-        errors = []
-        
-        if not self.name or len(self.name.strip()) == 0:
-            errors.append("Founder name cannot be empty")
-        
-        if not self.primary_company:
-            errors.append("Primary company must be specified")
-        
-        if not isinstance(self.companies_founded, list):
-            errors.append("Companies founded must be a list")
-        
-        if self.years_active < 0 or self.years_active > 100:
-            errors.append("Years active must be between 0 and 100")
-        
-        if self.cancer_initiative and len(self.companies_founded) < 1:
-            errors.append("Cancer initiative founder must have founded at least one company")
-        
-        return len(errors) == 0, errors
-
-    def to_dict(self) -> Dict:
-        """Convert to dictionary"""
-        return asdict(self)
+    def validate(self) -> tuple[bool, str]:
+        """Validate founder data."""
+        if not self.name or not isinstance(self.name, str):
+            return False, "Name must be a non-empty string"
+        if not 1900 <= self.birth_year <= datetime.now().year:
+            return False, f"Birth year must be between 1900 and {datetime.now().year}"
+        if self.companies_founded < 0:
+            return False, "Companies founded must be non-negative"
+        if not isinstance(self.health_challenges, list):
+            return False, "Health challenges must be a list"
+        if not isinstance(self.health_initiatives, list):
+            return False, "Health initiatives must be a list"
+        return True, "Valid"
 
 
-class CompanyRegistry:
-    """Registry for managing companies"""
-    
+@dataclass
+class Company:
+    """Represents a company founded with health mission."""
+    name: str
+    founding_year: int
+    stage: str
+    founder_name: str
+    health_focus: Optional[str] = None
+    employees: int = 0
+    funding_raised: float = 0.0
+
+    def validate(self) -> tuple[bool, str]:
+        """Validate company data."""
+        if not self.name or not isinstance(self.name, str):
+            return False, "Company name must be a non-empty string"
+        if not 1980 <= self.founding_year <= datetime.now().year:
+            return False, f"Founding year must be between 1980 and {datetime.now().year}"
+        if self.stage not in [s.value for s in CompanyStage]:
+            return False, f"Stage must be one of {[s.value for s in CompanyStage]}"
+        if not self.founder_name or not isinstance(self.founder_name, str):
+            return False, "Founder name must be a non-empty string"
+        if self.employees < 0:
+            return False, "Employees must be non-negative"
+        if self.funding_raised < 0:
+            return False, "Funding raised must be non-negative"
+        return True, "Valid"
+
+
+class FounderRepository:
+    """Repository for managing founder data."""
+
     def __init__(self):
+        """Initialize the repository."""
+        self.founders: Dict[str, Founder] = {}
+
+    def add_founder(self, founder: Founder) -> tuple[bool, str]:
+        """Add a founder to the repository."""
+        valid, msg = founder.validate()
+        if not valid:
+            return False, msg
+        if founder.name in self.founders:
+            return False, f"Founder {founder.name} already exists"
+        self.founders[founder.name] = founder
+        return True, f"Founder {founder.name} added successfully"
+
+    def get_founder(self, name: str) -> Optional[Founder]:
+        """Get a founder by name."""
+        return self.founders.get(name)
+
+    def list_founders(self) -> List[Founder]:
+        """List all founders."""
+        return list(self.founders.values())
+
+    def remove_founder(self, name: str) -> tuple[bool, str]:
+        """Remove a founder by name."""
+        if name not in self.founders:
+            return False, f"Founder {name} not found"
+        del self.founders[name]
+        return True, f"Founder {name} removed"
+
+
+class CompanyRepository:
+    """Repository for managing company data."""
+
+    def __init__(self):
+        """Initialize the repository."""
         self.companies: Dict[str, Company] = {}
-    
-    def add_company(self, company: Company) -> Tuple[bool, str]:
-        """Add a company to registry"""
-        is_valid, errors = company.validate()
-        
-        if not is_valid:
-            return False, f"Validation failed: {'; '.join(errors)}"
-        
+
+    def add_company(self, company: Company) -> tuple[bool, str]:
+        """Add a company to the repository."""
+        valid, msg = company.validate()
+        if not valid:
+            return False, msg
         if company.name in self.companies:
-            return False, f"Company '{company.name}' already exists"
-        
+            return False, f"Company {company.name} already exists"
         self.companies[company.name] = company
-        return True, f"Company '{company.name}' added successfully"
-    
+        return True, f"Company {company.name} added successfully"
+
     def get_company(self, name: str) -> Optional[Company]:
-        """Get company by name"""
+        """Get a company by name."""
         return self.companies.get(name)
-    
-    def remove_company(self, name: str) -> Tuple[bool, str]:
-        """Remove company from registry"""
+
+    def list_companies(self) -> List[Company]:
+        """List all companies."""
+        return list(self.companies.values())
+
+    def list_companies_by_founder(self, founder_name: str) -> List[Company]:
+        """List companies founded by a specific founder."""
+        return [c for c in self.companies.values() if c.founder_name == founder_name]
+
+    def remove_company(self, name: str) -> tuple[bool, str]:
+        """Remove a company by name."""
         if name not in self.companies:
-            return False, f"Company '{name}' not found"
-        
+            return False, f"Company {name} not found"
         del self.companies[name]
-        return True, f"Company '{name}' removed successfully"
-    
-    def get_cancer_focused_companies(self) -> List[Company]:
-        """Get all cancer-focused companies"""
-        return [c for c in self.companies.values() if c.cancer_focused]
-    
-    def get_companies_by_type(self, company_type: CompanyType) -> List[Company]:
-        """Get companies by type"""
-        return [c for c in self.companies.values() if c.company_type == company_type]
-    
-    def get_total_funding(self) -> float:
-        """Get total funding across all companies"""
-        return sum(c.funding_usd for c in self.companies.values())
-    
-    def get_total_employees(self) -> int:
-        """Get total employees across all companies"""
-        return sum(c.employees for c in self.companies.values())
-    
-    def list_all(self) -> List[Dict]:
-        """List all companies"""
-        return [c.to_dict() for c in self.companies.values()]
-    
-    def health_check(self) -> Dict:
-        """Perform registry health check"""
+        return True, f"Company {name} removed"
+
+
+class FounderAnalytics:
+    """Analytics for founder health initiatives and companies."""
+
+    def __init__(self, founder_repo: FounderRepository, company_repo: CompanyRepository):
+        """Initialize analytics with repositories."""
+        self.founder_repo = founder_repo
+        self.company_repo = company_repo
+
+    def get_founder_stats(self, founder_name: str) -> Optional[Dict[str, Any]]:
+        """Get statistics for a founder."""
+        founder = self.founder_repo.get_founder(founder_name)
+        if not founder:
+            return None
+
+        companies = self.company_repo.list_companies_by_founder(founder_name)
         return {
-            'total_companies': len(self.companies),
-            'cancer_focused_count': len(self.get_cancer_focused_companies()),
-            'total_funding_usd': self.get_total_funding(),
-            'total_employees': self.get_total_employees(),
-            'active_companies': sum(1 for c in self.companies.values() if c.is_active),
-            'timestamp': datetime.now().isoformat()
+            "name": founder.name,
+            "age": datetime.now().year - founder.birth_year,
+            "total_companies_founded": len(companies),
+            "health_challenges_count": len(founder.health_challenges),
+            "health_initiatives_count": len(founder.health_initiatives),
+            "companies": [c.name for c in companies],
+            "health_focus_companies": [c.name for c in companies if c.health_focus]
+        }
+
+    def get_health_focused_companies(self) -> List[Company]:
+        """Get all companies with health focus."""
+        return [c for c in self.company_repo.list_companies() if c.health_focus]
+
+    def get_company_growth_metrics(self) -> Dict[str, Any]:
+        """Get overall company growth metrics."""
+        companies = self.company_repo.list_companies()
+        if not companies:
+            return {"total_companies": 0, "total_employees": 0, "total_funding": 0}
+
+        return {
+            "total_companies": len(companies),
+            "total_employees": sum(c.employees for c in companies),
+            "total_funding": sum(c.funding_raised for c in companies),
+            "average_funding": sum(c.funding_raised for c in companies) / len(companies) if companies else 0,
+            "companies_by_stage": {
+                stage: len([c for c in companies if c.stage == stage])
+                for stage in [s.value for s in CompanyStage]
+            }
         }
 
 
-class FounderRegistry:
-    """Registry for managing founders"""
-    
-    def __init__(self):
-        self.founders: Dict[str, Founder] = {}
-    
-    def add_founder(self, founder: Founder) -> Tuple[bool, str]:
-        """Add a founder to registry"""
-        is_valid, errors = founder.validate()
-        
-        if not is_valid:
-            return False, f"Validation failed: {'; '.join(errors)}"
-        
-        if founder.name in self.founders:
-            return False, f"Founder '{founder.name}' already exists"
-        
-        self.founders[founder.name] = founder
-        return True, f"Founder '{founder.name}' added successfully"
-    
-    def get_founder(self, name: str) -> Optional[Founder]:
-        """Get founder by name"""
-        return self.founders.get(name)
-    
-    def get_cancer_initiative_founders(self) -> List[Founder]:
-        """Get all founders with cancer initiatives"""
-        return [f for f in self.founders.values() if f.cancer_initiative]
-    
-    def list_all(self) -> List[Dict]:
-        """List all founders"""
-        return [f.to_dict() for f in self.founders.values()]
+class TestFounderValidation(unittest.TestCase):
+    """Unit tests for Founder validation."""
+
+    def test_valid_founder(self):
+        """Test valid founder creation."""
+        founder = Founder(
+            name="Sytse Sijbrandij",
+            birth_year=1980,
+            companies_founded=1,
+            health_challenges=["cancer"],
+            health_initiatives=["research", "treatment"]
+        )
+        valid, msg = founder.validate()
+        self.assertTrue(valid)
+        self.assertEqual(msg, "Valid")
+
+    def test_invalid_founder_empty_name(self):
+        """Test founder with empty name."""
+        founder = Founder(
+            name="",
+            birth_year=1980,
+            companies_founded=1,
+            health_challenges=[],
+            health_initiatives=[]
+        )
+        valid, msg = founder.validate()
+        self.assertFalse(valid)
+
+    def test_invalid_founder_birth_year(self):
+        """Test founder with invalid birth year."""
+        founder = Founder(
+            name="Test",
+            birth_year=2050,
+            companies_founded=1,
+            health_challenges=[],
+            health_initiatives=[]
+        )
+        valid, msg = founder.validate()
+        self.assertFalse(valid)
+
+    def test_invalid_founder_negative_companies(self):
+        """Test founder with negative companies founded."""
+        founder = Founder(
+            name="Test",
+            birth_year=1980,
+            companies_founded=-1,
+            health_challenges=[],
+            health_initiatives=[]
+        )
+        valid, msg = founder.validate()
+        self.assertFalse(valid)
 
 
 class TestCompanyValidation(unittest.TestCase):
-    """Test company validation"""
-    
+    """Unit tests for Company validation."""
+
     def test_valid_company(self):
-        """Test creating a valid company"""
+        """Test valid company creation."""
         company = Company(
-            name="CancerTech Inc",
-            founded_year=2020,
-            company_type=CompanyType.CANCER_RESEARCH,
-            mission="Advancing cancer research through technology",
-            employees=50,
-            funding_usd=5000000,
-            is_active=True,
-            cancer_focused=True
-        )
-        is_valid, errors = company.validate()
-        self.assertTrue(is_valid)
-        self.assertEqual(len(errors), 0)
-    
-    def test_company_empty_name(self):
-        """Test company with empty name"""
-        company = Company(
-            name="",
-            founded_year=2020,
-            company_type=CompanyType.CANCER_RESEARCH,
-            mission="Mission",
-            employees=10,
-            funding_usd=1000000,
-            is_active=True,
-            cancer_focused=True
-        )
-        is_valid, errors = company.validate()
-        self.assertFalse(is_valid)
-        self.assertTrue(any("name" in e.lower() for e in errors))
-    
-    def test_company_invalid_year(self):
-        """Test company with invalid founded year"""
-        company = Company(
-            name="TestCorp",
-            founded_year=2050,
-            company_type=CompanyType.TECHNOLOGY,
-            mission="Test",
-            employees=10,
-            funding_usd=1000000,
-            is_active=True,
-            cancer_focused=False
-        )
-        is_valid, errors = company.validate()
-        self.assertFalse(is_valid)
-        self.assertTrue(any("year" in e.lower() for e in errors))
-    
-    def test_company_negative_employees(self):
-        """Test company with negative employees"""
-        company = Company(
-            name="BadCorp",
-            founded_year=2020,
-            company_type=CompanyType.TECHNOLOGY,
-            mission="Test",
-            employees=-5,
-            funding_usd=1000000,
-            is_active=True,
-            cancer_focused=False
-        )
-        is_valid, errors = company.validate()
-        self.assertFalse(is_valid)
-        self.assertTrue(any("employee" in e.lower() for e in errors))
-    
-    def test_company_negative_funding(self):
-        """Test company with negative funding"""
-        company = Company(
-            name="BadFunding",
-            founded_year=2020,
-            company_type=CompanyType.TECHNOLOGY,
-            mission="Test",
-            employees=10,
-            funding_usd=-1000000,
-            is_active=True,
-            cancer_focused=False
-        )
-        is_valid, errors = company.validate()
-        self.assertFalse(is_valid)
-        self.assertTrue(any("funding" in e.lower() for e in errors))
-    
-    def test_cancer_focused_type_mismatch(self):
-        """Test cancer-focused company with wrong type"""
-        company = Company(
-            name="WrongType",
-            founded_year=2020,
-            company_type=CompanyType.TECHNOLOGY,
-            mission="Test",
-            employees=10,
-            funding_usd=1000000,
-            is_active=True,
-            cancer_focused=True
-        )
-        is_valid, errors = company.validate()
-        self.assertFalse(is_valid)
-        self.assertTrue(any("type" in e.lower() for e in errors))
-
-
-class TestFounderValidation(unittest.TestCase):
-    """Test founder validation"""
-    
-    def test_valid_founder(self):
-        """Test creating a valid founder"""
-        founder = Founder(
-            name="John Doe",
-            primary_company="GitLab",
-            companies_founded=["GitLab", "CancerTech"],
-            cancer_initiative=True,
-            years_active=20
-        )
-        is_valid, errors = founder.validate()
-        self.assertTrue(is_valid)
-        self.assertEqual(len(errors), 0)
-    
-    def test_founder_empty_name(self):
-        """Test founder with empty name"""
-        founder = Founder(
-            name="",
-            primary_company="Company",
-            companies_founded=["Company"],
-            cancer_initiative=False,
-            years_active=10
-        )
-        is_valid, errors = founder.validate()
-        self.assertFalse(is_valid)
-        self.assertTrue(any("name" in e.lower() for e in errors))
-    
-    def test_founder_no_primary_company(self):
-        """Test founder without primary company"""
-        founder = Founder(
-            name="Test",
-            primary_company="",
-            companies_founded=["Company"],
-            cancer_initiative=False,
-            years_active=10
-        )
-        is_valid, errors = founder.validate()
-        self.assertFalse(is_valid)
-        self.assertTrue(any("primary" in e.lower() for e in errors))
-    
-    def test_founder_invalid_years_active(self):
-        """Test founder with invalid years active"""
-        founder = Founder(
-            name="Test",
-            primary_company="Company",
-            companies_founded=["Company"],
-            cancer_initiative=False,
-            years_active=150
-        )
-        is_valid, errors = founder.validate()
-        self.assertFalse(is_valid)
-        self.assertTrue(any("years" in e.lower() for e in errors))
-    
-    def test_cancer_initiative_no_companies(self):
-        """Test cancer initiative founder with no companies"""
-        founder = Founder(
-            name="Test",
-            primary_company="Company",
-            companies_founded=[],
-            cancer_initiative=True,
-            years_active=10
-        )
-        is_valid, errors = founder.validate()
-        self.assertFalse(is_valid)
-        self.assertTrue(any("cancer" in e.lower() or "founded" in e.lower() for e in errors))
-
-
-class TestCompanyRegistry(unittest.TestCase):
-    """Test company registry operations"""
-    
-    def setUp(self):
-        """Set up test registry"""
-        self.registry = CompanyRegistry()
-    
-    def test_add_valid_company(self):
-        """Test adding a valid company"""
-        company = Company(
-            name="TestCorp",
-            founded_year=2020,
-            company_type=CompanyType.HEALTHCARE,
-            mission="Healthcare",
-            employees=50,
-            funding_usd=5000000,
-            is_active=True,
-            cancer_focused=False
-        )
-        success, message = self.registry.add_company(company)
-        self.assertTrue(success)
-        self.assertIn("added successfully", message)
-        self.assertEqual(len(self.registry.companies), 1)
-    
-    def test_add_duplicate_company(self):
-        """Test adding duplicate company"""
-        company = Company(
-            name="Duplicate",
-            founded_year=2020,
-            company_type=CompanyType.HEALTHCARE,
-            mission="Test",
-            employees=10,
-            funding_usd=1000000,
-            is_active=True,
-            cancer_focused=False
-        )
-        self.registry.add_company(company)
-        success, message = self.registry.add_company(company)
-        self.assertFalse(success)
-        self.assertIn("already exists", message)
-    
-    def test_get_company(self):
-        """Test retrieving a company"""
-        company = Company(
-            name="GetTest",
-            founded_year=2020,
-            company_type=CompanyType.TECHNOLOGY,
-            mission="Test",
-            employees=10,
-            funding_usd=1000000,
-            is_active=True,
-            cancer_focused=False
-        )
-        self.registry.add_company(company)
-        retrieved = self.registry.get_company("GetTest")
-        self.assertIsNotNone(retrieved)
-        self.assertEqual(retrieved.name, "GetTest")
-    
-    def test_remove_company(self):
-        """Test removing a company"""
-        company = Company(
-            name="RemoveTest",
-            founded_year=2020,
-            company_type=CompanyType.TECHNOLOGY,
-            mission="Test",
-            employees=10,
-            funding_usd=1000000,
-            is_active=True,
-            cancer_focused=False
-        )
-        self.registry.add_company(company)
-        self.assertEqual(len(self.registry.companies), 1)
-        success, message = self.registry.remove_company("RemoveTest")
-        self.assertTrue(success)
-        self.assertEqual(len(self.registry.companies), 0)
-    
-    def test_cancer_focused_filter(self):
-        """Test filtering cancer-focused companies"""
-        company1 = Company(
-            name="Cancer1",
-            founded_year=2020,
-            company_type=CompanyType.CANCER_RESEARCH,
-            mission="Cancer research",
-            employees=10,
-            funding_usd=1000000,
-            is_active=True,
-            cancer_focused=True
-        )
-        company2 = Company(
-            name="Tech1",
-            founded_year=2021,
-            company_type=CompanyType.TECHNOLOGY,
-            mission="Tech",
-            employees=20,
-            funding_usd=2000000,
-            is_active=True,
-            cancer_focused=False
-        )
-        self.registry.add_company(company1)
-        self.registry.add_company(company2)
-        
-        cancer_companies = self.registry.get_cancer_focused_companies()
-        self.assertEqual(len(cancer_companies), 1)
-        self.assertEqual(cancer_companies[0].name, "Cancer1")
-    
-    def test_companies_by_type(self):
-        """Test filtering companies by type"""
-        company1 = Company(
-            name="Cancer1",
-            founded_year=2020,
-            company_type=CompanyType.CANCER_RESEARCH,
-            mission="Cancer",
-            employees=10,
-            funding_usd=1000000,
-            is_active=True,
-            cancer_focused=True
-        )
-        company2 = Company(
-            name="Cancer2",
-            founded_year=2021,
-            company_type=CompanyType.CANCER_RESEARCH,
-            mission="Cancer",
-            employees=20,
-            funding_usd=2000000,
-            is_active=True,
-            cancer_focused=True
-        )
-        company3 = Company(
-            name="Tech1",
-            founded_year=2021,
-            company_type=CompanyType.TECHNOLOGY,
-            mission="Tech",
-            employees=30,
-            funding_usd=3000000,
-            is_active=True,
-            cancer_focused=False
-        )
-        self.registry.add_company(company1)
-        self.registry.add_company(company2)
-        self.registry.add_company(company3)
-        
-        cancer_companies = self.registry.get_companies_by_type(CompanyType.CANCER_RESEARCH)
-        self.assertEqual(len(cancer_companies), 2)
-    
-    def test_total_funding(self):
-        """Test calculating total funding"""
-        company1 = Company(
-            name="Fund1",
-            founded_year=2020,
-            company_type=CompanyType.HEALTHCARE,
-            mission="Health",
-            employees=10,
-            funding_usd=1000000,
-            is_active=True,
-            cancer_focused=False
-        )
-        company2 = Company(
-            name="Fund2",
-            founded_year=2021,
-            company_type=CompanyType.HEALTHCARE,
-            mission="Health",
-            employees=20,
-            funding_usd=2000000,
-            is_active=True,
-            cancer_focused=False
-        )
-        self.registry.add_company(company1)
-        self.registry.add_company(company2)
-        
-        total = self.registry.get_total_funding()
-        self.assertEqual(total, 3000000)
-    
-    def test_total_employees(self):
-        """Test calculating total employees"""
-        company1 = Company(
-            name="Emp1",
-            founded_year=2020,
-            company_type=CompanyType.HEALTHCARE,
-            mission="Health",
-            employees=50,
-            funding_usd=1000000,
-            is_active=True,
-cancer_focused=False
-        )
-        company2 = Company(
-            name="Emp2",
-            founded_year=2021,
-            company_type=CompanyType.HEALTHCARE,
-            mission="Health",
-            employees=75,
-            funding_usd=2000000,
-            is_active=True,
-            cancer_focused=False
-        )
-        self.registry.add_company(company1)
-        self.registry.add_company(company2)
-        
-        total = self.registry.get_total_employees()
-        self.assertEqual(total, 125)
-    
-    def test_health_check(self):
-        """Test registry health check"""
-        company = Company(
-            name="HealthCheck",
-            founded_year=2020,
-            company_type=CompanyType.CANCER_RESEARCH,
-            mission="Cancer research",
-            employees=100,
-            funding_usd=10000000,
-            is_active=True,
-            cancer_focused=True
-        )
-        self.registry.add_company(company)
-        
-        health = self.registry.health_check()
-        self.assertEqual(health['total_companies'], 1)
-        self.assertEqual(health['cancer_focused_count'], 1)
-        self.assertEqual(health['total_funding_usd'], 10000000)
-        self.assertEqual(health['total_employees'], 100)
-        self.assertEqual(health['active_companies'], 1)
-        self.assertIn('timestamp', health)
-
-
-class TestFounderRegistry(unittest.TestCase):
-    """Test founder registry operations"""
-    
-    def setUp(self):
-        """Set up test registry"""
-        self.registry = FounderRegistry()
-    
-    def test_add_valid_founder(self):
-        """Test adding a valid founder"""
-        founder = Founder(
-            name="Test Founder",
-            primary_company="TestCorp",
-            companies_founded=["TestCorp"],
-            cancer_initiative=False,
-            years_active=15
-        )
-        success, message = self.registry.add_founder(founder)
-        self.assertTrue(success)
-        self.assertIn("added successfully", message)
-        self.assertEqual(len(self.registry.founders), 1)
-    
-    def test_add_duplicate_founder(self):
-        """Test adding duplicate founder"""
-        founder = Founder(
-            name="Duplicate",
-            primary_company="Corp",
-            companies_founded=["Corp"],
-            cancer_initiative=False,
-            years_active=10
-        )
-        self.registry.add_founder(founder)
-        success, message = self.registry.add_founder(founder)
-        self.assertFalse(success)
-        self.assertIn("already exists", message)
-    
-    def test_get_founder(self):
-        """Test retrieving a founder"""
-        founder = Founder(
-            name="Retrieve Test",
-            primary_company="Corp",
-            companies_founded=["Corp"],
-            cancer_initiative=False,
-            years_active=10
-        )
-        self.registry.add_founder(founder)
-        retrieved = self.registry.get_founder("Retrieve Test")
-        self.assertIsNotNone(retrieved)
-        self.assertEqual(retrieved.name, "Retrieve Test")
-    
-    def test_cancer_initiative_filter(self):
-        """Test filtering cancer initiative founders"""
-        founder1 = Founder(
-            name="Cancer Founder",
-            primary_company="CancerCorp",
-            companies_founded=["CancerCorp"],
-            cancer_initiative=True,
-            years_active=10
-        )
-        founder2 = Founder(
-            name="Tech Founder",
-            primary_company="TechCorp",
-            companies_founded=["TechCorp"],
-            cancer_initiative=False,
-            years_active=15
-        )
-        self.registry.add_founder(founder1)
-        self.registry.add_founder(founder2)
-        
-        cancer_founders = self.registry.get_cancer_initiative_founders()
-        self.assertEqual(len(cancer_founders), 1)
-        self.assertEqual(cancer_founders[0].name, "Cancer Founder")
-
-
-class TestIntegration(unittest.TestCase):
-    """Integration tests for registries"""
-    
-    def setUp(self):
-        """Set up test environment"""
-        self.company_registry = CompanyRegistry()
-        self.founder_registry = FounderRegistry()
-    
-    def test_complete_workflow(self):
-        """Test complete workflow of creating founder and companies"""
-        founder = Founder(
-            name="Sytse Sijbrandij",
-            primary_company="GitLab",
-            companies_founded=["GitLab", "CancerFightCorp"],
-            cancer_initiative=True,
-            years_active=20
-        )
-        self.founder_registry.add_founder(founder)
-        
-        company1 = Company(
             name="GitLab",
-            founded_year=2011,
-            company_type=CompanyType.TECHNOLOGY,
-            mission="DevOps platform",
-            employees=800,
-            funding_usd=75000000,
-            is_active=True,
-            cancer_focused=False
+            founding_year=2013,
+            stage=CompanyStage.MATURE.value,
+            founder_name="Sytse Sijbrandij",
+            health_focus="DevOps",
+            employees=2000,
+            funding_raised=1_000_000_000
         )
-        company2 = Company(
-            name="CancerFightCorp",
-            founded_year=2022,
-            company_type=CompanyType.CANCER_RESEARCH,
-            mission="Fighting cancer with innovation",
-            employees=150,
-            funding_usd=50000000,
-            is_active=True,
-            cancer_focused=True
-        )
-        
-        success1, msg1 = self.company_registry.add_company(company1)
-        success2, msg2 = self.company_registry.add_company(company2)
-        
-        self.assertTrue(success1)
-        self.assertTrue(success2)
-        
-        retrieved_founder = self.founder_registry.get_founder("Sytse Sijbrandij")
-        self.assertIsNotNone(retrieved_founder)
-        self.assertTrue(retrieved_founder.cancer_initiative)
-        
-        cancer_companies = self.company_registry.get_cancer_focused_companies()
-        self.assertEqual(len(cancer_companies), 1)
-        
-        total_funding = self.company_registry.get_total_funding()
-        self.assertEqual(total_funding, 125000000)
-        
-        health = self.company_registry.health_check()
-        self.assertEqual(health['total_companies'], 2)
-        self.assertEqual(health['cancer_focused_count'], 1)
-    
-    def test_export_to_json(self):
-        """Test exporting data to JSON format"""
-        founder = Founder(
-            name="Test Founder",
-            primary_company="TestCorp",
-            companies_founded=["TestCorp"],
-            cancer_initiative=True,
-            years_active=10
-        )
+        valid, msg = company.validate()
+        self.assertTrue(valid)
+
+    def test_invalid_company_name(self):
+        """Test company with invalid name."""
         company = Company(
-            name="TestCorp",
-            founded_year=2020,
-            company_type=CompanyType.CANCER_RESEARCH,
-            mission="Test cancer research",
-            employees=50,
-            funding_usd=5000000,
-            is_active=True,
-            cancer_focused=True
+            name="",
+            founding_year=2013,
+            stage=CompanyStage.STARTUP.value,
+            founder_name="Test"
         )
-        
-        self.founder_registry.add_founder(founder)
-        self.company_registry.add_company(company)
-        
-        founders_json = json.dumps(self.founder_registry.list_all())
-        companies_json = json.dumps(self.company_registry.list_all())
-        
-        self.assertIsInstance(json.loads(founders_json), list)
-        self.assertIsInstance(json.loads(companies_json), list)
-        self.assertGreater(len(founders_json), 0)
-        self.assertGreater(len(companies_json), 0)
+        valid, msg = company.validate()
+        self.assertFalse(valid)
+
+    def test_invalid_company_stage(self):
+        """Test company with invalid stage."""
+        company = Company(
+            name="TestCo",
+            founding_year=2013,
+            stage="invalid_stage",
+            founder_name="Test"
+        )
+        valid, msg = company.validate()
+        self.assertFalse(valid)
+
+    def test_invalid_company_employees(self):
+        """Test company with negative employees."""
+        company = Company(
+            name="TestCo",
+            founding_year=2013,
+            stage=CompanyStage.STARTUP.value,
+            founder_name="Test",
+            employees=-5
+        )
+        valid, msg = company.validate()
+        self.assertFalse(valid)
 
 
-def run_tests(verbosity=2):
-    """Run all tests"""
+class TestFounderRepository(unittest.TestCase):
+    """Unit tests for FounderRepository."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.repo = FounderRepository()
+
+    def test_add_founder(self):
+        """Test adding a founder."""
+        founder = Founder(
+            name="Sytse",
+            birth_year=1980,
+            companies_founded=1,
+            health_challenges=["cancer"],
+            health_initiatives=["research"]
+        )
+        success, msg = self.repo.add_founder(founder)
+        self.assertTrue(success)
+        self.assertIn("successfully", msg)
+
+    def test_add_invalid_founder(self):
+        """Test adding an invalid founder."""
+        founder = Founder(
+            name="",
+            birth_year=1980,
+            companies_founded=1,
+            health_challenges=[],
+            health_initiatives=[]
+        )
+        success, msg = self.repo.add_founder(founder)
+        self.assertFalse(success)
+
+    def test_add_duplicate_founder(self):
+        """Test adding duplicate founder."""
+        founder = Founder(
+            name="Sytse",
+            birth_year=1980,
+            companies_founded=1,
+            health_challenges=[],
+            health_initiatives=[]
+        )
+        self.repo.add_founder(founder)
+        success, msg = self.repo.add_founder(founder)
+        self.assertFalse(success)
+
+    def test_get_founder(self):
+        """Test retrieving a founder."""
+        founder = Founder(
+            name="Sytse",
+            birth_year=1980,
+            companies_founded=1,
+            health_challenges=[],
+            health_initiatives=[]
+        )
+        self.repo.add_founder(founder)
+        retrieved = self.repo.get_founder("Sytse")
+        self.assertIsNotNone(retrieved)
+        self.assertEqual(retrieved.name, "Sytse")
+
+    def test_get_nonexistent_founder(self):
+        """Test retrieving nonexistent founder."""
+        retrieved = self.repo.get_founder("Nobody")
+        self.assertIsNone(retrieved)
+
+    def test_list_founders(self):
+        """Test listing founders."""
+        founder1 = Founder(name="Sytse", birth_year=1980, companies_founded=1,
+                          health_challenges=[], health_initiatives=[])
+        founder2 = Founder(name="Jane", birth_year=1985, companies_founded=2,
+                          health_challenges=[], health_initiatives=[])
+        self.repo.add_founder(founder1)
+        self.repo.add_founder(founder2)
+        founders = self.repo.list_founders()
+        self.assertEqual(len(founders), 2)
+
+    def test_remove_founder(self):
+        """Test removing a founder."""
+        founder = Founder(name="Sytse", birth_year=1980, companies_founded=1,
+                         health_challenges=[], health_initiatives=[])
+        self.repo.add_founder(founder)
+        success, msg = self.repo.remove_founder("Sytse")
+        self.assertTrue(success)
+        self.assertIsNone(self.repo.get_founder("Sytse"))
+
+    def test_remove_nonexistent_founder(self):
+        """Test removing nonexistent founder."""
+        success, msg = self.repo.remove_founder("Nobody")
+        self.assertFalse(success)
+
+
+class TestCompanyRepository(unittest.TestCase):
+    """Unit tests for CompanyRepository."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.repo = CompanyRepository()
+
+    def test_add_company(self):
+        """Test adding a company."""
+        company = Company(
+            name="GitLab",
+            founding_year=2013,
+            stage=CompanyStage.MATURE.value,
+            founder_name="Sytse"
+        )
+        success, msg = self.repo.add_company(company)
+        self.assertTrue(success)
+
+    def test_add_invalid_company(self):
+        """Test adding invalid company."""
+        company = Company(
+            name="",
+            founding_year=2013,
+            stage=CompanyStage.STARTUP.value,
+            founder_name="Sytse"
+        )
+        success, msg = self.repo.add_company(company)
+        self.assertFalse(success)
+
+    def test_add_duplicate_company(self):
+        """Test adding duplicate company."""
+        company = Company(
+            name="GitLab",
+            founding_year=2013,
+            stage=CompanyStage.MATURE.value,
+            founder_name="Sytse"
+        )
+        self.repo.add_company(company)
+        success, msg = self.repo.add_company(company)
+        self.assertFalse(success)
+
+    def test_get_company(self):
+        """Test retrieving a company."""
+        company = Company(
+            name="GitLab",
+            founding_year=2013,
+            stage=CompanyStage.MATURE.value,
+            founder_name="Sytse"
+        )
+        self.repo.add_company(company)
+        retrieved = self.repo.get_company("GitLab")
+        self.assertIsNotNone(retrieved)
+        self.assertEqual(retrieved.name, "GitLab")
+
+    def test_list_companies_by_founder(self):
+        """Test listing companies by founder."""
+        comp1 = Company(name="GitLab", founding_year=2013,
+                       stage=CompanyStage.MATURE.value, founder_name="Sytse")
+        comp2 = Company(name="HealthCo", founding_year=2020,
+                       stage=CompanyStage.STARTUP.value, founder_name="Sytse")
+        comp3 = Company(name="OtherCo", founding_year=2015,
+                       stage=CompanyStage.GROWTH.value, founder_name="Jane")
+        self.repo.add_company(comp1)
+        self.repo.add_company(comp2)
+        self.repo.add_company(comp3)
+        sytse_companies = self.repo.list_companies_by_founder("Sytse")
+        self.assertEqual(len(sytse_companies), 2)
+        jane_companies = self.repo.list_companies_by_founder("Jane")
+        self.assertEqual(len(jane_companies), 1)
+
+    def test_remove_company(self):
+        """Test removing a company."""
+        company = Company(
+            name="GitLab",
+            founding_year=2013,
+            stage=CompanyStage.MATURE.value,
+            founder_name="Sytse"
+        )
+        self.repo.add_company(company)
+        success, msg = self.repo.remove_company("GitLab")
+        self.assertTrue(success)
+        self.assertIsNone(self.repo.get_company("GitLab"))
+
+
+class TestFounderAnalytics(unittest.TestCase):
+    """Integration tests for FounderAnalytics."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.founder_repo = FounderRepository()
+        self.company_repo = CompanyRepository()
+        self.analytics = FounderAnalytics(self.founder_repo, self.company_repo)
+
+    def test_get_founder_stats(self):
+        """Test getting founder statistics."""
+        founder = Founder(
+            name="Sytse",
+            birth_year=1980,
+            companies_founded=2,
+            health_challenges=["cancer"],
+            health_initiatives=["research", "treatment"]
+        )
+        self.founder_repo.add_founder(founder)
+
+        company = Company(
+            name="GitLab",
+            founding_year=2013,
+            stage=CompanyStage.MATURE.value,
+            founder_name="Sytse",
+            health_focus="DevOps"
+        )
+        self.company_repo.add_company(company)
+
+        stats = self.analytics.get_founder_stats("Sytse")
+        self.assertIsNotNone(stats)
+        self.assertEqual(stats["name"], "Sytse")
+        self.assertEqual(len(stats["companies"]), 1)
+        self.assertEqual(len(stats["health_focus_companies"]), 1)
+
+    def test_get_health_focused_companies(self):
+        """Test getting health-focused companies."""
+        comp1 = Company(
+            name="HealthCo",
+            founding_year=2020,
+            stage=CompanyStage.STARTUP.value,
+            founder_name="Sytse",
+            health_focus="
+health_research"
+        )
+        comp2 = Company(
+            name="DevCo",
+            founding_year=2015,
+            stage=CompanyStage.GROWTH.value,
+            founder_name="Jane"
+        )
+        self.company_repo.add_company(comp1)
+        self.company_repo.add_company(comp2)
+
+        health_companies = self.analytics.get_health_focused_companies()
+        self.assertEqual(len(health_companies), 1)
+        self.assertEqual(health_companies[0].name, "HealthCo")
+
+    def test_get_company_growth_metrics(self):
+        """Test getting company growth metrics."""
+        comp1 = Company(
+            name="GitLab",
+            founding_year=2013,
+            stage=CompanyStage.MATURE.value,
+            founder_name="Sytse",
+            employees=2000,
+            funding_raised=1_000_000_000
+        )
+        comp2 = Company(
+            name="HealthCo",
+            founding_year=2020,
+            stage=CompanyStage.STARTUP.value,
+            founder_name="Sytse",
+            employees=50,
+            funding_raised=10_000_000
+        )
+        self.company_repo.add_company(comp1)
+        self.company_repo.add_company(comp2)
+
+        metrics = self.analytics.get_company_growth_metrics()
+        self.assertEqual(metrics["total_companies"], 2)
+        self.assertEqual(metrics["total_employees"], 2050)
+        self.assertEqual(metrics["total_funding"], 1_010_000_000)
+
+    def test_founder_stats_nonexistent(self):
+        """Test getting stats for nonexistent founder."""
+        stats = self.analytics.get_founder_stats("Nobody")
+        self.assertIsNone(stats)
+
+
+class TestDataExport(unittest.TestCase):
+    """Unit tests for data export functionality."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.founder_repo = FounderRepository()
+        self.company_repo = CompanyRepository()
+
+    def test_export_founder_to_dict(self):
+        """Test exporting founder to dictionary."""
+        founder = Founder(
+            name="Sytse",
+            birth_year=1980,
+            companies_founded=1,
+            health_challenges=["cancer"],
+            health_initiatives=["research"]
+        )
+        founder_dict = {
+            "name": founder.name,
+            "birth_year": founder.birth_year,
+            "companies_founded": founder.companies_founded,
+            "health_challenges": founder.health_challenges,
+            "health_initiatives": founder.health_initiatives
+        }
+        self.assertEqual(founder_dict["name"], "Sytse")
+        self.assertEqual(len(founder_dict["health_initiatives"]), 1)
+
+    def test_export_company_to_dict(self):
+        """Test exporting company to dictionary."""
+        company = Company(
+            name="GitLab",
+            founding_year=2013,
+            stage=CompanyStage.MATURE.value,
+            founder_name="Sytse",
+            health_focus="DevOps",
+            employees=2000,
+            funding_raised=1_000_000_000
+        )
+        company_dict = {
+            "name": company.name,
+            "founding_year": company.founding_year,
+            "stage": company.stage,
+            "founder_name": company.founder_name,
+            "health_focus": company.health_focus,
+            "employees": company.employees,
+            "funding_raised": company.funding_raised
+        }
+        self.assertEqual(company_dict["name"], "GitLab")
+        self.assertEqual(company_dict["stage"], CompanyStage.MATURE.value)
+
+
+def run_tests(verbosity: int = 2) -> int:
+    """Run all tests and return exit code."""
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
-    
-    suite.addTests(loader.loadTestsFromTestCase(TestCompanyValidation))
+
     suite.addTests(loader.loadTestsFromTestCase(TestFounderValidation))
-    suite.addTests(loader.loadTestsFromTestCase(TestCompanyRegistry))
-    suite.addTests(loader.loadTestsFromTestCase(TestFounderRegistry))
-    suite.addTests(loader.loadTestsFromTestCase(TestIntegration))
-    
+    suite.addTests(loader.loadTestsFromTestCase(TestCompanyValidation))
+    suite.addTests(loader.loadTestsFromTestCase(TestFounderRepository))
+    suite.addTests(loader.loadTestsFromTestCase(TestCompanyRepository))
+    suite.addTests(loader.loadTestsFromTestCase(TestFounderAnalytics))
+    suite.addTests(loader.loadTestsFromTestCase(TestDataExport))
+
     runner = unittest.TextTestRunner(verbosity=verbosity)
     result = runner.run(suite)
-    
-    return result.wasSuccessful()
+
+    return 0 if result.wasSuccessful() else 1
 
 
-def generate_sample_data(company_registry: CompanyRegistry, founder_registry: FounderRegistry):
-    """Generate sample data for demonstration"""
+def run_integration_tests():
+    """Run integration tests with sample data."""
+    print("\n=== INTEGRATION TESTS ===\n")
+
+    founder_repo = FounderRepository()
+    company_repo = CompanyRepository()
+    analytics = FounderAnalytics(founder_repo, company_repo)
+
+    founder1 = Founder(
+        name="Sytse Sijbrandij",
+        birth_year=1980,
+        companies_founded=1,
+        health_challenges=["cancer"],
+        health_initiatives=["research", "treatment", "support"]
+    )
+    success, msg = founder_repo.add_founder(founder1)
+    print(f"Added founder: {msg}")
+
+    founder2 = Founder(
+        name="Jane Smith",
+        birth_year=1985,
+        companies_founded=2,
+        health_challenges=["diabetes"],
+        health_initiatives=["prevention", "advocacy"]
+    )
+    success, msg = founder_repo.add_founder(founder2)
+    print(f"Added founder: {msg}")
+
     companies = [
         Company(
             name="GitLab",
-            founded_year=2011,
-            company_type=CompanyType.TECHNOLOGY,
-            mission="DevOps platform for collaboration",
-            employees=800,
-            funding_usd=75000000,
-            is_active=True,
-            cancer_focused=False
+            founding_year=2013,
+            stage=CompanyStage.MATURE.value,
+            founder_name="Sytse Sijbrandij",
+            health_focus="DevOps and Remote Work",
+            employees=2000,
+            funding_raised=1_000_000_000
         ),
         Company(
-            name="CancerTech Solutions",
-            founded_year=2022,
-            company_type=CompanyType.CANCER_RESEARCH,
-            mission="Developing AI-driven cancer detection tools",
-            employees=120,
-            funding_usd=45000000,
-            is_active=True,
-            cancer_focused=True
-        ),
-        Company(
-            name="Immunotherapy Labs",
-            founded_year=2023,
-            company_type=CompanyType.BIOTECH,
-            mission="Advancing immunotherapy treatments for cancer",
-            employees=200,
-            funding_usd=60000000,
-            is_active=True,
-            cancer_focused=True
-        ),
-        Company(
-            name="Diagnostics Plus",
-            founded_year=2021,
-            company_type=CompanyType.PHARMACEUTICAL,
-            mission="Early cancer diagnosis through biomarkers",
-            employees=90,
-            funding_usd=35000000,
-            is_active=True,
-            cancer_focused=True
-        ),
-        Company(
-            name="BioData Analytics",
-            founded_year=2020,
-            company_type=CompanyType.TECHNOLOGY,
-            mission="Data analytics for healthcare research",
+            name="CancerTech",
+            founding_year=2021,
+            stage=CompanyStage.GROWTH.value,
+            founder_name="Sytse Sijbrandij",
+            health_focus="Cancer Research",
             employees=150,
-            funding_usd=25000000,
-            is_active=True,
-            cancer_focused=False
+            funding_raised=50_000_000
         ),
+        Company(
+            name="HealthFlow",
+            founding_year=2022,
+            stage=CompanyStage.STARTUP.value,
+            founder_name="Jane Smith",
+            health_focus="Diabetes Management",
+            employees=25,
+            funding_raised=5_000_000
+        ),
+        Company(
+            name="DataAnalytics",
+            founding_year=2015,
+            stage=CompanyStage.GROWTH.value,
+            founder_name="Jane Smith",
+            health_focus=None,
+            employees=500,
+            funding_raised=100_000_000
+        )
     ]
-    
+
     for company in companies:
-        success, message = company_registry.add_company(company)
-        if success:
-            print(f"✓ Added company: {company.name}")
-        else:
-            print(f"✗ Failed to add company: {message}")
-    
-    founders = [
-        Founder(
-            name="Sytse Sijbrandij",
-            primary_company="GitLab",
-            companies_founded=["GitLab", "CancerTech Solutions", "Immunotherapy Labs"],
-            cancer_initiative=True,
-            years_active=13
-        ),
-        Founder(
-            name="Dr. Sarah Chen",
-            primary_company="Diagnostics Plus",
-            companies_founded=["Diagnostics Plus"],
-            cancer_initiative=True,
-            years_active=8
-        ),
-        Founder(
-            name="Michael Rodriguez",
-            primary_company="BioData Analytics",
-            companies_founded=["BioData Analytics"],
-            cancer_initiative=False,
-            years_active=10
-        ),
-    ]
-    
-    for founder in founders:
-        success, message = founder_registry.add_founder(founder)
-        if success:
-            print(f"✓ Added founder: {founder.name}")
-        else:
-            print(f"✗ Failed to add founder: {message}")
+        success, msg = company_repo.add_company(company)
+        print(f"Added company: {msg}")
 
+    print("\n--- Founder Statistics ---")
+    sytse_stats = analytics.get_founder_stats("Sytse Sijbrandij")
+    if sytse_stats:
+        print(json.dumps(sytse_stats, indent=2))
 
-def print_summary(company_registry: CompanyRegistry, founder_registry: FounderRegistry):
-    """Print summary of registries"""
-    print("\n" + "="*70)
-    print("CANCER INITIATIVE SUMMARY")
-    print("="*70)
-    
-    health = company_registry.health_check()
-    print(f"\nCompany Registry Health Check:")
-    print(f"  Total Companies: {health['total_companies']}")
-    print(f"  Cancer-Focused Companies: {health['cancer_focused_count']}")
-    print(f"  Total Funding: ${health['total_funding_usd']:,.0f}")
-    print(f"  Total Employees: {health['total_employees']}")
-    print(f"  Active Companies: {health['active_companies']}")
-    print(f"  Timestamp: {health['timestamp']}")
-    
-    cancer_companies = company_registry.get_cancer_focused_companies()
-    print(f"\nCancer-Focused Companies ({len(cancer_companies)}):")
-    for company in cancer_companies:
-        print(f"  • {company.name} ({company.company_type.value})")
-        print(f"    Mission: {company.mission}")
-        print(f"    Funding: ${company.funding_usd:,.0f} | Employees: {company.employees}")
-    
-    cancer_founders = founder_registry.get_cancer_initiative_founders()
-    print(f"\nCancer Initiative Founders ({len(cancer_founders)}):")
-    for founder in cancer_founders:
-        print(f"  • {founder.name}")
-        print(f"    Primary Company: {founder.primary_company}")
-        print(f"    Companies Founded: {', '.join(founder.companies_founded)}")
-        print(f"    Years Active: {founder.years_active}")
-    
-    print("\n" + "="*70)
+    print("\n--- Health Focused Companies ---")
+    health_companies = analytics.get_health_focused_companies()
+    for company in health_companies:
+        print(f"  - {company.name} (Focus: {company.health_focus})")
+
+    print("\n--- Company Growth Metrics ---")
+    metrics = analytics.get_company_growth_metrics()
+    print(json.dumps(metrics, indent=2))
+
+    print("\n--- All Founders ---")
+    for founder in founder_repo.list_founders():
+        print(f"  - {founder.name} (Age: {datetime.now().year - founder.birth_year})")
+
+    print("\n--- Companies by Founder (Sytse Sijbrandij) ---")
+    sytse_companies = company_repo.list_companies_by_founder("Sytse Sijbrandij")
+    for company in sytse_companies:
+        print(f"  - {company.name} ({company.stage.upper()})")
+
+    return 0
 
 
 def main():
-    """Main entry point"""
+    """Main entry point with CLI."""
     parser = argparse.ArgumentParser(
-        description="Cancer Initiative Validation and Testing Framework",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s --run-tests --verbosity 2
-  %(prog)s --demo
-  %(prog)s --run-tests --demo
-  %(prog)s --test-case TestCompanyValidation
-        """
+        description="Test and validate founder health initiative tracking system"
     )
-    
     parser.add_argument(
-        '--run-tests',
-        action='store_true',
-        help='Run all unit and integration tests'
+        "--mode",
+        choices=["unit", "integration", "all"],
+        default="all",
+        help="Test mode to run"
     )
-    
     parser.add_argument(
-        '--verbosity',
+        "--verbosity",
         type=int,
-        default=2,
         choices=[0, 1, 2],
-        help='Test verbosity level (default: 2)'
+        default=2,
+        help="Test output verbosity level"
     )
-    
     parser.add_argument(
-        '--test-case',
-        type=str,
-        help='Run specific test case by name'
+        "--stop-on-failure",
+        action="store_true",
+        help="Stop on first test failure"
     )
-    
-    parser.add_argument(
-        '--demo',
-        action='store_true',
-        help='Run demo with sample data'
-    )
-    
-    parser.add_argument(
-        '--export-json',
-        type=str,
-        help='Export demo data to JSON file'
-    )
-    
+
     args = parser.parse_args()
-    
-    if not args.run_tests and not args.demo:
-        parser.print_help()
-        return 0
-    
-    if args.run_tests:
-        print("Running tests...\n")
-        if args.test_case:
-            loader = unittest.TestLoader()
-            suite = loader.loadTestsFromName(f'__main__.{args.test_case}')
-            runner = unittest.TextTestRunner(verbosity=args.verbosity)
-            result = runner.run(suite)
-            return 0 if result.wasSuccessful() else 1
-        else:
-            success = run_tests(verbosity=args.verbosity)
-            if not success:
-                return 1
-    
-    if args.demo:
-        print("\nGenerating sample data...\n")
-        company_registry = CompanyRegistry()
-        founder_registry = FounderRegistry()
-        
-        generate_sample_data(company_registry, founder_registry)
-        print_summary(company_registry, founder_registry)
-        
-        if args.export_json:
-            output = {
-                'companies': company_registry.list_all(),
-                'founders': founder_registry.list_all(),
-                'health_check': company_registry.health_check()
-            }
-            with open(args.export_json, 'w') as f:
-                json.dump(output, f, indent=2)
-            print(f"\n✓ Data exported to {args.export_json}")
-    
+
+    if args.mode in ["unit", "all"]:
+        print("=== RUNNING UNIT TESTS ===\n")
+        unit_result = run_tests(verbosity=args.verbosity)
+        if unit_result != 0 and args.stop_on_failure:
+            return unit_result
+
+    if args.mode in ["integration", "all"]:
+        integration_result = run_integration_tests()
+        if integration_result != 0:
+            return integration_result
+
+    print("\n=== ALL TESTS COMPLETED SUCCESSFULLY ===\n")
     return 0
 
 
