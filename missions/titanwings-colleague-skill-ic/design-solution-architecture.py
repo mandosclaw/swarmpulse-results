@@ -3,423 +3,548 @@
 # Task:    Design solution architecture
 # Mission: titanwings/colleague-skill: 你们搞大模型的就是码奸，你们已经害死前端兄弟了，还要害死后端兄弟，测试兄弟，运维兄弟，害死网安兄弟，害死ic兄弟，最后害死自己害死全人类
 # Agent:   @aria
-# Date:    2026-03-30T14:15:01.773Z
+# Date:    2026-04-01T17:54:12.443Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Design solution architecture
-Mission: titanwings/colleague-skill - Document approach with trade-offs and alternatives
-Agent: @aria (SwarmPulse)
-Date: 2024
-
-This module implements a software architecture design documentation system.
-It analyzes system requirements, designs solution architectures, documents trade-offs,
-and compares alternative approaches for engineering problems.
+TASK: Design solution architecture
+MISSION: titanwings/colleague-skill - Document approach with trade-offs and alternatives
+AGENT: @aria (SwarmPulse network)
+DATE: 2024
+CATEGORY: Engineering
 """
 
-import json
 import argparse
+import json
 import sys
-from typing import Any, Dict, List
-from dataclasses import dataclass, field, asdict
-from enum import Enum
 from datetime import datetime
+from typing import Any, Dict, List
+from enum import Enum
 
 
-class ArchitecturePattern(Enum):
-    """Common architecture patterns"""
-    MONOLITHIC = "monolithic"
-    MICROSERVICES = "microservices"
-    SERVERLESS = "serverless"
-    HYBRID = "hybrid"
-    EVENT_DRIVEN = "event_driven"
-    LAYERED = "layered"
+class ComponentType(Enum):
+    """Architecture component types"""
+    API = "api"
+    DATABASE = "database"
+    CACHE = "cache"
+    QUEUE = "queue"
+    WORKER = "worker"
+    FRONTEND = "frontend"
+    MONITORING = "monitoring"
+    SECURITY = "security"
 
 
-@dataclass
 class TradeOff:
-    """Represents a trade-off between design choices"""
-    aspect: str
-    approach_a: str
-    approach_b: str
-    pros_a: List[str]
-    cons_a: List[str]
-    pros_b: List[str]
-    cons_b: List[str]
-    recommendation: str
-    rationale: str
-
-
-@dataclass
-class Alternative:
-    """Represents an alternative architecture approach"""
-    name: str
-    pattern: ArchitecturePattern
-    description: str
-    components: List[str]
-    pros: List[str]
-    cons: List[str]
-    complexity_score: float
-    scalability_score: float
-    maintainability_score: float
-    cost_score: float
-    estimated_effort_days: int
-
-
-@dataclass
-class Requirement:
-    """Represents a system requirement"""
-    id: str
-    title: str
-    description: str
-    category: str
-    priority: str
-    acceptance_criteria: List[str]
-
-
-@dataclass
-class ArchitectureDesign:
-    """Complete architecture design documentation"""
-    project_name: str
-    timestamp: str
-    requirements: List[Requirement]
-    selected_pattern: ArchitecturePattern
-    selected_alternative: Alternative
-    trade_offs: List[TradeOff]
-    alternatives: List[Alternative]
-    implementation_roadmap: List[Dict[str, Any]]
-    risk_assessment: List[Dict[str, Any]]
-    assumptions: List[str]
-    constraints: List[str]
-    rationale: str
-
-
-class ArchitectureDesigner:
-    """Main architecture design system"""
-
-    def __init__(self, project_name: str):
-        self.project_name = project_name
-        self.requirements: List[Requirement] = []
-        self.alternatives: List[Alternative] = []
-        self.trade_offs: List[TradeOff] = []
-
-    def add_requirement(self, req_id: str, title: str, description: str,
-                       category: str, priority: str,
-                       acceptance_criteria: List[str]) -> None:
-        """Add a system requirement"""
-        req = Requirement(
-            id=req_id,
-            title=title,
-            description=description,
-            category=category,
-            priority=priority,
-            acceptance_criteria=acceptance_criteria
-        )
-        self.requirements.append(req)
-
-    def define_alternative(self, name: str, pattern: ArchitecturePattern,
-                          description: str, components: List[str],
-                          pros: List[str], cons: List[str],
-                          complexity_score: float, scalability_score: float,
-                          maintainability_score: float, cost_score: float,
-                          estimated_effort_days: int) -> None:
-        """Define an alternative architecture approach"""
-        alt = Alternative(
-            name=name,
-            pattern=pattern,
-            description=description,
-            components=components,
-            pros=pros,
-            cons=cons,
-            complexity_score=complexity_score,
-            scalability_score=scalability_score,
-            maintainability_score=maintainability_score,
-            cost_score=cost_score,
-            estimated_effort_days=estimated_effort_days
-        )
-        self.alternatives.append(alt)
-
-    def add_trade_off(self, aspect: str, approach_a: str, approach_b: str,
-                      pros_a: List[str], cons_a: List[str],
-                      pros_b: List[str], cons_b: List[str],
-                      recommendation: str, rationale: str) -> None:
-        """Document a trade-off between approaches"""
-        trade_off = TradeOff(
-            aspect=aspect,
-            approach_a=approach_a,
-            approach_b=approach_b,
-            pros_a=pros_a,
-            cons_a=cons_a,
-            pros_b=pros_b,
-            cons_b=cons_b,
-            recommendation=recommendation,
-            rationale=rationale
-        )
-        self.trade_offs.append(trade_off)
-
-    def score_alternative(self, alternative: Alternative) -> float:
-        """Calculate overall score for an alternative (0-100)"""
-        weights = {
-            'complexity': 0.15,
-            'scalability': 0.35,
-            'maintainability': 0.35,
-            'cost': 0.15
+    """Represents an architectural trade-off"""
+    
+    def __init__(self, aspect: str, option_a: str, option_b: str, 
+                 pros_a: List[str], cons_a: List[str],
+                 pros_b: List[str], cons_b: List[str],
+                 recommendation: str):
+        self.aspect = aspect
+        self.option_a = option_a
+        self.option_b = option_b
+        self.pros_a = pros_a
+        self.cons_a = cons_a
+        self.pros_b = pros_b
+        self.cons_b = cons_b
+        self.recommendation = recommendation
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "aspect": self.aspect,
+            "options": {
+                "option_a": {
+                    "name": self.option_a,
+                    "pros": self.pros_a,
+                    "cons": self.cons_a
+                },
+                "option_b": {
+                    "name": self.option_b,
+                    "pros": self.pros_b,
+                    "cons": self.cons_b
+                }
+            },
+            "recommendation": self.recommendation
         }
-        
-        # Invert complexity score (lower is better)
-        complexity_normalized = (10 - alternative.complexity_score) / 10
-        scalability_normalized = alternative.scalability_score / 10
-        maintainability_normalized = alternative.maintainability_score / 10
-        cost_normalized = alternative.cost_score / 10
-        
-        overall = (
-            complexity_normalized * weights['complexity'] +
-            scalability_normalized * weights['scalability'] +
-            maintainability_normalized * weights['maintainability'] +
-            cost_normalized * weights['cost']
-        ) * 100
-        
-        return round(overall, 2)
 
-    def select_best_alternative(self) -> Alternative:
-        """Select the best alternative based on scoring"""
-        if not self.alternatives:
-            raise ValueError("No alternatives defined")
-        
-        scored = [(alt, self.score_alternative(alt)) for alt in self.alternatives]
-        best = max(scored, key=lambda x: x[1])
-        return best[0]
 
-    def generate_roadmap(self, selected_alt: Alternative,
-                        total_duration_weeks: int) -> List[Dict[str, Any]]:
-        """Generate implementation roadmap based on selected alternative"""
-        phases = []
-        effort_per_week = selected_alt.estimated_effort_days / 5
-        weeks_per_phase = total_duration_weeks / len(selected_alt.components)
-        
-        for idx, component in enumerate(selected_alt.components):
-            phase = {
-                "phase": idx + 1,
-                "component": component,
-                "duration_weeks": max(1, int(weeks_per_phase)),
-                "start_week": int(idx * weeks_per_phase) + 1,
-                "key_deliverables": [
-                    f"Design document for {component}",
-                    f"Implementation of {component}",
-                    f"Unit tests for {component}",
-                    f"Integration tests for {component}"
-                ],
-                "dependencies": selected_alt.components[:idx] if idx > 0 else []
-            }
-            phases.append(phase)
-        
-        return phases
+class ArchitectureComponent:
+    """Represents an architecture component"""
+    
+    def __init__(self, name: str, component_type: ComponentType, description: str,
+                 tech_stack: List[str], responsibilities: List[str],
+                 interfaces: List[str], scalability: str, criticality: str):
+        self.name = name
+        self.component_type = component_type
+        self.description = description
+        self.tech_stack = tech_stack
+        self.responsibilities = responsibilities
+        self.interfaces = interfaces
+        self.scalability = scalability
+        self.criticality = criticality
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "type": self.component_type.value,
+            "description": self.description,
+            "tech_stack": self.tech_stack,
+            "responsibilities": self.responsibilities,
+            "interfaces": self.interfaces,
+            "scalability": self.scalability,
+            "criticality": self.criticality
+        }
 
-    def assess_risks(self, selected_alt: Alternative) -> List[Dict[str, Any]]:
-        """Assess risks for selected alternative"""
-        risks = []
-        
-        # Complexity risk
-        if selected_alt.complexity_score > 7:
-            risks.append({
-                "id": "RISK_001",
-                "title": "High Architectural Complexity",
-                "description": f"Selected architecture has complexity score of {selected_alt.complexity_score}/10",
-                "probability": "High",
-                "impact": "High",
-                "mitigation": "Invest in comprehensive documentation and team training",
-                "owner": "Architecture Lead"
-            })
-        
-        # Scalability concerns
-        if selected_alt.scalability_score < 5:
-            risks.append({
-                "id": "RISK_002",
-                "title": "Scalability Limitations",
-                "description": f"Selected architecture has scalability score of {selected_alt.scalability_score}/10",
-                "probability": "Medium",
-                "impact": "High",
-                "mitigation": "Plan for architecture evolution strategy",
-                "owner": "Technical Lead"
-            })
-        
-        # Cost risk
-        if selected_alt.cost_score < 4:
-            risks.append({
-                "id": "RISK_003",
-                "title": "High Operational Costs",
-                "description": f"Selected architecture has cost score of {selected_alt.cost_score}/10",
-                "probability": "High",
-                "impact": "Medium",
-                "mitigation": "Implement cost optimization strategies early",
-                "owner": "DevOps Lead"
-            })
-        
-        # Effort risk
-        if selected_alt.estimated_effort_days > 180:
-            risks.append({
-                "id": "RISK_004",
-                "title": "High Implementation Effort",
-                "description": f"Estimated effort is {selected_alt.estimated_effort_days} days",
-                "probability": "Medium",
-                "impact": "High",
-                "mitigation": "Break down into smaller increments, allocate resources early",
-                "owner": "Project Manager"
-            })
-        
-        return risks
 
-    def generate_design_document(self) -> ArchitectureDesign:
-        """Generate complete architecture design document"""
-        selected_alt = self.select_best_alternative()
-        
-        design = ArchitectureDesign(
-            project_name=self.project_name,
-            timestamp=datetime.now().isoformat(),
-            requirements=self.requirements,
-            selected_pattern=selected_alt.pattern,
-            selected_alternative=selected_alt,
-            trade_offs=self.trade_offs,
-            alternatives=self.alternatives,
-            implementation_roadmap=self.generate_roadmap(selected_alt, 16),
-            risk_assessment=self.assess_risks(selected_alt),
-            assumptions=[
-                "Team has experience with selected technology stack",
-                "Infrastructure resources will be available",
-                "Requirements are stable during design phase",
-                "Cross-team collaboration will be maintained"
-            ],
-            constraints=[
-                "Budget: Limited to $X",
-                "Timeline: 4-6 months",
-                "Team size: 6-8 engineers",
-                "Existing system integration: Required"
-            ],
-            rationale=self._generate_rationale(selected_alt)
-        )
-        
-        return design
+class ArchitectureDesign:
+    """Main architecture design document"""
+    
+    def __init__(self, project_name: str, version: str):
+        self.project_name = project_name
+        self.version = version
+        self.created_at = datetime.now().isoformat()
+        self.components: List[ArchitectureComponent] = []
+        self.tradeoffs: List[TradeOff] = []
+        self.alternatives: List[Dict[str, Any]] = []
+        self.constraints: List[str] = []
+        self.assumptions: List[str] = []
+    
+    def add_component(self, component: ArchitectureComponent) -> None:
+        """Add a component to the architecture"""
+        self.components.append(component)
+    
+    def add_tradeoff(self, tradeoff: TradeOff) -> None:
+        """Add a trade-off analysis"""
+        self.tradeoffs.append(tradeoff)
+    
+    def add_alternative(self, name: str, description: str, pros: List[str],
+                       cons: List[str], estimated_effort: str) -> None:
+        """Add an alternative approach"""
+        self.alternatives.append({
+            "name": name,
+            "description": description,
+            "pros": pros,
+            "cons": cons,
+            "estimated_effort": estimated_effort
+        })
+    
+    def add_constraint(self, constraint: str) -> None:
+        """Add an architectural constraint"""
+        self.constraints.append(constraint)
+    
+    def add_assumption(self, assumption: str) -> None:
+        """Add an assumption"""
+        self.assumptions.append(assumption)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation"""
+        return {
+            "project": self.project_name,
+            "version": self.version,
+            "created_at": self.created_at,
+            "components": [c.to_dict() for c in self.components],
+            "tradeoffs": [t.to_dict() for t in self.tradeoffs],
+            "alternatives": self.alternatives,
+            "constraints": self.constraints,
+            "assumptions": self.assumptions,
+            "component_count": len(self.components),
+            "tradeoff_count": len(self.tradeoffs),
+            "alternative_count": len(self.alternatives)
+        }
 
-    def _generate_rationale(self, selected_alt: Alternative) -> str:
-        """Generate rationale for selected alternative"""
-        score = self.score_alternative(selected_alt)
-        return (
-            f"Alternative '{selected_alt.name}' was selected with overall score {score}/100. "
-            f"This approach best balances scalability ({selected_alt.scalability_score}/10), "
-            f"maintainability ({selected_alt.maintainability_score}/10), and cost effectiveness "
-            f"({selected_alt.cost_score}/10) while minimizing complexity ({selected_alt.complexity_score}/10). "
-            f"The estimated implementation effort is {selected_alt.estimated_effort_days} days."
-        )
 
-    def export_to_json(self, design: ArchitectureDesign, output_file: str) -> None:
-        """Export design document to JSON"""
-        def serialize(obj):
-            if hasattr(obj, '__dataclass_fields__'):
-                return asdict(obj)
-            elif isinstance(obj, Enum):
-                return obj.value
-            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
-        
-        with open(output_file, 'w') as f:
-            json.dump(asdict(design), f, indent=2, default=serialize)
+def create_microservices_architecture() -> ArchitectureDesign:
+    """Create a microservices-based architecture design"""
+    
+    arch = ArchitectureDesign("AI Model Serving Platform", "1.0.0")
+    
+    arch.add_constraint("Serve models with <100ms latency")
+    arch.add_constraint("Support horizontal scaling")
+    arch.add_constraint("Maintain 99.9% uptime SLA")
+    arch.add_constraint("Cost-efficient operation")
+    
+    arch.add_assumption("Models fit in GPU memory")
+    arch.add_assumption("Load is primarily read-heavy inference")
+    arch.add_assumption("Team has Kubernetes expertise")
+    
+    api_gateway = ArchitectureComponent(
+        name="API Gateway",
+        component_type=ComponentType.API,
+        description="Entry point for all client requests, handles routing and rate limiting",
+        tech_stack=["FastAPI", "Python 3.11", "uvicorn"],
+        responsibilities=[
+            "Request routing to appropriate services",
+            "Rate limiting and authentication",
+            "Request/response logging",
+            "Load balancing"
+        ],
+        interfaces=["REST API", "WebSocket"],
+        scalability="Horizontal (stateless)",
+        criticality="Critical"
+    )
+    arch.add_component(api_gateway)
+    
+    inference_service = ArchitectureComponent(
+        name="Inference Service",
+        component_type=ComponentType.WORKER,
+        description="Serves model inference requests",
+        tech_stack=["PyTorch", "ONNX Runtime", "FastAPI"],
+        responsibilities=[
+            "Load and manage model instances",
+            "Execute inference requests",
+            "Batch processing of requests",
+            "GPU memory management"
+        ],
+        interfaces=["gRPC", "REST"],
+        scalability="Horizontal (GPU-constrained)",
+        criticality="Critical"
+    )
+    arch.add_component(inference_service)
+    
+    cache_layer = ArchitectureComponent(
+        name="Cache Layer",
+        component_type=ComponentType.CACHE,
+        description="Caches frequently requested inferences",
+        tech_stack=["Redis", "Memcached"],
+        responsibilities=[
+            "Store inference results",
+            "Cache invalidation",
+            "TTL management"
+        ],
+        interfaces=["Redis protocol"],
+        scalability="Horizontal (sharded)",
+        criticality="High"
+    )
+    arch.add_component(cache_layer)
+    
+    task_queue = ArchitectureComponent(
+        name="Task Queue",
+        component_type=ComponentType.QUEUE,
+        description="Handles asynchronous inference requests",
+        tech_stack=["Celery", "RabbitMQ", "Redis"],
+        responsibilities=[
+            "Queue management",
+            "Task distribution",
+            "Retry logic"
+        ],
+        interfaces=["Message broker protocol"],
+        scalability="Horizontal",
+        criticality="High"
+    )
+    arch.add_component(task_queue)
+    
+    database = ArchitectureComponent(
+        name="Database",
+        component_type=ComponentType.DATABASE,
+        description="Stores request logs, model metadata, and results",
+        tech_stack=["PostgreSQL", "TimescaleDB"],
+        responsibilities=[
+            "Persist inference requests",
+            "Store model metadata",
+            "Log audit trail"
+        ],
+        interfaces=["SQL"],
+        scalability="Vertical (primary/replica)",
+        criticality="Critical"
+    )
+    arch.add_component(database)
+    
+    monitoring = ArchitectureComponent(
+        name="Monitoring & Observability",
+        component_type=ComponentType.MONITORING,
+        description="Monitors system health and performance",
+        tech_stack=["Prometheus", "Grafana", "ELK Stack"],
+        responsibilities=[
+            "Collect metrics",
+            "Alert on anomalies",
+            "Centralized logging"
+        ],
+        interfaces=["Prometheus scrape", "Log ingestion"],
+        scalability="Horizontal",
+        criticality="High"
+    )
+    arch.add_component(monitoring)
+    
+    security = ArchitectureComponent(
+        name="Security & Auth",
+        component_type=ComponentType.SECURITY,
+        description="Handles authentication and authorization",
+        tech_stack=["OAuth2", "JWT", "TLS"],
+        responsibilities=[
+            "Token validation",
+            "Access control",
+            "Encryption"
+        ],
+        interfaces=["OAuth2", "SAML"],
+        scalability="Horizontal (stateless)",
+        criticality="Critical"
+    )
+    arch.add_component(security)
+    
+    # Add trade-offs
+    sync_async_tradeoff = TradeOff(
+        aspect="Inference Request Handling",
+        option_a="Synchronous (REST)",
+        option_b="Asynchronous (Queue-based)",
+        pros_a=[
+            "Simpler client implementation",
+            "Immediate response",
+            "Lower operational complexity"
+        ],
+        cons_a=[
+            "Cannot handle long-running requests",
+            "Client must wait for response",
+            "Resource intensive"
+        ],
+        pros_b=[
+            "Handles long-running inferences",
+            "Better resource utilization",
+            "Decouples clients from servers"
+        ],
+        cons_b=[
+            "More complex client logic",
+            "Polling or webhook needed",
+            "Higher operational overhead"
+        ],
+        recommendation="Hybrid: Use synchronous for <5s inferences, async for longer requests"
+    )
+    arch.add_tradeoff(sync_async_tradeoff)
+    
+    gpu_allocation_tradeoff = TradeOff(
+        aspect="GPU Resource Allocation",
+        option_a="Shared GPU across models",
+        option_b="Dedicated GPU per model",
+        pros_a=[
+            "Better resource utilization",
+            "Lower infrastructure cost",
+            "Dynamic allocation"
+        ],
+        cons_a=[
+            "Complex scheduling",
+            "Performance interference",
+            "Harder to predict latency"
+        ],
+        pros_b=[
+            "Predictable performance",
+            "Isolated failure domains",
+            "Simpler scheduling"
+        ],
+        cons_b=[
+            "Higher infrastructure cost",
+            "Potential resource waste",
+            "Scaling challenges"
+        ],
+        recommendation="Shared with QoS guarantees and container isolation for production"
+    )
+    arch.add_tradeoff(gpu_allocation_tradeoff)
+    
+    db_scaling_tradeoff = TradeOff(
+        aspect="Database Scaling Strategy",
+        option_a="Vertical scaling (larger instances)",
+        option_b="Horizontal scaling (sharding)",
+        pros_a=[
+            "Simpler operational model",
+            "No application changes needed",
+            "Better consistency"
+        ],
+        cons_a=[
+            "Hardware limitations",
+            "Single point of failure",
+            "High costs at scale"
+        ],
+        pros_b=[
+            "Unlimited scaling",
+            "Better fault isolation",
+            "Cost-effective"
+        ],
+        cons_b=[
+            "Operational complexity",
+            "Application logic changes",
+            "Consistency challenges"
+        ],
+        recommendation="Vertical initially, migrate to sharding at 10x current load"
+    )
+    arch.add_tradeoff(db_scaling_tradeoff)
+    
+    # Add alternatives
+    arch.add_alternative(
+        name="Serverless Architecture",
+        description="Use AWS Lambda or Google Cloud Functions for inference",
+        pros=[
+            "No infrastructure management",
+            "Automatic scaling",
+            "Pay-per-use pricing"
+        ],
+        cons=[
+            "Cold start latency issues",
+            "Vendor lock-in",
+            "Limited GPU availability",
+            "Higher per-request cost at scale"
+        ],
+        estimated_effort="Medium (framework changes)"
+    )
+    
+    arch.add_alternative(
+        name="Monolithic Architecture",
+        description="Single service handling all operations",
+        pros=[
+            "Simple deployment",
+            "Lower operational overhead",
+            "Simpler debugging"
+        ],
+        cons=[
+            "Poor scalability",
+            "Technology lock-in",
+            "Deployment bottleneck",
+            "Hard to maintain at scale"
+        ],
+        estimated_effort="Low (but high future cost)"
+    )
+    
+    arch.add_alternative(
+        name="Event-Driven Architecture",
+        description="Fully event-based inter-service communication",
+        pros=[
+            "Loose coupling",
+            "High scalability",
+            "Event sourcing capability"
+        ],
+        cons=[
+            "Complex debugging",
+            "Eventual consistency issues",
+            "Higher operational complexity",
+            "Harder to monitor"
+        ],
+        estimated_effort="High (significant refactoring)"
+    )
+    
+    return arch
 
-    def print_summary(self, design: ArchitectureDesign) -> None:
-        """Print design summary to console"""
-        print(f"\n{'='*80}")
-        print(f"ARCHITECTURE DESIGN DOCUMENT: {design.project_name}")
-        print(f"{'='*80}\n")
-        
-        print(f"Generated: {design.timestamp}\n")
-        
-        print("REQUIREMENTS:")
-        print("-" * 80)
-        for req in design.requirements:
-            print(f"  [{req.id}] {req.title} ({req.priority})")
-            print(f"      Category: {req.category}")
-            print(f"      Description: {req.description}")
-        
-        print(f"\n{'='*80}\n")
-        print("ALTERNATIVES ANALYSIS:")
-        print("-" * 80)
-        for alt in design.alternatives:
-            score = self.score_alternative(alt)
-            print(f"\n  {alt.name}")
-            print(f"  Pattern: {alt.pattern.value}")
-            print(f"  Overall Score: {score}/100")
-            print(f"    - Complexity: {alt.complexity_score}/10")
-            print(f"    - Scalability: {alt.scalability_score}/10")
-            print(f"    - Maintainability: {alt.maintainability_score}/10")
-            print(f"    - Cost: {alt.cost_score}/10")
-            print(f"    - Estimated Effort: {alt.estimated_effort_days} days")
-            print(f"  Components: {', '.join(alt.components[:3])}...")
-            print(f"  Pros: {alt.pros[0]}")
-            print(f"  Cons: {alt.cons[0]}")
-        
-        print(f"\n{'='*80}\n")
-        print("SELECTED SOLUTION:")
-        print("-" * 80)
-        selected = design.selected_alternative
-        score = self.score_alternative(selected)
-        print(f"  Name: {selected.name}")
-        print(f"  Pattern: {selected.pattern.value}")
-        print(f"  Score: {score}/100")
-        print(f"  Rationale: {design.rationale}\n")
-        
-        print(f"{'='*80}\n")
-        print("TRADE-OFFS:")
-        print("-" * 80)
-        for tradeoff in design.trade_offs:
-            print(f"\n  {tradeoff.aspect}")
-            print(f"  {tradeoff.approach_a} vs {tradeoff.approach_b}")
-            print(f"  Recommendation: {tradeoff.recommendation}")
-            print(f"  Rationale: {tradeoff.rationale}")
-        
-        print(f"\n{'='*80}\n")
-        print("RISK ASSESSMENT:")
-        print("-" * 80)
-        for risk in design.risk_assessment:
-            print(f"\n  [{risk['id']}] {risk['title']}")
-            print(f"  Probability: {risk['probability']} | Impact: {risk['impact']}")
-            print(f"  Mitigation: {risk['mitigation']}")
-        
-        print(f"\n{'='*80}\n")
-        print("IMPLEMENTATION ROADMAP:")
-        print("-" * 80)
-        for phase in design.implementation_roadmap:
-            print(f"\n  Phase {phase['phase']}: {phase['component']}")
-            print(f"  Duration: {phase['duration_weeks']} weeks (Week {phase['start_week']}+)")
-            print(f"  Deliverables: {len(phase['key_deliverables'])} items")
-        
-        print(f"\n{'='*80}\n")
+
+def format_architecture_report(arch: ArchitectureDesign, verbose: bool = False) -> str:
+    """Format architecture design as readable report"""
+    
+    lines = []
+    lines.append("=" * 80)
+    lines.append(f"ARCHITECTURE DESIGN DOCUMENT")
+    lines.append(f"Project: {arch.project_name}")
+    lines.append(f"Version: {arch.version}")
+    lines.append(f"Created: {arch.created_at}")
+    lines.append("=" * 80)
+    lines.append("")
+    
+    # Constraints and Assumptions
+    lines.append("CONSTRAINTS:")
+    for constraint in arch.constraints:
+        lines.append(f"  • {constraint}")
+    lines.append("")
+    
+    lines.append("ASSUMPTIONS:")
+    for assumption in arch.assumptions:
+        lines.append(f"  • {assumption}")
+    lines.append("")
+    
+    # Components
+    lines.append("ARCHITECTURE COMPONENTS:")
+    for component in arch.components:
+        lines.append(f"\n  [{component.component_type.value.upper()}] {component.name}")
+        lines.append(f"  Description: {component.description}")
+        lines.append(f"  Criticality: {component.criticality}")
+        lines.append(f"  Scalability: {component.scalability}")
+        lines.append(f"  Tech Stack: {', '.join(component.tech_stack)}")
+        lines.append(f"  Responsibilities:")
+        for resp in component.responsibilities:
+            lines.append(f"    - {resp}")
+        lines.append(f"  Interfaces: {', '.join(component.interfaces)}")
+    lines.append("")
+    
+    # Trade-offs
+    lines.append("ARCHITECTURAL TRADE-OFFS:")
+    for tradeoff in arch.tradeoffs:
+        lines.append(f"\n  TRADE-OFF: {tradeoff.aspect}")
+        lines.append(f"  Option A: {tradeoff.option_a}")
+        lines.append(f"    Pros: {'; '.join(tradeoff.pros_a)}")
+        lines.append(f"    Cons: {'; '.join(tradeoff.cons_a)}")
+        lines.append(f"  Option B: {tradeoff.option_b}")
+        lines.append(f"    Pros: {'; '.join(tradeoff.pros_b)}")
+        lines.append(f"    Cons: {'; '.join(tradeoff.cons_b)}")
+        lines.append(f"  RECOMMENDATION: {tradeoff.recommendation}")
+    lines.append("")
+    
+    # Alternatives
+    lines.append("ALTERNATIVE APPROACHES CONSIDERED:")
+    for alt in arch.alternatives:
+        lines.append(f"\n  {alt['name']}")
+        lines.append(f"  Description: {alt['description']}")
+        lines.append(f"  Pros: {'; '.join(alt['pros'])}")
+        lines.append(f"  Cons: {'; '.join(alt['cons'])}")
+        lines.append(f"  Estimated Effort: {alt['estimated_effort']}")
+    lines.append("")
+    
+    lines.append("=" * 80)
+    lines.append(f"Summary: {len(arch.components)} components, "
+                f"{len(arch.tradeoffs)} trade-offs analyzed, "
+                f"{len(arch.alternatives)} alternatives considered")
+    lines.append("=" * 80)
+    
+    return "\n".join(lines)
 
 
 def main():
     """Main entry point"""
-    parser = argparse.ArgumentParser(
-        description="Architecture Design Documentation System",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Example:\n  python script.py --project 'E-Commerce Platform' --output design.json"
-    )
     
+    parser = argparse.ArgumentParser(
+        description="Architecture Design Solution Generator"
+    )
     parser.add_argument(
         "--project",
         type=str,
-        default="Enterprise Platform",
-        help="Project name"
+        default="AI Model Serving Platform",
+        help="Project name for the architecture"
     )
     parser.add_argument(
-        "--output",
+        "--output-format",
         type=str,
-        default="architecture_design.json",
-        help="Output JSON file path"
+        choices=["text", "json"],
+        default="text",
+        help="Output format for the design document"
     )
     parser.add_argument(
-        "--duration",
-        type=int,
-        default=16,
-        help="Implementation duration in weeks"
+        "--output-file",
+        type=str,
+        default=None,
+        help="Write output to file instead of stdout"
     )
     parser.add_argument(
-        "--summary",
+        "--verbose",
         action="store_true",
+        help="Include verbose details in output"
+    )
+    
+    args = parser.parse_args()
+    
+    # Create architecture design
+    arch = create_microservices_architecture()
+    arch.project_name = args.project
+    
+    # Generate output
+    if args.output_format == "json":
+        output = json.dumps(arch.to_dict(), indent=2)
+    else:
+        output = format_architecture_report(arch, verbose=args.verbose)
+    
+    # Write output
+    if args.output_file:
+        with open(args.output_file, "w") as f:
+            f.write(output)
+        print(f"Architecture design written to {args.output_file}")
+    else:
+        print(output)
+    
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
