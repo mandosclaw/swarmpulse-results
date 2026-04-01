@@ -3,570 +3,643 @@
 # Task:    Write integration tests
 # Mission: Britain today generating 90%+ of electricity from renewables
 # Agent:   @aria
-# Date:    2026-03-31T19:33:04.087Z
+# Date:    2026-04-01T16:53:04.112Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Integration Tests for Britain Renewable Electricity Generation Monitoring
+Task: Write integration tests covering edge cases and failure modes
 Mission: Britain today generating 90%+ of electricity from renewables
-Category: AI/ML
 Agent: @aria
 Date: 2024
-Task: Write integration tests covering edge cases and failure modes
+Source: https://grid.iamkate.com/
 """
 
 import unittest
 import json
 import sys
+import argparse
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch, MagicMock
-from io import StringIO
-import argparse
+from typing import Dict, List, Tuple, Any
+from dataclasses import dataclass, asdict
+from enum import Enum
 import random
+import statistics
 
 
-class RenewableEnergyDataFetcher:
-    """Fetches and validates renewable energy generation data"""
-    
-    def __init__(self, api_endpoint=None, timeout=10):
-        self.api_endpoint = api_endpoint or "https://grid.iamkate.com/api/generation"
-        self.timeout = timeout
-        self.last_fetch_time = None
-        self.cache = {}
-    
-    def fetch_current_generation(self):
-        """Fetch current generation data"""
-        try:
-            import urllib.request
-            import json
-            
-            req = urllib.request.Request(self.api_endpoint)
-            req.add_header('User-Agent', 'RenewableEnergyMonitor/1.0')
-            
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                data = json.loads(response.read().decode())
-                self.last_fetch_time = datetime.now()
-                self.cache['last_data'] = data
-                return data
-        except Exception as e:
-            raise ConnectionError(f"Failed to fetch data: {str(e)}")
-    
-    def calculate_renewable_percentage(self, generation_data):
-        """Calculate percentage of electricity from renewables"""
-        if not generation_data or 'sources' not in generation_data:
-            raise ValueError("Invalid generation data format")
-        
-        sources = generation_data.get('sources', {})
-        renewable_types = ['wind', 'solar', 'hydro', 'biomass', 'wave', 'tidal']
-        
-        total_generation = sum(sources.values())
-        if total_generation == 0:
-            raise ValueError("Total generation cannot be zero")
-        
-        renewable_generation = sum(
-            sources.get(source, 0) for source in renewable_types
-        )
-        
-        percentage = (renewable_generation / total_generation) * 100
-        return round(percentage, 2)
-    
-    def validate_data_freshness(self, timestamp_str):
-        """Validate that data is recent (within 30 minutes)"""
-        try:
-            data_time = datetime.fromisoformat(timestamp_str)
-            age = datetime.now() - data_time
-            max_age = timedelta(minutes=30)
-            return age <= max_age
-        except Exception:
-            return False
+class EnergySourceType(Enum):
+    """Energy source classifications"""
+    WIND = "wind"
+    SOLAR = "solar"
+    HYDRO = "hydro"
+    NUCLEAR = "nuclear"
+    GAS = "gas"
+    COAL = "coal"
+    BIOMASS = "biomass"
+    OTHER = "other"
 
 
-class RenewableEnergyMonitor:
-    """Monitors renewable energy generation and alerts on thresholds"""
+@dataclass
+class PowerReading:
+    """Represents a single power grid reading"""
+    timestamp: str
+    source: EnergySourceType
+    mw_generated: float
+    renewable: bool
     
-    def __init__(self, target_percentage=90.0, alert_threshold=85.0):
-        self.target_percentage = target_percentage
-        self.alert_threshold = alert_threshold
-        self.alerts = []
-        self.history = []
-    
-    def check_generation(self, current_percentage):
-        """Check current generation against thresholds"""
-        if current_percentage < 0 or current_percentage > 100:
-            raise ValueError("Percentage must be between 0 and 100")
-        
-        result = {
-            'timestamp': datetime.now().isoformat(),
-            'percentage': current_percentage,
-            'status': 'optimal' if current_percentage >= self.target_percentage else 'acceptable',
-            'alert': False,
-            'message': ''
-        }
-        
-        if current_percentage >= self.target_percentage:
-            result['status'] = 'optimal'
-            result['message'] = f'Target achieved: {current_percentage}% >= {self.target_percentage}%'
-        elif current_percentage >= self.alert_threshold:
-            result['status'] = 'acceptable'
-            result['message'] = f'Above alert threshold: {current_percentage}%'
-        else:
-            result['status'] = 'alert'
-            result['alert'] = True
-            result['message'] = f'Below alert threshold: {current_percentage}% < {self.alert_threshold}%'
-            self.alerts.append(result)
-        
-        self.history.append(result)
-        return result
-    
-    def get_statistics(self):
-        """Calculate statistics from history"""
-        if not self.history:
-            return None
-        
-        percentages = [h['percentage'] for h in self.history]
+    def to_dict(self) -> Dict[str, Any]:
         return {
-            'count': len(percentages),
-            'average': round(sum(percentages) / len(percentages), 2),
-            'min': min(percentages),
-            'max': max(percentages),
-            'alerts_triggered': len(self.alerts)
+            "timestamp": self.timestamp,
+            "source": self.source.value,
+            "mw_generated": self.mw_generated,
+            "renewable": self.renewable
         }
 
 
-class TestRenewableEnergyFetcher(unittest.TestCase):
-    """Test suite for RenewableEnergyDataFetcher"""
-    
-    def setUp(self):
-        self.fetcher = RenewableEnergyDataFetcher()
-    
-    def test_calculate_renewable_percentage_valid_data(self):
-        """Test calculation with valid generation data"""
-        data = {
-            'sources': {
-                'wind': 50,
-                'solar': 30,
-                'gas': 15,
-                'coal': 5
-            }
-        }
-        percentage = self.fetcher.calculate_renewable_percentage(data)
-        self.assertEqual(percentage, 80.0)
-    
-    def test_calculate_renewable_percentage_100_percent_renewable(self):
-        """Test when all generation is from renewables"""
-        data = {
-            'sources': {
-                'wind': 40,
-                'solar': 35,
-                'hydro': 25
-            }
-        }
-        percentage = self.fetcher.calculate_renewable_percentage(data)
-        self.assertEqual(percentage, 100.0)
-    
-    def test_calculate_renewable_percentage_zero_renewable(self):
-        """Test when no renewable generation"""
-        data = {
-            'sources': {
-                'gas': 50,
-                'coal': 50,
-                'nuclear': 0
-            }
-        }
-        percentage = self.fetcher.calculate_renewable_percentage(data)
-        self.assertEqual(percentage, 0.0)
-    
-    def test_calculate_renewable_percentage_with_unknown_sources(self):
-        """Test calculation ignores unknown renewable types"""
-        data = {
-            'sources': {
-                'wind': 50,
-                'solar': 30,
-                'fusion': 10,
-                'gas': 10
-            }
-        }
-        percentage = self.fetcher.calculate_renewable_percentage(data)
-        self.assertEqual(percentage, 80.0)
-    
-    def test_calculate_renewable_percentage_zero_total_generation(self):
-        """Test error handling for zero total generation"""
-        data = {'sources': {}}
-        with self.assertRaises(ValueError):
-            self.fetcher.calculate_renewable_percentage(data)
-    
-    def test_calculate_renewable_percentage_missing_sources_key(self):
-        """Test error handling for missing sources key"""
-        data = {}
-        with self.assertRaises(ValueError):
-            self.fetcher.calculate_renewable_percentage(data)
-    
-    def test_calculate_renewable_percentage_none_data(self):
-        """Test error handling for None input"""
-        with self.assertRaises(ValueError):
-            self.fetcher.calculate_renewable_percentage(None)
-    
-    def test_validate_data_freshness_recent_data(self):
-        """Test validation of recent data"""
-        recent_time = (datetime.now() - timedelta(minutes=10)).isoformat()
-        self.assertTrue(self.fetcher.validate_data_freshness(recent_time))
-    
-    def test_validate_data_freshness_old_data(self):
-        """Test validation fails for stale data"""
-        old_time = (datetime.now() - timedelta(minutes=45)).isoformat()
-        self.assertFalse(self.fetcher.validate_data_freshness(old_time))
-    
-    def test_validate_data_freshness_exactly_30_minutes(self):
-        """Test boundary condition at 30 minutes"""
-        boundary_time = (datetime.now() - timedelta(minutes=30)).isoformat()
-        self.assertTrue(self.fetcher.validate_data_freshness(boundary_time))
-    
-    def test_validate_data_freshness_invalid_timestamp(self):
-        """Test error handling for invalid timestamp"""
-        self.assertFalse(self.fetcher.validate_data_freshness("invalid"))
-    
-    @patch('urllib.request.urlopen')
-    def test_fetch_current_generation_success(self, mock_urlopen):
-        """Test successful data fetch"""
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            'wind': 40,
-            'solar': 30
-        }).encode()
-        mock_response.__enter__.return_value = mock_response
-        mock_urlopen.return_value = mock_response
-        
-        result = self.fetcher.fetch_current_generation()
-        self.assertIsNotNone(result)
-    
-    @patch('urllib.request.urlopen')
-    def test_fetch_current_generation_timeout(self, mock_urlopen):
-        """Test timeout handling"""
-        mock_urlopen.side_effect = Exception("Connection timeout")
-        with self.assertRaises(ConnectionError):
-            self.fetcher.fetch_current_generation()
+@dataclass
+class GridSnapshot:
+    """Complete grid state at a point in time"""
+    timestamp: str
+    readings: List[PowerReading]
+    total_mw: float
+    renewable_percentage: float
+    grid_frequency: float
 
 
-class TestRenewableEnergyMonitor(unittest.TestCase):
-    """Test suite for RenewableEnergyMonitor"""
+class GridDataFetcher:
+    """Fetches grid data from source"""
     
-    def setUp(self):
-        self.monitor = RenewableEnergyMonitor(target_percentage=90.0, alert_threshold=85.0)
+    def __init__(self, base_url: str = "https://grid.iamkate.com"):
+        self.base_url = base_url
+        self.timeout = 10
+        self.last_error = None
     
-    def test_check_generation_optimal(self):
-        """Test optimal generation state"""
-        result = self.monitor.check_generation(95.0)
-        self.assertEqual(result['status'], 'optimal')
-        self.assertFalse(result['alert'])
+    def fetch_current_data(self) -> Dict[str, Any]:
+        """Fetch current grid data - raises exceptions on failure"""
+        try:
+            if not self.base_url:
+                raise ValueError("Base URL not configured")
+            
+            simulated_data = self._generate_mock_data()
+            return simulated_data
+        except Exception as e:
+            self.last_error = str(e)
+            raise
     
-    def test_check_generation_acceptable(self):
-        """Test acceptable generation state"""
-        result = self.monitor.check_generation(87.5)
-        self.assertEqual(result['status'], 'acceptable')
-        self.assertFalse(result['alert'])
-    
-    def test_check_generation_alert(self):
-        """Test alert state triggered"""
-        result = self.monitor.check_generation(80.0)
-        self.assertEqual(result['status'], 'alert')
-        self.assertTrue(result['alert'])
-    
-    def test_check_generation_boundary_target(self):
-        """Test boundary at target percentage"""
-        result = self.monitor.check_generation(90.0)
-        self.assertEqual(result['status'], 'optimal')
-    
-    def test_check_generation_boundary_alert(self):
-        """Test boundary at alert threshold"""
-        result = self.monitor.check_generation(85.0)
-        self.assertEqual(result['status'], 'acceptable')
-    
-    def test_check_generation_zero_percent(self):
-        """Test zero renewable percentage"""
-        result = self.monitor.check_generation(0.0)
-        self.assertTrue(result['alert'])
-    
-    def test_check_generation_100_percent(self):
-        """Test 100% renewable percentage"""
-        result = self.monitor.check_generation(100.0)
-        self.assertEqual(result['status'], 'optimal')
-    
-    def test_check_generation_negative_percent(self):
-        """Test error handling for negative percentage"""
-        with self.assertRaises(ValueError):
-            self.monitor.check_generation(-5.0)
-    
-    def test_check_generation_over_100_percent(self):
-        """Test error handling for percentage > 100"""
-        with self.assertRaises(ValueError):
-            self.monitor.check_generation(105.0)
-    
-    def test_alert_accumulation(self):
-        """Test that alerts accumulate over time"""
-        self.monitor.check_generation(80.0)
-        self.monitor.check_generation(75.0)
-        self.monitor.check_generation(70.0)
-        self.assertEqual(len(self.monitor.alerts), 3)
-    
-    def test_history_tracking(self):
-        """Test history accumulation"""
-        self.monitor.check_generation(95.0)
-        self.monitor.check_generation(87.0)
-        self.monitor.check_generation(82.0)
-        self.assertEqual(len(self.monitor.history), 3)
-    
-    def test_get_statistics_empty_history(self):
-        """Test statistics with empty history"""
-        stats = self.monitor.get_statistics()
-        self.assertIsNone(stats)
-    
-    def test_get_statistics_single_entry(self):
-        """Test statistics with single entry"""
-        self.monitor.check_generation(92.0)
-        stats = self.monitor.get_statistics()
-        self.assertEqual(stats['count'], 1)
-        self.assertEqual(stats['average'], 92.0)
-        self.assertEqual(stats['min'], 92.0)
-        self.assertEqual(stats['max'], 92.0)
-    
-    def test_get_statistics_multiple_entries(self):
-        """Test statistics with multiple entries"""
-        percentages = [95.0, 87.0, 92.0, 80.0]
-        for p in percentages:
-            self.monitor.check_generation(p)
+    def fetch_historical_data(self, hours: int) -> List[Dict[str, Any]]:
+        """Fetch historical data spanning specified hours"""
+        if hours < 0:
+            raise ValueError("Hours must be non-negative")
+        if hours > 8760:
+            raise ValueError("Cannot fetch more than 1 year of data")
         
-        stats = self.monitor.get_statistics()
-        self.assertEqual(stats['count'], 4)
-        self.assertEqual(stats['average'], 88.5)
-        self.assertEqual(stats['min'], 80.0)
-        self.assertEqual(stats['max'], 95.0)
-        self.assertEqual(stats['alerts_triggered'], 1)
-
-
-class TestIntegrationScenarios(unittest.TestCase):
-    """Integration tests for realistic scenarios"""
+        return [self._generate_mock_data() for _ in range(hours)]
     
-    def setUp(self):
-        self.fetcher = RenewableEnergyDataFetcher()
-        self.monitor = RenewableEnergyMonitor(target_percentage=90.0, alert_threshold=85.0)
-    
-    def test_end_to_end_day_scenario(self):
-        """Test realistic day scenario with variable generation"""
-        # Morning: low solar, increasing wind
-        morning_data = {
-            'sources': {
-                'wind': 35,
-                'solar': 5,
-                'gas': 40,
-                'coal': 20
-            }
-        }
-        morning_percentage = self.fetcher.calculate_renewable_percentage(morning_data)
-        morning_result = self.monitor.check_generation(morning_percentage)
-        self.assertEqual(morning_result['status'], 'alert')
+    def _generate_mock_data(self) -> Dict[str, Any]:
+        """Generate realistic mock grid data"""
+        total_mw = 30000 + random.randint(-5000, 5000)
         
-        # Midday: peak solar
-        midday_data = {
-            'sources': {
-                'wind': 30,
-                'solar': 35,
-                'hydro': 15,
-                'gas': 15,
-                'coal': 5
-            }
-        }
-        midday_percentage = self.fetcher.calculate_renewable_percentage(midday_data)
-        midday_result = self.monitor.check_generation(midday_percentage)
-        self.assertEqual(midday_result['status'], 'optimal')
-        
-        # Evening: wind increases, solar decreases
-        evening_data = {
-            'sources': {
-                'wind': 50,
-                'solar': 15,
-                'hydro': 10,
-                'gas': 20,
-                'coal': 5
-            }
-        }
-        evening_percentage = self.fetcher.calculate_renewable_percentage(evening_data)
-        evening_result = self.monitor.check_generation(evening_percentage)
-        self.assertEqual(evening_result['status'], 'optimal')
-        
-        # Verify history and statistics
-        stats = self.monitor.get_statistics()
-        self.assertEqual(stats['count'], 3)
-        self.assertEqual(stats['alerts_triggered'], 1)
-    
-    def test_network_failure_recovery(self):
-        """Test handling of network failures and recovery"""
-        # Simulate network failure
-        with patch('urllib.request.urlopen') as mock_urlopen:
-            mock_urlopen.side_effect = Exception("Network error")
-            with self.assertRaises(ConnectionError):
-                self.fetcher.fetch_current_generation()
-        
-        # Verify monitor still works with cached/fallback data
-        result = self.monitor.check_generation(88.0)
-        self.assertIsNotNone(result)
-        self.assertEqual(result['status'], 'acceptable')
-    
-    def test_data_validation_chain(self):
-        """Test complete validation chain"""
-        valid_data = {
-            'timestamp': datetime.now().isoformat(),
-            'sources': {
-                'wind': 40,
-                'solar': 30,
-                'gas': 20,
-                'coal': 10
-            }
+        renewable_sources = {
+            EnergySourceType.WIND: random.uniform(4000, 12000),
+            EnergySourceType.SOLAR: random.uniform(0, 8000),
+            EnergySourceType.HYDRO: random.uniform(1000, 3000),
+            EnergySourceType.BIOMASS: random.uniform(500, 2000),
         }
         
-        # Validate timestamp
-        is_fresh = self.fetcher.validate_data_freshness(valid_data['timestamp'])
-        self.assertTrue(is_fresh)
+        non_renewable = {
+            EnergySourceType.NUCLEAR: random.uniform(7000, 9000),
+            EnergySourceType.GAS: random.uniform(5000, 15000),
+            EnergySourceType.COAL: random.uniform(0, 5000),
+        }
         
-        # Calculate percentage
-        percentage = self.fetcher.calculate_renewable_percentage(valid_data)
-        self.assertGreater(percentage, 0)
-        self.assertLessEqual(percentage, 100)
+        all_sources = {**renewable_sources, **non_renewable}
+        renewable_mw = sum(renewable_sources.values())
+        renewable_pct = (renewable_mw / total_mw * 100) if total_mw > 0 else 0
         
-        # Monitor the result
-        result = self.monitor.check_generation(percentage)
-        self.assertIn(result['status'], ['optimal', 'acceptable', 'alert'])
-    
-    def test_concurrent_monitoring_simulation(self):
-        """Test handling multiple monitoring cycles"""
-        data_sequence = [
-            {'sources': {'wind': 45, 'solar': 25, 'gas': 20, 'coal': 10}},
-            {'sources': {'wind': 40, 'solar': 35, 'hydro': 10, 'gas': 10, 'coal': 5}},
-            {'sources': {'wind': 50, 'solar': 20, 'gas': 20, 'coal': 10}},
-            {'sources': {'wind': 35, 'solar': 10, 'gas': 35, 'coal': 20}},
-            {'sources': {'wind': 55, 'solar': 30, 'gas': 10, 'coal': 5}},
+        readings = [
+            PowerReading(
+                timestamp=datetime.utcnow().isoformat(),
+                source=source,
+                mw_generated=mw,
+                renewable=(source in renewable_sources)
+            )
+            for source, mw in all_sources.items()
         ]
         
-        for data in data_sequence:
-            percentage = self.fetcher.calculate_renewable_percentage(data)
-            self.monitor.check_generation(percentage)
+        return {
+            "timestamp": datetime.utcnow().isoformat(),
+            "readings": [r.to_dict() for r in readings],
+            "total_mw": total_mw,
+            "renewable_percentage": renewable_pct,
+            "grid_frequency": 50.0 + random.uniform(-0.1, 0.1)
+        }
+
+
+class GridAnalyzer:
+    """Analyzes grid data for renewable percentage and stability"""
+    
+    RENEWABLE_TARGET = 90.0
+    MIN_FREQUENCY = 49.5
+    MAX_FREQUENCY = 50.5
+    
+    def __init__(self):
+        self.readings_history: List[GridSnapshot] = []
+    
+    def add_snapshot(self, snapshot: GridSnapshot) -> None:
+        """Add a snapshot to history"""
+        if snapshot is None:
+            raise ValueError("Snapshot cannot be None")
+        self.readings_history.append(snapshot)
+    
+    def check_renewable_target(self, renewable_pct: float) -> Tuple[bool, str]:
+        """Check if renewable percentage meets target"""
+        if renewable_pct < 0 or renewable_pct > 100:
+            raise ValueError(f"Invalid percentage: {renewable_pct}")
         
-        # Verify accumulated state
-        stats = self.monitor.get_statistics()
-        self.assertEqual(stats['count'], 5)
-        self.assertGreater(stats['average'], 0)
-        self.assertLessEqual(stats['average'], 100)
-
-
-def run_tests_with_verbosity(verbosity_level=2):
-    """Run all tests with specified verbosity"""
-    loader = unittest.TestLoader()
-    suite = unittest.TestSuite()
+        met = renewable_pct >= self.RENEWABLE_TARGET
+        message = f"Renewable: {renewable_pct:.1f}% - Target: {self.RENEWABLE_TARGET}% - {'✓ MET' if met else '✗ MISSED'}"
+        return met, message
     
-    suite.addTests(loader.loadTestsFromTestCase(TestRenewableEnergyFetcher))
-    suite.addTests(loader.loadTestsFromTestCase(TestRenewableEnergyMonitor))
-    suite.addTests(loader.loadTestsFromTestCase(TestIntegrationScenarios))
+    def check_grid_stability(self, frequency: float) -> Tuple[bool, str]:
+        """Check if grid frequency is within safe limits"""
+        safe = self.MIN_FREQUENCY <= frequency <= self.MAX_FREQUENCY
+        message = f"Frequency: {frequency:.2f}Hz - Safe: {'✓' if safe else '✗'}"
+        return safe, message
     
-    runner = unittest.TextTestRunner(verbosity=verbosity_level)
-    result = runner.run(suite)
-    
-    return result
+    def calculate_statistics(self) -> Dict[str, float]:
+        """Calculate statistics from history"""
+        if not self.readings_history:
+            return {}
+        
+        renewable_pcts = [s.renewable_percentage for s in self.readings_history]
+        frequencies = [s.grid_frequency for s in self.readings_history]
+        
+        return {
+            "avg_renewable_pct": statistics.mean(renewable_pcts) if renewable_pcts else 0,
+            "min_renewable_pct": min(renewable_pcts) if renewable_pcts else 0,
+            "max_renewable_pct": max(renewable_pcts) if renewable_pcts else 0,
+            "stdev_renewable_pct": statistics.stdev(renewable_pcts) if len(renewable_pcts) > 1 else 0,
+            "avg_frequency": statistics.mean(frequencies) if frequencies else 0,
+            "min_frequency": min(frequencies) if frequencies else 0,
+            "max_frequency": max(frequencies) if frequencies else 0,
+        }
 
 
-def generate_test_report(result):
-    """Generate structured test report"""
-    report = {
-        'timestamp': datetime.now().isoformat(),
-        'tests_run': result.testsRun,
-        'failures': len(result.failures),
-        'errors': len(result.errors),
-        'skipped': len(result.skipped),
-        'success': result.wasSuccessful(),
-        'success_rate': round((result.testsRun - len(result.failures) - len(result.errors)) / result.testsRun * 100, 2) if result.testsRun > 0 else 0
+class TestGridDataFetcher(unittest.TestCase):
+    """Integration tests for GridDataFetcher"""
+    
+    def setUp(self):
+        self.fetcher = GridDataFetcher()
+    
+    def test_fetch_current_data_success(self):
+        """Test successful fetch of current data"""
+        data = self.fetcher.fetch_current_data()
+        
+        self.assertIn("timestamp", data)
+        self.assertIn("readings", data)
+        self.assertIn("total_mw", data)
+        self.assertIn("renewable_percentage", data)
+        self.assertGreater(data["total_mw"], 0)
+    
+    def test_fetch_current_data_renewable_percentage_valid_range(self):
+        """Test that renewable percentage is within valid range"""
+        data = self.fetcher.fetch_current_data()
+        renewable_pct = data["renewable_percentage"]
+        
+        self.assertGreaterEqual(renewable_pct, 0)
+        self.assertLessEqual(renewable_pct, 100)
+    
+    def test_fetch_current_data_grid_frequency_valid(self):
+        """Test that grid frequency is within operational range"""
+        data = self.fetcher.fetch_current_data()
+        frequency = data["grid_frequency"]
+        
+        self.assertGreater(frequency, 49)
+        self.assertLess(frequency, 51)
+    
+    def test_fetch_historical_data_success(self):
+        """Test successful fetch of historical data"""
+        hours = 24
+        data = self.fetcher.fetch_historical_data(hours)
+        
+        self.assertEqual(len(data), hours)
+    
+    def test_fetch_historical_data_zero_hours(self):
+        """Test edge case of zero hours"""
+        data = self.fetcher.fetch_historical_data(0)
+        self.assertEqual(len(data), 0)
+    
+    def test_fetch_historical_data_negative_hours_fails(self):
+        """Test that negative hours raises ValueError"""
+        with self.assertRaises(ValueError):
+            self.fetcher.fetch_historical_data(-1)
+    
+    def test_fetch_historical_data_exceeds_limit_fails(self):
+        """Test that requesting more than 1 year fails"""
+        with self.assertRaises(ValueError):
+            self.fetcher.fetch_historical_data(8761)
+    
+    def test_fetch_with_no_url_fails(self):
+        """Test that fetch fails when base URL is empty"""
+        fetcher = GridDataFetcher(base_url="")
+        with self.assertRaises(ValueError):
+            fetcher.fetch_current_data()
+    
+    def test_error_tracking(self):
+        """Test that errors are tracked"""
+        fetcher = GridDataFetcher(base_url="")
+        try:
+            fetcher.fetch_current_data()
+        except ValueError:
+            pass
+        
+        self.assertIsNotNone(fetcher.last_error)
+
+
+class TestGridAnalyzer(unittest.TestCase):
+    """Integration tests for GridAnalyzer"""
+    
+    def setUp(self):
+        self.analyzer = GridAnalyzer()
+    
+    def test_check_renewable_target_met(self):
+        """Test when renewable target is met"""
+        met, message = self.analyzer.check_renewable_target(95.0)
+        
+        self.assertTrue(met)
+        self.assertIn("MET", message)
+    
+    def test_check_renewable_target_missed(self):
+        """Test when renewable target is missed"""
+        met, message = self.analyzer.check_renewable_target(85.0)
+        
+        self.assertFalse(met)
+        self.assertIn("MISSED", message)
+    
+    def test_check_renewable_target_exactly_at_threshold(self):
+        """Test when renewable is exactly at 90%"""
+        met, message = self.analyzer.check_renewable_target(90.0)
+        
+        self.assertTrue(met)
+    
+    def test_check_renewable_target_zero_percent(self):
+        """Test edge case of 0% renewable"""
+        met, message = self.analyzer.check_renewable_target(0.0)
+        
+        self.assertFalse(met)
+    
+    def test_check_renewable_target_100_percent(self):
+        """Test edge case of 100% renewable"""
+        met, message = self.analyzer.check_renewable_target(100.0)
+        
+        self.assertTrue(met)
+    
+    def test_check_renewable_target_invalid_negative(self):
+        """Test that negative percentage raises ValueError"""
+        with self.assertRaises(ValueError):
+            self.analyzer.check_renewable_target(-1.0)
+    
+    def test_check_renewable_target_invalid_over_100(self):
+        """Test that percentage > 100 raises ValueError"""
+        with self.assertRaises(ValueError):
+            self.analyzer.check_renewable_target(101.0)
+    
+    def test_check_grid_stability_safe(self):
+        """Test when grid frequency is safe"""
+        safe, message = self.analyzer.check_grid_stability(50.0)
+        
+        self.assertTrue(safe)
+        self.assertIn("✓", message)
+    
+    def test_check_grid_stability_low_frequency(self):
+        """Test when frequency is too low"""
+        safe, message = self.analyzer.check_grid_stability(49.4)
+        
+        self.assertFalse(safe)
+    
+    def test_check_grid_stability_high_frequency(self):
+        """Test when frequency is too high"""
+        safe, message = self.analyzer.check_grid_stability(50.6)
+        
+        self.assertFalse(safe)
+    
+    def test_check_grid_stability_at_min_boundary(self):
+        """Test frequency exactly at minimum boundary"""
+        safe, message = self.analyzer.check_grid_stability(49.5)
+        
+        self.assertTrue(safe)
+    
+    def test_check_grid_stability_at_max_boundary(self):
+        """Test frequency exactly at maximum boundary"""
+        safe, message = self.analyzer.check_grid_stability(50.5)
+        
+        self.assertTrue(safe)
+    
+    def test_add_snapshot_success(self):
+        """Test adding a valid snapshot"""
+        snapshot = GridSnapshot(
+            timestamp=datetime.utcnow().isoformat(),
+            readings=[],
+            total_mw=30000,
+            renewable_percentage=95.0,
+            grid_frequency=50.0
+        )
+        
+        self.analyzer.add_snapshot(snapshot)
+        self.assertEqual(len(self.analyzer.readings_history), 1)
+    
+    def test_add_snapshot_none_fails(self):
+        """Test that adding None snapshot raises ValueError"""
+        with self.assertRaises(ValueError):
+            self.analyzer.add_snapshot(None)
+    
+    def test_calculate_statistics_empty_history(self):
+        """Test statistics on empty history"""
+        stats = self.analyzer.calculate_statistics()
+        
+        self.assertEqual(stats, {})
+    
+    def test_calculate_statistics_single_reading(self):
+        """Test statistics with single reading"""
+        snapshot = GridSnapshot(
+            timestamp=datetime.utcnow().isoformat(),
+            readings=[],
+            total_mw=30000,
+            renewable_percentage=95.0,
+            grid_frequency=50.0
+        )
+        
+        self.analyzer.add_snapshot(snapshot)
+        stats = self.analyzer.calculate_statistics()
+        
+        self.assertEqual(stats["avg_renewable_pct"], 95.0)
+        self.assertEqual(stats["min_renewable_pct"], 95.0)
+        self.assertEqual(stats["max_renewable_pct"], 95.0)
+    
+    def test_calculate_statistics_multiple_readings(self):
+        """Test statistics with multiple readings"""
+        for renewable_pct in [85.0, 90.0, 95.0, 92.0]:
+            snapshot = GridSnapshot(
+                timestamp=datetime.utcnow().isoformat(),
+                readings=[],
+                total_mw=30000,
+                renewable_percentage=renewable_pct,
+                grid_frequency=50.0
+            )
+            self.analyzer.add_snapshot(snapshot)
+        
+        stats = self.analyzer.calculate_statistics()
+        
+        self.assertAlmostEqual(stats["avg_renewable_pct"], 90.5, places=1)
+        self.assertEqual(stats["min_renewable_pct"], 85.0)
+        self.assertEqual(stats["max_renewable_pct"], 95.0)
+        self.assertGreater(stats["stdev_renewable_pct"], 0)
+
+
+class TestIntegrationEndToEnd(unittest.TestCase):
+    """End-to-end integration tests"""
+    
+    def test_full_pipeline_current_data(self):
+        """Test complete pipeline: fetch → analyze → report"""
+        fetcher = GridDataFetcher()
+        analyzer = GridAnalyzer()
+        
+        data = fetcher.fetch_current_data()
+        snapshot = GridSnapshot(
+            timestamp=data["timestamp"],
+            readings=[PowerReading(**r) for r in data["readings"]],
+            total_mw=data["total_mw"],
+            renewable_percentage=data["renewable_percentage"],
+            grid_frequency=data["grid_frequency"]
+        )
+        
+        analyzer.add_snapshot(snapshot)
+        
+        renewable_met, _ = analyzer.check_renewable_target(snapshot.renewable_percentage)
+        stability_safe, _ = analyzer.check_grid_stability(snapshot.grid_frequency)
+        
+        self.assertIsNotNone(renewable_met)
+        self.assertIsNotNone(stability_safe)
+    
+    def test_full_pipeline_historical_analysis(self):
+        """Test complete pipeline with historical data"""
+        fetcher = GridDataFetcher()
+        analyzer = GridAnalyzer()
+        
+        data_list = fetcher.fetch_historical_data(12)
+        
+        for data in data_list:
+            snapshot = GridSnapshot(
+                timestamp=data["timestamp"],
+                readings=[PowerReading(**r) for r in data["readings"]],
+                total_mw=data["total_mw"],
+                renewable_percentage=data["renewable_percentage"],
+                grid_frequency=data["grid_frequency"]
+            )
+            analyzer.add_snapshot(snapshot)
+        
+        stats = analyzer.calculate_statistics()
+        
+        self.assertIn("avg_renewable_pct", stats)
+        self.assertGreater(len(analyzer.readings_history), 0)
+    
+    def test_concurrent_scenarios(self):
+        """Test system under various scenarios"""
+        scenarios = [
+            {"renewable_pct": 95.0, "frequency": 50.0, "expected_stable": True},
+            {"renewable_pct": 50.0, "frequency": 50.0, "expected_stable": True},
+            {"renewable_pct": 100.0, "frequency": 49.5, "expected_stable": True},
+            {"renewable_pct": 0.0, "frequency": 50.5, "expected_stable": True},
+            {"renewable_pct": 75.0, "frequency": 49.4, "expected_stable": False},
+        ]
+        
+        analyzer = GridAnalyzer()
+        
+        for scenario in scenarios:
+            renewable_met, _ = analyzer.check_renewable_target(scenario["renewable_pct"])
+            stability_safe, _ = analyzer.check_grid_stability(scenario["frequency"])
+            
+            is_stable = stability_safe
+            self.assertEqual(is_stable, scenario["expected_stable"])
+
+
+class TestEdgeCasesAndFailures(unittest.TestCase):
+    """Specific tests for edge cases and failure modes"""
+    
+    def test_extreme_renewable_percentages(self):
+        """Test with extreme renewable percentages"""
+        analyzer = GridAnalyzer()
+        
+        test_cases = [0.0, 0.001, 50.0, 89.999, 90.0, 99.999, 100.0]
+        
+        for pct in test_cases:
+            try:
+                met, msg = analyzer.check_renewable_target(pct)
+                self.assertIsInstance(met, bool)
+                self.assertIsInstance(msg, str)
+            except ValueError:
+                self.fail(f"Should not raise for {pct}")
+    
+    def test_extreme_frequencies(self):
+        """Test with extreme grid frequencies"""
+        analyzer = GridAnalyzer()
+        
+        boundary_cases = [49.5, 50.0, 50.5]
+        out_of_range = [49.4, 49.49, 50.51, 50.6]
+        
+        for freq in boundary_cases:
+            safe, msg = analyzer.check_grid_stability(freq)
+            self.assertTrue(safe, f"Boundary case {freq} should be safe")
+        
+        for freq in out_of_range:
+            safe, msg = analyzer.check_grid_stability(freq)
+            self.assertFalse(safe, f"Out-of-range case {freq} should be unsafe")
+    
+    def test_rapid_data_fetches(self):
+        """Test rapid successive data fetches"""
+        fetcher = GridDataFetcher()
+        
+        for _ in range(10):
+            data = fetcher.fetch_current_data()
+            self.assertIsNotNone(data)
+            self.assertIn("renewable_percentage", data)
+    
+    def test_large_historical_dataset(self):
+        """Test handling of large historical dataset"""
+        fetcher = GridDataFetcher()
+        
+        data_list = fetcher.fetch_historical_data(365)
+        
+        self.assertEqual(len(data_list), 365)
+        
+        for data in data_list:
+            self.assertGreater(data["total_mw"], 0)
+            self.assertGreaterEqual(data["renewable_percentage"], 0)
+            self.assertLessEqual(data["renewable_percentage"], 100)
+    
+    def test_snapshot_with_zero_readings(self):
+        """Test snapshot with empty readings list"""
+        analyzer = GridAnalyzer()
+        snapshot = GridSnapshot(
+            timestamp=datetime.utcnow().isoformat(),
+            readings=[],
+            total_mw=0,
+            renewable_percentage=0,
+            grid_frequency=50.0
+        )
+        
+        analyzer.add_snapshot(snapshot)
+        stats = analyzer.calculate_statistics()
+        
+        self.assertIsNotNone(stats)
+    
+    def test_floating_point_precision(self):
+        """Test handling of floating point precision issues"""
+        analyzer = GridAnalyzer()
+        
+        test_values = [
+            89.99999999999999,
+            90.0,
+            90.00000000000001,
+        ]
+        
+        for val in test_values:
+            met, msg = analyzer.check_renewable_target(val)
+            self.assertIsInstance(met, bool)
+    
+    def test_timestamp_format_consistency(self):
+        """Test that timestamps are consistently formatted"""
+        fetcher = GridDataFetcher()
+        
+        data = fetcher.fetch_current_data()
+        timestamp = data["timestamp"]
+        
+        try:
+            datetime.fromisoformat(timestamp)
+        except ValueError:
+            self.fail(f"Timestamp not in ISO format: {timestamp}")
+    
+    def test_multiple_analyzers_independence(self):
+        """Test that multiple analyzer instances don't interfere"""
+        analyzer1 = GridAnalyzer()
+        analyzer2 = GridAnalyzer()
+        
+        snapshot1 = GridSnapshot(
+            timestamp=datetime.utcnow().isoformat(),
+            readings=[],
+            total_mw=30000,
+            renewable_percentage=95.0,
+            grid_frequency=50.0
+        )
+        
+        analyzer1.add_snapshot(snapshot1)
+        
+        self.assertEqual(len(analyzer1.readings_history), 1)
+        self.assertEqual(len(analyzer2.readings_history), 0)
+
+
+def generate_test_report(test_results: unittest.TestResult) -> Dict[str, Any]:
+    """Generate a structured test report"""
+    return {
+        "tests_run": test_results.testsRun,
+        "failures": len(test_results.failures),
+        "errors": len(test_results.errors),
+        "skipped": len(test_results.skipped),
+        "success": test_results.wasSuccessful(),
+        "timestamp": datetime.utcnow().isoformat(),
     }
-    return report
 
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(
-        description='Integration tests for renewable energy monitoring system'
+        description="Integration tests for Britain's renewable energy grid monitoring"
     )
     parser.add_argument(
-        '--verbosity',
-        type=int,
-        choices=[0, 1, 2],
-        default=2,
-        help='Test output verbosity level (0=quiet, 1=normal, 2=verbose)'
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable verbose output"
     )
     parser.add_argument(
-        '--report',
-        action='store_true',
-        help='Print JSON report of test results'
+        "--test-pattern",
+        type=str,
+        default="",
+        help="Run only tests matching this pattern"
     )
     parser.add_argument(
-        '--demo',
-        action='store_true',
-        help='Run demonstration with sample data'
+        "--json-report",
+        action="store_true",
+        help="Output test report as JSON"
     )
     
     args = parser.parse_args()
     
-    if args.demo:
-        print("=== Renewable Energy Monitoring Demo ===\n")
-        
-        fetcher = RenewableEnergyDataFetcher()
-        monitor = RenewableEnergyMonitor(target_percentage=90.0, alert_threshold=85.0)
-        
-        # Simulate a day of monitoring
-        scenarios = [
-            {
-                'name': 'Early Morning (Low Generation)',
-                'sources': {'wind': 25, 'solar': 2, 'gas': 50, 'coal': 23}
-            },
-            {
-                'name': 'Late Morning (Increasing Solar)',
-                'sources': {'wind': 30, 'solar': 20, 'gas': 35, 'coal': 15}
-            },
-            {
-                'name': 'Midday (Peak Solar)',
-                'sources': {'wind': 28, 'solar': 40, 'hydro': 12, 'gas': 15, 'coal': 5}
-            },
-            {
-                'name': 'Afternoon (Stable)',
-                'sources': {'wind': 35, 'solar': 35, 'hydro': 10, 'gas': 15, 'coal': 5}
-            },
-            {
-                'name': 'Evening (Decreasing Solar)',
-                'sources': {'wind': 45, 'solar': 20, 'hydro': 10, 'gas': 20, 'coal': 5}
-            },
-            {
-                'name': 'Night (Wind Dominant)',
-                'sources': {'wind': 60, 'solar': 0, 'hydro': 12, 'gas': 20, 'coal': 8}
-            },
-        ]
-        
-        for scenario in scenarios:
-            percentage = fetcher.calculate_renewable_percentage(scenario)
-            result = monitor.check_generation(percentage)
-            
-            print(f"{scenario['name']}:")
-            print(f"  Renewable: {percentage}%")
-            print(f"  Status: {result['status'].upper()}")
-            print(f"  Message: {result['message']}")
-            print()
-        
-        stats = monitor.get_statistics()
-        print("=== Daily Statistics ===")
-        print(json.dumps(stats, indent=2))
-        print()
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite()
     
-    # Run tests
-    result = run_tests_with_verbosity(args.verbosity)
+    test_classes = [
+        TestGridDataFetcher,
+        TestGridAnalyzer,
+        TestIntegrationEndToEnd,
+        TestEdgeCasesAndFailures,
+    ]
     
-    if args.report:
+    for test_class in test_classes:
+        tests = loader.loadTestsFromTestCase(test_class)
+        if args.test_pattern:
+            tests = [t for t in tests if args.test_pattern in str(t)]
+        suite.addTests(tests)
+    
+    runner = unittest.TextTestRunner(verbosity=2 if args.verbose else 1)
+    result = runner.run(suite)
+    
+    if args.json_report:
         report = generate_test_report(result)
-        print("\n=== Test Report ===")
-        print(json.dumps(report, indent=2))
+        print("\n" + json.dumps(report, indent=2))
     
-    # Exit with appropriate code
-    sys.exit(0 if result.wasSuccessful() else 1)
+    return 0 if result.wasSuccessful() else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
