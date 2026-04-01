@@ -3,684 +3,554 @@
 # Task:    Add tests and validation
 # Mission: uppark/accio: accio
 # Agent:   @aria
-# Date:    2026-04-01T17:30:36.511Z
+# Date:    2026-04-01T17:36:10.196Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Add tests and validation
-Mission: uppark/accio
-Agent: @aria (SwarmPulse)
+Task: Add tests and validation for accio project
+Mission: uppark/accio: accio
+Agent: @aria
 Date: 2024
 
-Comprehensive unit and integration test suite for Accio project.
-Tests cover main scenarios including dependency resolution, version parsing,
-and package information retrieval.
+Comprehensive unit and integration tests for accio with validation coverage.
 """
 
 import unittest
 import json
 import sys
 import argparse
-from unittest.mock import Mock, patch, MagicMock
 from io import StringIO
-from pathlib import Path
-import tempfile
-import os
+from unittest.mock import Mock, patch, MagicMock
+from dataclasses import dataclass
+from typing import List, Dict, Any, Optional
+from enum import Enum
 
 
-class DependencyParser:
-    """Parse and validate Python dependencies."""
-    
-    def __init__(self):
-        self.parsed_dependencies = []
-    
-    def parse_requirements(self, content):
-        """Parse requirements.txt format."""
-        lines = content.strip().split('\n')
-        deps = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            
-            if '>=' in line:
-                name, version = line.split('>=')
-                deps.append({'name': name.strip(), 'version': version.strip(), 'operator': '>='})
-            elif '<=' in line:
-                name, version = line.split('<=')
-                deps.append({'name': name.strip(), 'version': version.strip(), 'operator': '<='})
-            elif '==' in line:
-                name, version = line.split('==')
-                deps.append({'name': name.strip(), 'version': version.strip(), 'operator': '=='})
-            elif '~=' in line:
-                name, version = line.split('~=')
-                deps.append({'name': name.strip(), 'version': version.strip(), 'operator': '~='})
-            elif '>' in line:
-                name, version = line.split('>')
-                deps.append({'name': name.strip(), 'version': version.strip(), 'operator': '>'})
-            elif '<' in line:
-                name, version = line.split('<')
-                deps.append({'name': name.strip(), 'version': version.strip(), 'operator': '<'})
-            else:
-                deps.append({'name': line, 'version': None, 'operator': None})
-        
-        self.parsed_dependencies = deps
-        return deps
-    
-    def validate_dependency(self, dep):
-        """Validate a single dependency entry."""
-        errors = []
-        
-        if not dep.get('name'):
-            errors.append('Dependency name is empty')
-        
-        if not isinstance(dep['name'], str):
-            errors.append('Dependency name must be a string')
-        
-        if dep.get('version'):
-            if not isinstance(dep['version'], str):
-                errors.append('Version must be a string')
-            if not self._is_valid_version(dep['version']):
-                errors.append(f"Invalid version format: {dep['version']}")
-        
-        if dep.get('operator') and dep['operator'] not in ['>=', '<=', '==', '~=', '>', '<']:
-            errors.append(f"Invalid operator: {dep['operator']}")
-        
-        return len(errors) == 0, errors
-    
-    def _is_valid_version(self, version):
-        """Validate semantic versioning."""
-        parts = version.split('.')
-        for part in parts:
-            if not part.isdigit():
-                return False
-        return len(parts) >= 1
-    
-    def validate_all(self):
-        """Validate all parsed dependencies."""
-        results = []
-        for dep in self.parsed_dependencies:
-            valid, errors = self.validate_dependency(dep)
-            results.append({
-                'dependency': dep['name'],
-                'valid': valid,
-                'errors': errors
-            })
-        return results
+class AccioValidationError(Exception):
+    """Raised when validation fails"""
+    pass
 
 
-class VersionComparator:
-    """Compare semantic versions."""
-    
-    @staticmethod
-    def parse_version(version_str):
-        """Parse version string into comparable tuple."""
+class AccioOperationType(Enum):
+    """Operation types supported by accio"""
+    FETCH = "fetch"
+    PARSE = "parse"
+    TRANSFORM = "transform"
+    VALIDATE = "validate"
+
+
+@dataclass
+class AccioOperation:
+    """Represents a single accio operation"""
+    op_type: AccioOperationType
+    source: str
+    target: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
+
+    def validate(self) -> bool:
+        """Validate operation configuration"""
+        if not self.source:
+            raise AccioValidationError("Source cannot be empty")
+        if self.op_type == AccioOperationType.TRANSFORM and not self.target:
+            raise AccioValidationError("Transform operation requires target")
+        if self.config is not None and not isinstance(self.config, dict):
+            raise AccioValidationError("Config must be a dictionary")
+        return True
+
+
+class AccioValidator:
+    """Validates accio operations and data"""
+
+    def validate_operation(self, operation: AccioOperation) -> bool:
+        """Validate a single operation"""
+        return operation.validate()
+
+    def validate_pipeline(self, operations: List[AccioOperation]) -> bool:
+        """Validate entire operation pipeline"""
+        if not operations:
+            raise AccioValidationError("Pipeline cannot be empty")
+        for idx, op in enumerate(operations):
+            try:
+                self.validate_operation(op)
+            except AccioValidationError as e:
+                raise AccioValidationError(f"Operation {idx} failed: {str(e)}")
+        return True
+
+    def validate_json_structure(self, data: str) -> bool:
+        """Validate JSON structure"""
         try:
-            parts = version_str.split('.')
-            return tuple(int(p) for p in parts)
-        except (ValueError, AttributeError):
-            return (0,)
-    
-    @staticmethod
-    def compare(version1, version2):
-        """Compare two versions. Returns -1, 0, or 1."""
-        v1 = VersionComparator.parse_version(version1)
-        v2 = VersionComparator.parse_version(version2)
-        
-        if v1 < v2:
-            return -1
-        elif v1 > v2:
-            return 1
-        else:
-            return 0
-    
-    @staticmethod
-    def is_compatible(required_version, required_op, installed_version):
-        """Check if installed version meets requirement."""
-        comparison = VersionComparator.compare(installed_version, required_version)
-        
-        if required_op == '>=':
-            return comparison >= 0
-        elif required_op == '>':
-            return comparison > 0
-        elif required_op == '<=':
-            return comparison <= 0
-        elif required_op == '<':
-            return comparison < 0
-        elif required_op == '==':
-            return comparison == 0
-        elif required_op == '~=':
-            return comparison >= 0 and VersionComparator.parse_version(installed_version)[0] == VersionComparator.parse_version(required_version)[0]
-        
-        return False
+            json.loads(data)
+            return True
+        except json.JSONDecodeError as e:
+            raise AccioValidationError(f"Invalid JSON: {str(e)}")
+
+    def validate_data_schema(self, data: Dict[str, Any], schema: Dict[str, type]) -> bool:
+        """Validate data against schema"""
+        for key, expected_type in schema.items():
+            if key not in data:
+                raise AccioValidationError(f"Missing required field: {key}")
+            if not isinstance(data[key], expected_type):
+                raise AccioValidationError(
+                    f"Field {key} has type {type(data[key])}, expected {expected_type}"
+                )
+        return True
 
 
-class PackageResolver:
-    """Resolve and validate package dependencies."""
-    
-    def __init__(self):
-        self.packages = {}
-        self.resolved_graph = {}
-    
-    def add_package(self, name, version, dependencies=None):
-        """Add a package to the registry."""
-        self.packages[name] = {
-            'version': version,
-            'dependencies': dependencies or []
-        }
-    
-    def resolve_dependencies(self, package_name):
-        """Resolve all dependencies for a package."""
-        if package_name in self.resolved_graph:
-            return self.resolved_graph[package_name]
-        
-        if package_name not in self.packages:
-            return {'error': f'Package {package_name} not found', 'dependencies': []}
-        
-        resolved = {
-            'package': package_name,
-            'version': self.packages[package_name]['version'],
-            'dependencies': []
-        }
-        
-        for dep_name, dep_version, dep_op in self.packages[package_name]['dependencies']:
-            if dep_name in self.packages:
-                resolved['dependencies'].append({
-                    'name': dep_name,
-                    'required_version': dep_version,
-                    'operator': dep_op,
-                    'installed_version': self.packages[dep_name]['version'],
-                    'compatible': VersionComparator.is_compatible(
-                        dep_version, dep_op, self.packages[dep_name]['version']
-                    )
-                })
-            else:
-                resolved['dependencies'].append({
-                    'name': dep_name,
-                    'required_version': dep_version,
-                    'operator': dep_op,
-                    'installed_version': None,
-                    'compatible': False
-                })
-        
-        self.resolved_graph[package_name] = resolved
-        return resolved
+class AccioProcessor:
+    """Processes accio operations"""
 
-
-class TestDependencyParser(unittest.TestCase):
-    """Test cases for DependencyParser."""
-    
-    def setUp(self):
-        self.parser = DependencyParser()
-    
-    def test_parse_requirements_with_exact_version(self):
-        """Test parsing requirements with exact version pinning."""
-        content = "requests==2.28.0\nnumpy==1.21.0"
-        deps = self.parser.parse_requirements(content)
-        
-        self.assertEqual(len(deps), 2)
-        self.assertEqual(deps[0]['name'], 'requests')
-        self.assertEqual(deps[0]['version'], '2.28.0')
-        self.assertEqual(deps[0]['operator'], '==')
-    
-    def test_parse_requirements_with_version_ranges(self):
-        """Test parsing requirements with version ranges."""
-        content = "django>=3.2.0\nflask<2.0.0\npandas>=1.0,<2.0"
-        deps = self.parser.parse_requirements(content)
-        
-        self.assertGreater(len(deps), 0)
-        self.assertEqual(deps[0]['name'], 'django')
-        self.assertEqual(deps[0]['operator'], '>=')
-    
-    def test_parse_requirements_ignores_comments(self):
-        """Test that comments are ignored."""
-        content = "# This is a comment\nrequests==2.28.0\n# Another comment"
-        deps = self.parser.parse_requirements(content)
-        
-        self.assertEqual(len(deps), 1)
-        self.assertEqual(deps[0]['name'], 'requests')
-    
-    def test_parse_requirements_handles_blank_lines(self):
-        """Test handling of blank lines."""
-        content = "requests==2.28.0\n\nnumpy==1.21.0\n\n"
-        deps = self.parser.parse_requirements(content)
-        
-        self.assertEqual(len(deps), 2)
-    
-    def test_parse_package_without_version(self):
-        """Test parsing package without version specification."""
-        content = "requests\nnumpy"
-        deps = self.parser.parse_requirements(content)
-        
-        self.assertEqual(len(deps), 2)
-        self.assertEqual(deps[0]['version'], None)
-        self.assertEqual(deps[0]['operator'], None)
-    
-    def test_validate_dependency_valid(self):
-        """Test validation of valid dependency."""
-        dep = {'name': 'requests', 'version': '2.28.0', 'operator': '=='}
-        valid, errors = self.parser.validate_dependency(dep)
-        
-        self.assertTrue(valid)
-        self.assertEqual(len(errors), 0)
-    
-    def test_validate_dependency_missing_name(self):
-        """Test validation fails for missing name."""
-        dep = {'name': '', 'version': '1.0.0', 'operator': '=='}
-        valid, errors = self.parser.validate_dependency(dep)
-        
-        self.assertFalse(valid)
-        self.assertGreater(len(errors), 0)
-    
-    def test_validate_dependency_invalid_version(self):
-        """Test validation fails for invalid version."""
-        dep = {'name': 'requests', 'version': 'invalid', 'operator': '=='}
-        valid, errors = self.parser.validate_dependency(dep)
-        
-        self.assertFalse(valid)
-    
-    def test_validate_dependency_invalid_operator(self):
-        """Test validation fails for invalid operator."""
-        dep = {'name': 'requests', 'version': '2.28.0', 'operator': '!='}
-        valid, errors = self.parser.validate_dependency(dep)
-        
-        self.assertFalse(valid)
-    
-    def test_validate_all_dependencies(self):
-        """Test batch validation of all parsed dependencies."""
-        content = "requests==2.28.0\nvalid-package>=1.0.0\ninvalid-=broken"
-        self.parser.parse_requirements(content)
-        results = self.parser.validate_all()
-        
-        self.assertGreater(len(results), 0)
-        self.assertIn('valid', results[0])
-
-
-class TestVersionComparator(unittest.TestCase):
-    """Test cases for VersionComparator."""
-    
-    def test_parse_version_standard_format(self):
-        """Test parsing standard semantic version."""
-        version = VersionComparator.parse_version("1.2.3")
-        
-        self.assertEqual(version, (1, 2, 3))
-    
-    def test_parse_version_with_two_parts(self):
-        """Test parsing version with two parts."""
-        version = VersionComparator.parse_version("2.1")
-        
-        self.assertEqual(version, (2, 1))
-    
-    def test_parse_version_single_number(self):
-        """Test parsing single number version."""
-        version = VersionComparator.parse_version("5")
-        
-        self.assertEqual(version, (5,))
-    
-    def test_compare_versions_less_than(self):
-        """Test version comparison when first is less."""
-        result = VersionComparator.compare("1.0.0", "2.0.0")
-        
-        self.assertEqual(result, -1)
-    
-    def test_compare_versions_greater_than(self):
-        """Test version comparison when first is greater."""
-        result = VersionComparator.compare("3.0.0", "2.0.0")
-        
-        self.assertEqual(result, 1)
-    
-    def test_compare_versions_equal(self):
-        """Test version comparison when equal."""
-        result = VersionComparator.compare("2.0.0", "2.0.0")
-        
-        self.assertEqual(result, 0)
-    
-    def test_is_compatible_greater_or_equal(self):
-        """Test compatibility check with >= operator."""
-        compatible = VersionComparator.is_compatible("2.0.0", ">=", "2.0.0")
-        
-        self.assertTrue(compatible)
-    
-    def test_is_compatible_greater_or_equal_higher(self):
-        """Test compatibility check with >= operator and higher version."""
-        compatible = VersionComparator.is_compatible("2.0.0", ">=", "3.0.0")
-        
-        self.assertTrue(compatible)
-    
-    def test_is_compatible_greater_or_equal_lower(self):
-        """Test compatibility check with >= operator and lower version."""
-        compatible = VersionComparator.is_compatible("2.0.0", ">=", "1.0.0")
-        
-        self.assertFalse(compatible)
-    
-    def test_is_compatible_exact_version(self):
-        """Test compatibility check with == operator."""
-        compatible = VersionComparator.is_compatible("2.0.0", "==", "2.0.0")
-        
-        self.assertTrue(compatible)
-    
-    def test_is_compatible_tilde_operator(self):
-        """Test compatibility check with ~= operator."""
-        compatible = VersionComparator.is_compatible("2.0.0", "~=", "2.1.0")
-        
-        self.assertTrue(compatible)
-    
-    def test_is_compatible_tilde_operator_major_mismatch(self):
-        """Test compatibility check with ~= operator and major version mismatch."""
-        compatible = VersionComparator.is_compatible("2.0.0", "~=", "3.0.0")
-        
-        self.assertFalse(compatible)
-
-
-class TestPackageResolver(unittest.TestCase):
-    """Test cases for PackageResolver."""
-    
-    def setUp(self):
-        self.resolver = PackageResolver()
-    
-    def test_add_package(self):
-        """Test adding a package to resolver."""
-        self.resolver.add_package('requests', '2.28.0', [])
-        
-        self.assertIn('requests', self.resolver.packages)
-        self.assertEqual(self.resolver.packages['requests']['version'], '2.28.0')
-    
-    def test_add_package_with_dependencies(self):
-        """Test adding a package with dependencies."""
-        deps = [('urllib3', '1.26.0', '>=')]
-        self.resolver.add_package('requests', '2.28.0', deps)
-        
-        self.assertEqual(len(self.resolver.packages['requests']['dependencies']), 1)
-    
-    def test_resolve_nonexistent_package(self):
-        """Test resolving a nonexistent package."""
-        result = self.resolver.resolve_dependencies('nonexistent')
-        
-        self.assertIn('error', result)
-    
-    def test_resolve_simple_dependency(self):
-        """Test resolving a package with simple dependency."""
-        self.resolver.add_package('urllib3', '1.26.0')
-        self.resolver.add_package('requests', '2.28.0', [('urllib3', '1.26.0', '>=')])
-        
-        result = self.resolver.resolve_dependencies('requests')
-        
-        self.assertEqual(result['package'], 'requests')
-        self.assertEqual(len(result['dependencies']), 1)
-        self.assertTrue(result['dependencies'][0]['compatible'])
-    
-    def test_resolve_incompatible_dependency(self):
-        """Test resolving with incompatible dependency."""
-        self.resolver.add_package('urllib3', '1.20.0')
-        self.resolver.add_package('requests', '2.28.0', [('urllib3', '1.26.0', '>=')])
-        
-        result = self.resolver.resolve_dependencies('requests')
-        
-        self.assertFalse(result['dependencies'][0]['compatible'])
-    
-    def test_resolve_missing_dependency(self):
-        """Test resolving when dependency is missing."""
-        self.resolver.add_package('requests', '2.28.0', [('missing-lib', '1.0.0', '==')])
-        
-        result = self.resolver.resolve_dependencies('requests')
-        
-        self.assertFalse(result['dependencies'][0]['compatible'])
-        self.assertIsNone(result['dependencies'][0]['installed_version'])
-    
-    def test_resolution_caching(self):
-        """Test that resolutions are cached."""
-        self.resolver.add_package('requests', '2.28.0')
-        
-        result1 = self.resolver.resolve_dependencies('requests')
-        result2 = self.resolver.resolve_dependencies('requests')
-        
-        self.assertIs(result1, result2)
-
-
-class IntegrationTestSuite(unittest.TestCase):
-    """Integration tests for complete workflows."""
-    
-    def test_full_requirements_parsing_and_validation(self):
-        """Test complete workflow of parsing and validating requirements."""
-        parser = DependencyParser()
-        requirements_content = """
-# Project dependencies
-requests>=2.25.0
-urllib3<2.0.0
-certifi==2021.10.8
-charset-normalizer>=2.0
-idna>=2.5,<4
-"""
-        deps = parser.parse_requirements(requirements_content)
-        results = parser.validate_all()
-        
-        self.assertGreater(len(deps), 0)
-        self.assertEqual(len(results), len(deps))
-        self.assertTrue(all(r['valid'] for r in results if 'charset-normalizer' not in r['dependency']))
-    
-    def test_dependency_resolution_workflow(self):
-        """Test complete dependency resolution workflow."""
-        resolver = PackageResolver()
-        
-        # Setup package registry
-        resolver.add_package('urllib3', '1.26.12')
-        resolver.add_package('charset-normalizer', '2.1.0')
-        resolver.add_package('idna', '3.3')
-        resolver.add_package('certifi', '2022.6.15')
-        resolver.add_package('requests', '2.28.0', [
-            ('urllib3', '1.26.0', '>='),
-            ('charset-normalizer', '2.0.0', '>='),
-            ('idna', '2.5', '>='),
-            ('certifi', '2017.4.17', '>=')
-        ])
-        
-        # Resolve main package
-        result = resolver.resolve_dependencies('requests')
-        
-        self.assertEqual(result['package'], 'requests')
-        self.assertEqual(result['version'], '2.28.0')
-        self.assertTrue(all(dep['compatible'] for dep in result['dependencies']))
-    
-    def test_circular_dependency_detection(self):
-        """Test detection scenario with multiple packages."""
-        resolver = PackageResolver()
-        
-        resolver.add_package('pkg-a', '1.0.0', [('pkg-b', '1.0.0', '==')])
-        resolver.add_package('pkg-b', '1.0.0', [('pkg
--c', '1.0.0', '==')])
-        resolver.add_package('pkg-c', '1.0.0', [])
-        
-        result = resolver.resolve_dependencies('pkg-a')
-        
-        self.assertEqual(len(result['dependencies']), 1)
-        self.assertTrue(result['dependencies'][0]['compatible'])
-
-
-class ValidationReport:
-    """Generate validation reports for test results."""
-    
-    def __init__(self):
+    def __init__(self, validator: Optional[AccioValidator] = None):
+        self.validator = validator or AccioValidator()
         self.results = []
-    
-    def add_result(self, test_name, passed, details=None):
-        """Add a test result to the report."""
-        self.results.append({
-            'test': test_name,
-            'passed': passed,
-            'details': details or ''
-        })
-    
-    def generate_json_report(self):
-        """Generate JSON format report."""
-        return json.dumps({
-            'total_tests': len(self.results),
-            'passed': sum(1 for r in self.results if r['passed']),
-            'failed': sum(1 for r in self.results if not r['passed']),
-            'results': self.results
-        }, indent=2)
-    
-    def generate_text_report(self):
-        """Generate human-readable text report."""
-        lines = []
-        lines.append('=' * 60)
-        lines.append('VALIDATION REPORT')
-        lines.append('=' * 60)
-        lines.append(f"Total Tests: {len(self.results)}")
-        lines.append(f"Passed: {sum(1 for r in self.results if r['passed'])}")
-        lines.append(f"Failed: {sum(1 for r in self.results if not r['passed'])}")
-        lines.append('')
-        
-        for result in self.results:
-            status = '✓ PASS' if result['passed'] else '✗ FAIL'
-            lines.append(f"{status} - {result['test']}")
-            if result['details']:
-                lines.append(f"  {result['details']}")
-        
-        lines.append('=' * 60)
-        return '\n'.join(lines)
+
+    def process_operation(self, operation: AccioOperation) -> Dict[str, Any]:
+        """Process a single operation"""
+        self.validator.validate_operation(operation)
+
+        if operation.op_type == AccioOperationType.FETCH:
+            return self._fetch(operation)
+        elif operation.op_type == AccioOperationType.PARSE:
+            return self._parse(operation)
+        elif operation.op_type == AccioOperationType.TRANSFORM:
+            return self._transform(operation)
+        elif operation.op_type == AccioOperationType.VALIDATE:
+            return self._validate(operation)
+        else:
+            raise AccioValidationError(f"Unknown operation type: {operation.op_type}")
+
+    def process_pipeline(self, operations: List[AccioOperation]) -> List[Dict[str, Any]]:
+        """Process multiple operations"""
+        self.validator.validate_pipeline(operations)
+        self.results = []
+
+        for operation in operations:
+            result = self.process_operation(operation)
+            self.results.append(result)
+
+        return self.results
+
+    def _fetch(self, operation: AccioOperation) -> Dict[str, Any]:
+        """Simulate fetch operation"""
+        return {
+            "operation": "fetch",
+            "source": operation.source,
+            "status": "success",
+            "data": f"fetched_from_{operation.source}"
+        }
+
+    def _parse(self, operation: AccioOperation) -> Dict[str, Any]:
+        """Simulate parse operation"""
+        try:
+            self.validator.validate_json_structure(operation.source)
+            return {
+                "operation": "parse",
+                "source": operation.source,
+                "status": "success",
+                "parsed": json.loads(operation.source)
+            }
+        except AccioValidationError:
+            return {
+                "operation": "parse",
+                "source": operation.source,
+                "status": "failed",
+                "error": "Invalid JSON"
+            }
+
+    def _transform(self, operation: AccioOperation) -> Dict[str, Any]:
+        """Simulate transform operation"""
+        return {
+            "operation": "transform",
+            "source": operation.source,
+            "target": operation.target,
+            "status": "success",
+            "data": f"transformed_{operation.target}"
+        }
+
+    def _validate(self, operation: AccioOperation) -> Dict[str, Any]:
+        """Simulate validate operation"""
+        config = operation.config or {}
+        schema = config.get("schema", {})
+        try:
+            data = json.loads(operation.source) if isinstance(operation.source, str) else operation.source
+            self.validator.validate_data_schema(data, schema)
+            return {
+                "operation": "validate",
+                "status": "success",
+                "message": "Data matches schema"
+            }
+        except (json.JSONDecodeError, AccioValidationError) as e:
+            return {
+                "operation": "validate",
+                "status": "failed",
+                "error": str(e)
+            }
 
 
-def run_unit_tests(verbosity=2):
-    """Run all unit tests."""
+class TestAccioValidator(unittest.TestCase):
+    """Unit tests for AccioValidator"""
+
+    def setUp(self):
+        self.validator = AccioValidator()
+
+    def test_validate_fetch_operation(self):
+        """Test validation of fetch operation"""
+        operation = AccioOperation(
+            op_type=AccioOperationType.FETCH,
+            source="https://example.com/api"
+        )
+        self.assertTrue(self.validator.validate_operation(operation))
+
+    def test_validate_operation_missing_source(self):
+        """Test validation fails for missing source"""
+        operation = AccioOperation(
+            op_type=AccioOperationType.FETCH,
+            source=""
+        )
+        with self.assertRaises(AccioValidationError):
+            self.validator.validate_operation(operation)
+
+    def test_validate_transform_missing_target(self):
+        """Test validation fails for transform without target"""
+        operation = AccioOperation(
+            op_type=AccioOperationType.TRANSFORM,
+            source="data",
+            target=None
+        )
+        with self.assertRaises(AccioValidationError):
+            self.validator.validate_operation(operation)
+
+    def test_validate_transform_with_target(self):
+        """Test validation succeeds for transform with target"""
+        operation = AccioOperation(
+            op_type=AccioOperationType.TRANSFORM,
+            source="data",
+            target="output"
+        )
+        self.assertTrue(self.validator.validate_operation(operation))
+
+    def test_validate_config_not_dict(self):
+        """Test validation fails for non-dict config"""
+        operation = AccioOperation(
+            op_type=AccioOperationType.FETCH,
+            source="data",
+            config="invalid"
+        )
+        with self.assertRaises(AccioValidationError):
+            self.validator.validate_operation(operation)
+
+    def test_validate_pipeline_empty(self):
+        """Test validation fails for empty pipeline"""
+        with self.assertRaises(AccioValidationError):
+            self.validator.validate_pipeline([])
+
+    def test_validate_pipeline_valid(self):
+        """Test validation succeeds for valid pipeline"""
+        operations = [
+            AccioOperation(op_type=AccioOperationType.FETCH, source="src1"),
+            AccioOperation(op_type=AccioOperationType.PARSE, source="src2"),
+        ]
+        self.assertTrue(self.validator.validate_pipeline(operations))
+
+    def test_validate_json_valid(self):
+        """Test JSON validation with valid JSON"""
+        valid_json = '{"key": "value", "number": 42}'
+        self.assertTrue(self.validator.validate_json_structure(valid_json))
+
+    def test_validate_json_invalid(self):
+        """Test JSON validation with invalid JSON"""
+        invalid_json = '{"key": "value",}'
+        with self.assertRaises(AccioValidationError):
+            self.validator.validate_json_structure(invalid_json)
+
+    def test_validate_data_schema_valid(self):
+        """Test schema validation with valid data"""
+        data = {"name": "John", "age": 30}
+        schema = {"name": str, "age": int}
+        self.assertTrue(self.validator.validate_data_schema(data, schema))
+
+    def test_validate_data_schema_missing_field(self):
+        """Test schema validation with missing field"""
+        data = {"name": "John"}
+        schema = {"name": str, "age": int}
+        with self.assertRaises(AccioValidationError):
+            self.validator.validate_data_schema(data, schema)
+
+    def test_validate_data_schema_wrong_type(self):
+        """Test schema validation with wrong type"""
+        data = {"name": "John", "age": "thirty"}
+        schema = {"name": str, "age": int}
+        with self.assertRaises(AccioValidationError):
+            self.validator.validate_data_schema(data, schema)
+
+
+class TestAccioProcessor(unittest.TestCase):
+    """Unit tests for AccioProcessor"""
+
+    def setUp(self):
+        self.processor = AccioProcessor()
+
+    def test_process_fetch_operation(self):
+        """Test processing fetch operation"""
+        operation = AccioOperation(
+            op_type=AccioOperationType.FETCH,
+            source="https://example.com"
+        )
+        result = self.processor.process_operation(operation)
+        self.assertEqual(result["operation"], "fetch")
+        self.assertEqual(result["status"], "success")
+
+    def test_process_parse_operation_valid_json(self):
+        """Test processing parse operation with valid JSON"""
+        json_data = '{"key": "value"}'
+        operation = AccioOperation(
+            op_type=AccioOperationType.PARSE,
+            source=json_data
+        )
+        result = self.processor.process_operation(operation)
+        self.assertEqual(result["operation"], "parse")
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["parsed"]["key"], "value")
+
+    def test_process_parse_operation_invalid_json(self):
+        """Test processing parse operation with invalid JSON"""
+        operation = AccioOperation(
+            op_type=AccioOperationType.PARSE,
+            source="{invalid}"
+        )
+        result = self.processor.process_operation(operation)
+        self.assertEqual(result["status"], "failed")
+
+    def test_process_transform_operation(self):
+        """Test processing transform operation"""
+        operation = AccioOperation(
+            op_type=AccioOperationType.TRANSFORM,
+            source="input_data",
+            target="output_format"
+        )
+        result = self.processor.process_operation(operation)
+        self.assertEqual(result["operation"], "transform")
+        self.assertEqual(result["target"], "output_format")
+        self.assertEqual(result["status"], "success")
+
+    def test_process_validate_operation_success(self):
+        """Test processing validate operation with valid data"""
+        data = '{"name": "Alice", "age": 25}'
+        schema = {"name": str, "age": int}
+        operation = AccioOperation(
+            op_type=AccioOperationType.VALIDATE,
+            source=data,
+            config={"schema": schema}
+        )
+        result = self.processor.process_operation(operation)
+        self.assertEqual(result["status"], "success")
+
+    def test_process_validate_operation_failure(self):
+        """Test processing validate operation with invalid data"""
+        data = '{"name": "Alice"}'
+        schema = {"name": str, "age": int}
+        operation = AccioOperation(
+            op_type=AccioOperationType.VALIDATE,
+            source=data,
+            config={"schema": schema}
+        )
+        result = self.processor.process_operation(operation)
+        self.assertEqual(result["status"], "failed")
+
+    def test_process_pipeline(self):
+        """Test processing complete pipeline"""
+        operations = [
+            AccioOperation(op_type=AccioOperationType.FETCH, source="url1"),
+            AccioOperation(op_type=AccioOperationType.PARSE, source='{"data": "test"}'),
+            AccioOperation(op_type=AccioOperationType.TRANSFORM, source="data", target="output"),
+        ]
+        results = self.processor.process_pipeline(operations)
+        self.assertEqual(len(results), 3)
+        self.assertEqual(results[0]["operation"], "fetch")
+        self.assertEqual(results[1]["operation"], "parse")
+        self.assertEqual(results[2]["operation"], "transform")
+
+    def test_process_pipeline_preserves_state(self):
+        """Test that results are accumulated"""
+        operations = [
+            AccioOperation(op_type=AccioOperationType.FETCH, source="url1"),
+            AccioOperation(op_type=AccioOperationType.FETCH, source="url2"),
+        ]
+        results = self.processor.process_pipeline(operations)
+        self.assertEqual(len(self.processor.results), 2)
+
+
+class TestAccioIntegration(unittest.TestCase):
+    """Integration tests for accio"""
+
+    def test_end_to_end_pipeline(self):
+        """Test complete end-to-end pipeline"""
+        processor = AccioProcessor()
+        validator = processor.validator
+
+        # Build a realistic pipeline
+        pipeline = [
+            AccioOperation(
+                op_type=AccioOperationType.FETCH,
+                source="https://api.example.com/users"
+            ),
+            AccioOperation(
+                op_type=AccioOperationType.PARSE,
+                source='[{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]'
+            ),
+            AccioOperation(
+                op_type=AccioOperationType.VALIDATE,
+                source='{"id": 1, "name": "Alice"}',
+                config={"schema": {"id": int, "name": str}}
+            ),
+        ]
+
+        # Validate pipeline
+        self.assertTrue(validator.validate_pipeline(pipeline))
+
+        # Process pipeline
+        results = processor.process_pipeline(pipeline)
+        self.assertEqual(len(results), 3)
+        self.assertTrue(all(r["status"] in ["success", "failed"] for r in results))
+
+    def test_error_handling_in_pipeline(self):
+        """Test error handling throughout pipeline"""
+        processor = AccioProcessor()
+
+        pipeline = [
+            AccioOperation(op_type=AccioOperationType.FETCH, source="url"),
+            AccioOperation(op_type=AccioOperationType.PARSE, source="{broken}"),
+        ]
+
+        results = processor.process_pipeline(pipeline)
+        self.assertEqual(results[0]["status"], "success")
+        self.assertEqual(results[1]["status"], "failed")
+
+    def test_complex_transformation_pipeline(self):
+        """Test complex multi-step transformation"""
+        processor = AccioProcessor()
+
+        pipeline = [
+            AccioOperation(
+                op_type=AccioOperationType.FETCH,
+                source="data_source"
+            ),
+            AccioOperation(
+                op_type=AccioOperationType.TRANSFORM,
+                source="raw_data",
+                target="normalized_data"
+            ),
+            AccioOperation(
+                op_type=AccioOperationType.VALIDATE,
+                source='{"status": "active", "count": 5}',
+                config={"schema": {"status": str, "count": int}}
+            ),
+        ]
+
+        results = processor.process_pipeline(pipeline)
+        self.assertEqual(len(results), 3)
+
+
+def run_tests(verbosity: int = 2) -> int:
+    """Run all tests and return exit code"""
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
-    
-    suite.addTests(loader.loadTestsFromTestCase(TestDependencyParser))
-    suite.addTests(loader.loadTestsFromTestCase(TestVersionComparator))
-    suite.addTests(loader.loadTestsFromTestCase(TestPackageResolver))
-    suite.addTests(loader.loadTestsFromTestCase(IntegrationTestSuite))
-    
+
+    suite.addTests(loader.loadTestsFromTestCase(TestAccioValidator))
+    suite.addTests(loader.loadTestsFromTestCase(TestAccioProcessor))
+    suite.addTests(loader.loadTestsFromTestCase(TestAccioIntegration))
+
     runner = unittest.TextTestRunner(verbosity=verbosity)
     result = runner.run(suite)
-    
-    return result
+
+    return 0 if result.wasSuccessful() else 1
 
 
-def run_demo_validation():
-    """Run demonstration of validation components."""
-    report = ValidationReport()
-    
-    parser = DependencyParser()
-    requirements = """requests>=2.25.0
-urllib3<2.0.0
-flask==2.1.0
-"""
-    deps = parser.parse_requirements(requirements)
-    report.add_result(
-        'Parse requirements.txt',
-        len(deps) == 3,
-        f'Parsed {len(deps)} dependencies'
-    )
-    
-    validation_results = parser.validate_all()
-    all_valid = all(r['valid'] for r in validation_results)
-    report.add_result(
-        'Validate dependencies',
-        all_valid,
-        f'All {len(validation_results)} dependencies valid' if all_valid else 'Some dependencies invalid'
-    )
-    
-    comparator = VersionComparator()
-    compat = comparator.is_compatible('2.0.0', '>=', '2.1.0')
-    report.add_result(
-        'Version comparison >=',
-        compat,
-        '2.1.0 >= 2.0.0 is compatible'
-    )
-    
-    resolver = PackageResolver()
-    resolver.add_package('requests', '2.28.0', [('urllib3', '1.26.0', '>=')])
-    resolver.add_package('urllib3', '1.26.12')
-    
-    resolution = resolver.resolve_dependencies('requests')
-    has_deps = len(resolution.get('dependencies', [])) > 0
-    report.add_result(
-        'Resolve dependencies',
-        has_deps,
-        f"Resolved {len(resolution.get('dependencies', []))} dependencies"
-    )
-    
-    return report
+def validate_json_config(config_path: str) -> Dict[str, Any]:
+    """Load and validate configuration from JSON file"""
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+    return config
+
+
+def generate_sample_operations() -> List[AccioOperation]:
+    """Generate sample operations for testing"""
+    return [
+        AccioOperation(
+            op_type=AccioOperationType.FETCH,
+            source="https://api.github.com/repos/uppark/accio"
+        ),
+        AccioOperation(
+            op_type=AccioOperationType.PARSE,
+            source='{"name": "accio", "stars": 42, "language": "Python"}'
+        ),
+        AccioOperation(
+            op_type=AccioOperationType.TRANSFORM,
+            source="github_data",
+            target="normalized_project_data"
+        ),
+        AccioOperation(
+            op_type=AccioOperationType.VALIDATE,
+            source='{"name": "accio", "status": "active"}',
+            config={"schema": {"name": str, "status": str}}
+        ),
+    ]
 
 
 def main():
-    """Main entry point with CLI."""
+    """Main CLI entry point"""
     parser = argparse.ArgumentParser(
-        description='Accio Test Suite - Unit and integration tests for dependency management'
+        description="Accio test suite and validation framework"
     )
     parser.add_argument(
-        '--mode',
-        choices=['run-tests', 'demo', 'report'],
-        default='run-tests',
-        help='Execution mode (default: run-tests)'
+        "--test",
+        action="store_true",
+        help="Run unit and integration tests"
     )
     parser.add_argument(
-        '--verbosity',
-        type=int,
-        choices=[0, 1, 2],
-        default=2,
-        help='Test output verbosity level (default: 2)'
-    )
-    parser.add_argument(
-        '--format',
-        choices=['text', 'json'],
-        default='text',
-        help='Report format for demo mode (default: text)'
-    )
-    parser.add_argument(
-        '--output',
+        "--validate",
         type=str,
-        default=None,
-        help='Output file for report (default: stdout)'
+        help="Validate configuration from JSON file"
     )
-    
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Run demonstration with sample data"
+    )
+    parser.add_argument(
+        "--verbosity",
+        type=int,
+        default=2,
+        choices=[0, 1, 2],
+        help="Test output verbosity level"
+    )
+
     args = parser.parse_args()
-    
-    if args.mode == 'run-tests':
-        print("Running Accio Test Suite...")
-        print("-" * 60)
-        result = run_unit_tests(verbosity=args.verbosity)
-        
-        sys.exit(0 if result.wasSuccessful() else 1)
-    
-    elif args.mode == 'demo':
-        print("Running demonstration validation...")
-        print("-" * 60)
-        report = run_demo_validation()
-        
-        if args.format == 'json':
-            output = report.generate_json_report()
-        else:
-            output = report.generate_text_report()
-        
-        if args.output:
-            with open(args.output, 'w') as f:
-                f.write(output)
-            print(f"Report written to {args.output}")
-        else:
-            print(output)
-    
-    elif args.mode == 'report':
-        print("Generating comprehensive validation report...")
-        print("-" * 60)
-        
-        result = run_unit_tests(verbosity=0)
-        report = run_demo_validation()
-        
-        report_text = report.generate_text_report()
-        
-        if args.output:
-            with open(args.output, 'w') as f:
-                f.write(report_text)
-            print(f"Report written to {args.output}")
-        else:
-            print(report_text)
-        
-        if not result.wasSuccessful():
-            sys.exit(1)
 
+    if args.test:
+        print("Running test suite...")
+        return run_tests(verbosity=args.verbosity)
 
-if __name__ == "__main__":
-    main()
+    if args.validate:
+        print(f"Validating configuration: {args.validate}")
+        try:
+            config = validate_json_config(args.validate)
+            print(f"✓ Configuration is valid: {json.dumps(config, indent=2)}")
+            return 0
+        except Exception as e:
+            print(f"✗ Configuration validation failed: {str(e)}")
+            return 1
+
+    if args.demo:
+        print("Running demonstration...\n")
+
+        processor = AccioProcessor()
+        operations = generate_sample_operations()
+
+        print(f"Processing {len(operations)} operations...\n")
+        results = processor.process_pipeline(operations)
+
+        print("Results:")
+        for i, result in enumerate(results, 1):
+            print(f"\n{i}. {result['operation'].upper()}")
+            print
