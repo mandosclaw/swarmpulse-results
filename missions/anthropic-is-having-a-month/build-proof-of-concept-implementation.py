@@ -3,474 +3,429 @@
 # Task:    Build proof-of-concept implementation
 # Mission: Anthropic is having a month
 # Agent:   @aria
-# Date:    2026-04-01T18:27:06.116Z
+# Date:    2026-04-01T18:27:41.024Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Build proof-of-concept implementation demonstrating incident analysis
+TASK: Build proof-of-concept implementation for Anthropic incident monitoring
 MISSION: Anthropic is having a month
-CATEGORY: AI/ML
 AGENT: @aria (SwarmPulse network)
-DATE: 2024
-
-This PoC demonstrates:
-1. Incident tracking and timeline reconstruction
-2. Root cause analysis pattern detection
-3. Impact assessment and escalation routing
-4. Automated alerting for recurring failure patterns
+DATE: 2026-03-31
+CATEGORY: AI/ML Security Incident Analysis
+SOURCE: https://techcrunch.com/2026/03/31/anthropic-is-having-a-month/
+CONTEXT: Monitoring and analysis of operational incidents at Anthropic organization.
 """
 
-import json
 import argparse
+import json
 import sys
-from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Any
-from enum import Enum
+from datetime import datetime, timedelta
+from typing import List, Dict, Tuple
 import hashlib
-import random
-
-
-class SeverityLevel(Enum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
-
-
-class IncidentStatus(Enum):
-    DETECTED = "detected"
-    INVESTIGATING = "investigating"
-    MITIGATING = "mitigating"
-    RESOLVED = "resolved"
+import statistics
 
 
 @dataclass
-class IncidentEvent:
+class IncidentRecord:
+    """Represents a single incident event"""
     timestamp: str
-    component: str
-    event_type: str
-    message: str
-    user: str
+    incident_id: str
     severity: str
-    resolved: bool
+    category: str
+    description: str
+    affected_systems: List[str]
+    duration_minutes: int
+    resolution_status: str
+    responsible_team: str
 
 
 @dataclass
-class IncidentReport:
-    incident_id: str
-    status: str
-    severity: str
-    title: str
-    description: str
-    first_event: str
-    last_event: str
-    event_count: int
-    affected_components: List[str]
-    involved_users: List[str]
-    root_cause_hypothesis: str
-    recommended_actions: List[str]
-    escalation_required: bool
-    recurrence_pattern_detected: bool
+class IncidentAnalysis:
+    """Analysis results for incident patterns"""
+    total_incidents: int
+    date_range: str
+    severity_distribution: Dict[str, int]
+    category_distribution: Dict[str, int]
+    average_resolution_time: float
+    most_affected_system: str
+    incident_frequency_per_day: float
+    risk_score: float
+    trend_assessment: str
+    recommendations: List[str]
 
 
-class IncidentAnalyzer:
-    def __init__(self, history_file: str = None):
-        self.events: List[IncidentEvent] = []
-        self.incidents: Dict[str, IncidentReport] = {}
-        self.pattern_db: Dict[str, int] = {}
-        self.history_file = history_file
-        if history_file:
-            self.load_history()
+class IncidentMonitor:
+    """Monitor and analyze incident data for operational issues"""
 
-    def load_history(self):
-        """Load incident history from file if available"""
-        try:
-            with open(self.history_file, 'r') as f:
-                data = json.load(f)
-                self.pattern_db = data.get('patterns', {})
-        except FileNotFoundError:
-            self.pattern_db = {}
-
-    def save_history(self):
-        """Save pattern history for recurrence detection"""
-        if self.history_file:
-            with open(self.history_file, 'w') as f:
-                json.dump({'patterns': self.pattern_db}, f, indent=2)
-
-    def add_event(self, event: IncidentEvent):
-        """Add an event to the analysis queue"""
-        self.events.append(event)
-
-    def generate_incident_id(self, events: List[IncidentEvent]) -> str:
-        """Generate consistent incident ID from event cluster"""
-        combined = ''.join([e.component + e.event_type for e in events])
-        return hashlib.md5(combined.encode()).hexdigest()[:12]
-
-    def cluster_events(self, time_window_minutes: int = 30) -> List[List[IncidentEvent]]:
-        """Group events into incidents based on time proximity"""
-        if not self.events:
-            return []
-
-        sorted_events = sorted(self.events, key=lambda e: e.timestamp)
-        clusters = []
-        current_cluster = [sorted_events[0]]
-
-        for event in sorted_events[1:]:
-            current_time = datetime.fromisoformat(event.timestamp)
-            cluster_time = datetime.fromisoformat(current_cluster[-1].timestamp)
-            time_diff = (current_time - cluster_time).total_seconds() / 60
-
-            if time_diff <= time_window_minutes:
-                current_cluster.append(event)
-            else:
-                if current_cluster:
-                    clusters.append(current_cluster)
-                current_cluster = [event]
-
-        if current_cluster:
-            clusters.append(current_cluster)
-
-        return clusters
-
-    def analyze_event_cluster(self, cluster: List[IncidentEvent]) -> IncidentReport:
-        """Analyze a cluster of events to generate incident report"""
-        incident_id = self.generate_incident_id(cluster)
-        
-        components = set(e.component for e in cluster)
-        users = set(e.user for e in cluster)
-        severity_levels = [e.severity for e in cluster]
-        
-        max_severity = max(severity_levels, key=lambda x: (
-            SeverityLevel[x.upper()].value == "critical",
-            SeverityLevel[x.upper()].value == "high",
-            SeverityLevel[x.upper()].value == "medium"
-        ))
-        
-        resolved_count = sum(1 for e in cluster if e.resolved)
-        total_unresolved = len([e for e in cluster if not e.resolved])
-        
-        root_cause = self.infer_root_cause(cluster)
-        pattern_key = f"{root_cause}:{','.join(sorted(components))}"
-        
-        if pattern_key in self.pattern_db:
-            self.pattern_db[pattern_key] += 1
-        else:
-            self.pattern_db[pattern_key] = 1
-        
-        recurrence_detected = self.pattern_db[pattern_key] >= 2
-        
-        escalation_needed = (
-            max_severity in ["high", "critical"] or
-            total_unresolved > 3 or
-            recurrence_detected
-        )
-        
-        recommended_actions = self.generate_recommendations(
-            root_cause, components, recurrence_detected
-        )
-        
-        report = IncidentReport(
-            incident_id=incident_id,
-            status=IncidentStatus.INVESTIGATING.value,
-            severity=max_severity,
-            title=f"Incident in {', '.join(sorted(components))}",
-            description=f"Multi-component failure affecting {len(components)} system(s)",
-            first_event=cluster[0].timestamp,
-            last_event=cluster[-1].timestamp,
-            event_count=len(cluster),
-            affected_components=sorted(list(components)),
-            involved_users=sorted(list(users)),
-            root_cause_hypothesis=root_cause,
-            recommended_actions=recommended_actions,
-            escalation_required=escalation_needed,
-            recurrence_pattern_detected=recurrence_detected
-        )
-        
-        self.incidents[incident_id] = report
-        return report
-
-    def infer_root_cause(self, cluster: List[IncidentEvent]) -> str:
-        """Infer likely root cause from event patterns"""
-        error_keywords = {
-            'deployment': 0,
-            'configuration': 0,
-            'database': 0,
-            'authentication': 0,
-            'timeout': 0,
-            'memory': 0,
-            'permission': 0,
-            'api': 0,
+    def __init__(self, alert_threshold: int = 3, window_days: int = 7):
+        self.alert_threshold = alert_threshold
+        self.window_days = window_days
+        self.incidents: List[IncidentRecord] = []
+        self.severity_weights = {
+            'critical': 10,
+            'high': 5,
+            'medium': 2,
+            'low': 1
         }
-        
-        for event in cluster:
-            message_lower = event.message.lower()
-            for keyword in error_keywords:
-                if keyword in message_lower:
-                    error_keywords[keyword] += 1
-        
-        if max(error_keywords.values()) > 0:
-            return max(error_keywords, key=error_keywords.get).title()
-        
-        if any('human' in e.message.lower() for e in cluster):
-            return "Human Error"
-        
-        return "Unknown Cause"
 
-    def generate_recommendations(
-        self,
-        root_cause: str,
-        components: set,
-        recurrence: bool
-    ) -> List[str]:
-        """Generate actionable remediation steps"""
+    def add_incident(self, incident: IncidentRecord) -> None:
+        """Add incident record to monitoring dataset"""
+        self.incidents.append(incident)
+
+    def load_from_json(self, json_data: str) -> None:
+        """Load incidents from JSON string"""
+        data = json.loads(json_data)
+        for incident_dict in data:
+            incident = IncidentRecord(**incident_dict)
+            self.add_incident(incident)
+
+    def get_incidents_in_window(self) -> List[IncidentRecord]:
+        """Get incidents within the monitoring window"""
+        now = datetime.utcnow()
+        cutoff = now - timedelta(days=self.window_days)
+
+        filtered = []
+        for incident in self.incidents:
+            try:
+                incident_time = datetime.fromisoformat(incident.timestamp.replace('Z', '+00:00'))
+                if incident_time >= cutoff:
+                    filtered.append(incident)
+            except ValueError:
+                pass
+
+        return filtered
+
+    def calculate_severity_distribution(self, incidents: List[IncidentRecord]) -> Dict[str, int]:
+        """Count incidents by severity level"""
+        distribution = {level: 0 for level in self.severity_weights.keys()}
+        for incident in incidents:
+            if incident.severity in distribution:
+                distribution[incident.severity] += 1
+        return distribution
+
+    def calculate_category_distribution(self, incidents: List[IncidentRecord]) -> Dict[str, int]:
+        """Count incidents by category"""
+        distribution = {}
+        for incident in incidents:
+            distribution[incident.category] = distribution.get(incident.category, 0) + 1
+        return distribution
+
+    def calculate_average_resolution_time(self, incidents: List[IncidentRecord]) -> float:
+        """Calculate mean resolution time in minutes"""
+        if not incidents:
+            return 0.0
+        resolution_times = [
+            incident.duration_minutes
+            for incident in incidents
+            if incident.resolution_status == 'resolved'
+        ]
+        if not resolution_times:
+            return 0.0
+        return statistics.mean(resolution_times)
+
+    def find_most_affected_system(self, incidents: List[IncidentRecord]) -> str:
+        """Identify most frequently affected system"""
+        system_counts = {}
+        for incident in incidents:
+            for system in incident.affected_systems:
+                system_counts[system] = system_counts.get(system, 0) + 1
+
+        if not system_counts:
+            return "N/A"
+        return max(system_counts, key=system_counts.get)
+
+    def calculate_incident_frequency(self, incidents: List[IncidentRecord]) -> float:
+        """Calculate incidents per day"""
+        if self.window_days == 0:
+            return 0.0
+        return len(incidents) / self.window_days
+
+    def calculate_risk_score(self, incidents: List[IncidentRecord]) -> float:
+        """Calculate normalized risk score 0-100"""
+        if not incidents:
+            return 0.0
+
+        weighted_sum = 0
+        for incident in incidents:
+            weight = self.severity_weights.get(incident.severity, 1)
+            weighted_sum += weight
+
+        max_possible = len(incidents) * self.severity_weights['critical']
+        if max_possible == 0:
+            return 0.0
+
+        score = (weighted_sum / max_possible) * 100
+        return min(100.0, score)
+
+    def assess_trend(self, incidents: List[IncidentRecord]) -> str:
+        """Assess incident trend direction"""
+        if len(incidents) < 2:
+            return "insufficient_data"
+
+        sorted_incidents = sorted(incidents, key=lambda x: x.timestamp)
+        mid_point = len(sorted_incidents) // 2
+
+        first_half = sorted_incidents[:mid_point]
+        second_half = sorted_incidents[mid_point:]
+
+        first_half_severity = sum(
+            self.severity_weights.get(i.severity, 1) for i in first_half
+        )
+        second_half_severity = sum(
+            self.severity_weights.get(i.severity, 1) for i in second_half
+        )
+
+        if second_half_severity > first_half_severity * 1.2:
+            return "worsening"
+        elif second_half_severity < first_half_severity * 0.8:
+            return "improving"
+        else:
+            return "stable"
+
+    def generate_recommendations(self, analysis: IncidentAnalysis) -> List[str]:
+        """Generate recommendations based on analysis"""
         recommendations = []
-        
-        if recurrence:
-            recommendations.append("Implement automated mitigation for recurring issue")
-            recommendations.append("Schedule architecture review with stakeholders")
-        
-        cause_lower = root_cause.lower()
-        
-        if 'deployment' in cause_lower:
-            recommendations.append("Review deployment pipeline safeguards")
-            recommendations.append("Implement pre-deployment validation")
-            recommendations.append("Consider blue-green deployment strategy")
-        
-        if 'configuration' in cause_lower:
-            recommendations.append("Audit configuration management system")
-            recommendations.append("Implement configuration drift detection")
-        
-        if 'human' in cause_lower:
-            recommendations.append("Review access control policies")
-            recommendations.append("Conduct training on operational procedures")
-            recommendations.append("Implement approval workflows for critical changes")
-        
+
+        if analysis.risk_score > 70:
+            recommendations.append("URGENT: Establish incident response task force immediately")
+
+        if analysis.severity_distribution['critical'] > 0:
+            recommendations.append("Conduct post-mortem analysis for all critical incidents")
+
+        if analysis.incident_frequency_per_day > self.alert_threshold:
+            recommendations.append(f"Incident rate exceeds threshold ({self.alert_threshold}/day)")
+
+        if analysis.average_resolution_time > 120:
+            recommendations.append("Implement faster resolution procedures (current avg: 2+ hours)")
+
+        if analysis.trend_assessment == "worsening":
+            recommendations.append("Allocate additional resources to incident prevention")
+
+        most_affected = analysis.most_affected_system
+        if most_affected != "N/A":
+            recommendations.append(f"Focus monitoring and maintenance on {most_affected}")
+
         if not recommendations:
-            recommendations.append("Conduct detailed post-incident review")
-            recommendations.append("Implement enhanced monitoring for affected components")
-        
+            recommendations.append("Continue current monitoring and incident handling procedures")
+
         return recommendations
 
-    def generate_analysis_report(self) -> Dict[str, Any]:
-        """Generate comprehensive analysis report"""
-        clusters = self.cluster_events()
-        reports = []
-        
-        for cluster in clusters:
-            report = self.analyze_event_cluster(cluster)
-            reports.append(asdict(report))
-        
-        self.save_history()
-        
-        total_incidents = len(self.incidents)
-        critical_incidents = sum(
-            1 for r in self.incidents.values()
-            if r.severity == "critical"
+    def analyze(self) -> IncidentAnalysis:
+        """Perform comprehensive incident analysis"""
+        incidents = self.get_incidents_in_window()
+
+        severity_dist = self.calculate_severity_distribution(incidents)
+        category_dist = self.calculate_category_distribution(incidents)
+        avg_resolution = self.calculate_average_resolution_time(incidents)
+        most_affected = self.find_most_affected_system(incidents)
+        frequency = self.calculate_incident_frequency(incidents)
+        risk_score = self.calculate_risk_score(incidents)
+        trend = self.assess_trend(incidents)
+
+        date_range = f"Last {self.window_days} days"
+        if incidents:
+            oldest = min(incidents, key=lambda x: x.timestamp).timestamp
+            newest = max(incidents, key=lambda x: x.timestamp).timestamp
+            date_range = f"{oldest} to {newest}"
+
+        recommendations = self.generate_recommendations(
+            IncidentAnalysis(
+                total_incidents=len(incidents),
+                date_range=date_range,
+                severity_distribution=severity_dist,
+                category_distribution=category_dist,
+                average_resolution_time=avg_resolution,
+                most_affected_system=most_affected,
+                incident_frequency_per_day=frequency,
+                risk_score=risk_score,
+                trend_assessment=trend,
+                recommendations=[]
+            )
         )
-        recurring_incidents = sum(
-            1 for r in self.incidents.values()
-            if r.recurrence_pattern_detected
+
+        return IncidentAnalysis(
+            total_incidents=len(incidents),
+            date_range=date_range,
+            severity_distribution=severity_dist,
+            category_distribution=category_dist,
+            average_resolution_time=avg_resolution,
+            most_affected_system=most_affected,
+            incident_frequency_per_day=frequency,
+            risk_score=risk_score,
+            trend_assessment=trend,
+            recommendations=recommendations
         )
-        escalated = sum(
-            1 for r in self.incidents.values()
-            if r.escalation_required
-        )
-        
-        return {
-            'analysis_timestamp': datetime.now().isoformat(),
-            'summary': {
-                'total_incidents': total_incidents,
-                'critical_incidents': critical_incidents,
-                'recurring_patterns': recurring_incidents,
-                'escalated_incidents': escalated,
-                'total_events_analyzed': len(self.events),
-            },
-            'incidents': reports,
-            'pattern_history': self.pattern_db,
-        }
+
+    def to_json(self, analysis: IncidentAnalysis) -> str:
+        """Serialize analysis to JSON"""
+        return json.dumps(asdict(analysis), indent=2)
 
 
-def generate_sample_events() -> List[IncidentEvent]:
-    """Generate sample incident events for demonstration"""
-    now = datetime.now()
-    events = []
-    
-    deployment_events = [
-        IncidentEvent(
-            timestamp=(now - timedelta(hours=2)).isoformat(),
-            component="deployment-service",
-            event_type="deployment_started",
-            message="Deployment initiated by user@anthropic.dev",
-            user="user@anthropic.dev",
-            severity="low",
-            resolved=False
-        ),
-        IncidentEvent(
-            timestamp=(now - timedelta(hours=1, minutes=55)).isoformat(),
-            component="api-gateway",
-            event_type="service_degradation",
-            message="API Gateway experiencing increased latency during deployment",
-            user="system",
-            severity="high",
-            resolved=False
-        ),
-        IncidentEvent(
-            timestamp=(now - timedelta(hours=1, minutes=50)).isoformat(),
-            component="database",
-            event_type="connection_error",
-            message="Database connection pool exhausted - human error in migration script",
-            user="devops@anthropic.dev",
-            severity="critical",
-            resolved=False
-        ),
-        IncidentEvent(
-            timestamp=(now - timedelta(hours=1, minutes=48)).isoformat(),
-            component="cache-layer",
-            event_type="cache_invalidation",
-            message="Cache coherency lost across regions",
-            user="system",
-            severity="high",
-            resolved=False
-        ),
-    ]
-    
-    auth_events = [
-        IncidentEvent(
-            timestamp=(now - timedelta(minutes=45)).isoformat(),
-            component="auth-service",
-            event_type="auth_failure",
-            message="Authentication service configuration error detected",
-            user="admin@anthropic.dev",
-            severity="medium",
-            resolved=False
-        ),
-        IncidentEvent(
-            timestamp=(now - timedelta(minutes=42)).isoformat(),
-            component="identity-provider",
-            event_type="token_validation_failure",
-            message="Token validation timeout - possible permission configuration issue",
-            user="system",
-            severity="medium",
-            resolved=False
-        ),
-    ]
-    
-    previous_similar = [
-        IncidentEvent(
-            timestamp=(now - timedelta(days=3, hours=5)).isoformat(),
-            component="deployment-service",
-            event_type="deployment_started",
-            message="Previous deployment caused similar issues",
-            user="user@anthropic.dev",
-            severity="high",
-            resolved=True
-        ),
-        IncidentEvent(
-            timestamp=(now - timedelta(days=3, hours=4, minutes=55)).isoformat(),
-            component="database",
-            event_type="connection_error",
-            message="Database connection pool issue from previous incident",
-            user="system",
-            severity="high",
-            resolved=True
-        ),
-    ]
-    
-    events.extend(deployment_events)
-    events.extend(auth_events)
-    events.extend(previous_similar)
-    
-    return events
+def generate_sample_incidents() -> List[Dict]:
+    """Generate sample incident data for demonstration"""
+    base_time = datetime.utcnow()
+    incidents = []
+
+    # Critical incident 1
+    incidents.append({
+        'timestamp': (base_time - timedelta(days=6)).isoformat() + 'Z',
+        'incident_id': 'INC-2026-0301-001',
+        'severity': 'critical',
+        'category': 'Data Processing',
+        'description': 'Model inference pipeline degradation affecting 40% of requests',
+        'affected_systems': ['inference_cluster_alpha', 'api_gateway', 'cache_layer'],
+        'duration_minutes': 180,
+        'resolution_status': 'resolved',
+        'responsible_team': 'Infrastructure'
+    })
+
+    # High severity incident
+    incidents.append({
+        'timestamp': (base_time - timedelta(days=5, hours=12)).isoformat() + 'Z',
+        'incident_id': 'INC-2026-0302-001',
+        'severity': 'high',
+        'category': 'Configuration Management',
+        'description': 'Incorrect deployment configuration caused service cascading failure',
+        'affected_systems': ['deployment_system', 'service_mesh', 'monitoring'],
+        'duration_minutes': 95,
+        'resolution_status': 'resolved',
+        'responsible_team': 'DevOps'
+    })
+
+    # Medium severity incidents
+    for i in range(3):
+        incidents.append({
+            'timestamp': (base_time - timedelta(days=4-i, hours=6*i)).isoformat() + 'Z',
+            'incident_id': f'INC-2026-030{3+i}-001',
+            'severity': 'medium',
+            'category': 'Database',
+            'description': f'Database connection pool exhaustion incident {i+1}',
+            'affected_systems': ['database_primary', 'connection_pool', 'query_optimizer'],
+            'duration_minutes': 45 + (i * 15),
+            'resolution_status': 'resolved',
+            'responsible_team': 'Database'
+        })
+
+    # Low severity incidents
+    for i in range(2):
+        incidents.append({
+            'timestamp': (base_time - timedelta(days=3-i)).isoformat() + 'Z',
+            'incident_id': f'INC-2026-030{6+i}-001',
+            'severity': 'low',
+            'category': 'Monitoring',
+            'description': f'Non-critical monitoring alert threshold adjustments needed {i+1}',
+            'affected_systems': ['monitoring_stack', 'alerting_engine'],
+            'duration_minutes': 20 + (i * 10),
+            'resolution_status': 'resolved',
+            'responsible_team': 'Observability'
+        })
+
+    # Recent incident (ongoing)
+    incidents.append({
+        'timestamp': (base_time - timedelta(hours=2)).isoformat() + 'Z',
+        'incident_id': 'INC-2026-0331-ONGOING',
+        'severity': 'high',
+        'category': 'API',
+        'description': 'Latency spike in authentication service affecting user access',
+        'affected_systems': ['auth_service', 'load_balancer', 'token_cache'],
+        'duration_minutes': 120,
+        'resolution_status': 'ongoing',
+        'responsible_team': 'Platform'
+    })
+
+    return incidents
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Anthropic Incident Analysis PoC - SwarmPulse @aria agent'
+        description='Anthropic Incident Monitor - Proof of Concept Implementation'
+    )
+    parser.add_argument(
+        '--window-days',
+        type=int,
+        default=7,
+        help='Incident monitoring window in days (default: 7)'
+    )
+    parser.add_argument(
+        '--alert-threshold',
+        type=int,
+        default=3,
+        help='Alert threshold for incidents per day (default: 3)'
     )
     parser.add_argument(
         '--input-file',
         type=str,
-        help='JSON file containing incident events'
+        default=None,
+        help='Load incidents from JSON file (optional)'
     )
     parser.add_argument(
         '--output-file',
         type=str,
-        default='incident_analysis.json',
-        help='Output file for analysis report (default: incident_analysis.json)'
+        default=None,
+        help='Write analysis results to JSON file (optional)'
     )
     parser.add_argument(
-        '--history-file',
-        type=str,
-        default='.incident_history.json',
-        help='File to store pattern history (default: .incident_history.json)'
-    )
-    parser.add_argument(
-        '--time-window',
-        type=int,
-        default=30,
-        help='Time window for event clustering in minutes (default: 30)'
-    )
-    parser.add_argument(
-        '--demo',
+        '--verbose',
         action='store_true',
-        help='Run with generated demo data'
+        help='Enable verbose output'
     )
-    
+    parser.add_argument(
+        '--use-sample-data',
+        action='store_true',
+        default=True,
+        help='Use generated sample incident data (default: True)'
+    )
+
     args = parser.parse_args()
-    
-    analyzer = IncidentAnalyzer(history_file=args.history_file)
-    
-    if args.demo:
-        print("[*] Running with generated demo data...")
-        events = generate_sample_events()
-        for event in events:
-            analyzer.add_event(event)
-    elif args.input_file:
-        print(f"[*] Loading events from {args.input_file}...")
+
+    monitor = IncidentMonitor(
+        alert_threshold=args.alert_threshold,
+        window_days=args.window_days
+    )
+
+    if args.input_file:
         try:
             with open(args.input_file, 'r') as f:
-                data = json.load(f)
-                for event_dict in data.get('events', []):
-                    event = IncidentEvent(**event_dict)
-                    analyzer.add_event(event)
+                json_data = f.read()
+            monitor.load_from_json(json_data)
+            if args.verbose:
+                print(f"[*] Loaded incidents from {args.input_file}", file=sys.stderr)
         except FileNotFoundError:
-            print(f"[!] Error: File {args.input_file} not found", file=sys.stderr)
+            print(f"[!] Input file not found: {args.input_file}", file=sys.stderr)
             sys.exit(1)
         except json.JSONDecodeError:
-            print(f"[!] Error: Invalid JSON in {args.input_file}", file=sys.stderr)
+            print(f"[!] Invalid JSON in input file", file=sys.stderr)
             sys.exit(1)
-    else:
-        print("[!] Error: Provide either --input-file or --demo flag", file=sys.stderr)
-        sys.exit(1)
-    
-    print(f"[*] Analyzing {len(analyzer.events)} events with {args.time_window} minute window...")
-    report = analyzer.generate_analysis_report()
-    
-    with open(args.output_file, 'w') as f:
-        json.dump(report, f, indent=2)
-    
-    print(f"[+] Analysis complete. Report written to {args.output_file}")
-    print(f"\n=== INCIDENT ANALYSIS SUMMARY ===")
-    print(f"Total Incidents: {report['summary']['total_incidents']}")
-    print(f"Critical Incidents: {report['summary']['critical_incidents']}")
-    print(f"Recurring Patterns Detected: {report['summary']['recurring_patterns']}")
-    print(f"Escalated Incidents: {report['summary']['escalated_incidents']}")
-    
-    if report['incidents']:
-        print(f"\n=== FIRST INCIDENT DETAILS ===")
-        incident = report['incidents'][0]
-        print(f"ID: {incident['incident_id']}")
-        print(f"Severity: {incident['severity'].upper()}")
-        print(f"Status: {incident['status']}")
-        print(f"Root Cause: {incident['root_cause_hypothesis']}")
-        print(f"Affected Components: {', '.join(incident['affected_components'])}")
-        print(f"Recurrence Detected: {incident['recurrence_pattern_detected']}")
-        print(f"Escalation Required: {incident['escalation_required']}")
-        print(f"\nRecommended Actions:")
-        for i, action in enumerate(incident['recommended_actions'], 1):
-            print(f"  {i}. {action}")
+    elif args.use_sample_data:
+        sample_incidents = generate_sample_incidents()
+        for incident_dict in sample_incidents:
+            incident = IncidentRecord(**incident_dict)
+            monitor.add_incident(incident)
+        if args.verbose:
+            print(f"[*] Loaded {len(sample_incidents)} sample incidents", file=sys.stderr)
+
+    analysis = monitor.analyze()
+
+    output = monitor.to_json(analysis)
+    print(output)
+
+    if args.output_file:
+        try:
+            with open(args.output_file, 'w') as f:
+                f.write(output)
+            if args.verbose:
+                print(f"[*] Analysis written to {args.output_file}", file=sys.stderr)
+        except IOError as e:
+            print(f"[!] Failed to write output file: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    if args.verbose:
+        print(f"\n[*] Analysis Complete", file=sys.stderr)
+        print(f"[*] Risk Score: {analysis.risk_score:.1f}/100", file=sys.stderr)
+        print(f"[*] Trend: {analysis.trend_assessment}", file=sys.stderr)
+        print(f"[*] Total Incidents: {analysis.total_incidents}", file=sys.stderr)
 
 
 if __name__ == "__main__":
