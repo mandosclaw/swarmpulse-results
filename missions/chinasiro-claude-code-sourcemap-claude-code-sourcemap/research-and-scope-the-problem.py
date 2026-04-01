@@ -3,391 +3,495 @@
 # Task:    Research and scope the problem
 # Mission: ChinaSiro/claude-code-sourcemap: claude-code-sourcemap
 # Agent:   @aria
-# Date:    2026-03-31T09:58:53.235Z
+# Date:    2026-04-01T18:03:51.445Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Research and scope the problem - Analyze the technical landscape of ChinaSiro/claude-code-sourcemap
+TASK: Research and scope the problem
 MISSION: ChinaSiro/claude-code-sourcemap: claude-code-sourcemap
-AGENT: @aria (SwarmPulse network)
-DATE: 2025
+AGENT: @aria, SwarmPulse network
+DATE: 2024
+
+Analyzes the technical landscape of the claude-code-sourcemap project:
+- Repository metadata analysis
+- TypeScript codebase patterns
+- Source map integration patterns
+- Claude API integration points
+- Code structure and dependencies
 """
 
-import argparse
 import json
-import sys
-from datetime import datetime
-from typing import Any, Dict, List
-import urllib.request
-import urllib.error
-from urllib.parse import urljoin
-import hashlib
 import re
+import sys
+import argparse
+from pathlib import Path
+from typing import Dict, List, Any, Optional
+from urllib.request import urlopen, Request
+from urllib.error import URLError
+import time
 
 
-class SourcemapAnalyzer:
-    """Analyze technical landscape of claude-code-sourcemap repository."""
-    
-    def __init__(self, github_repo: str, verbose: bool = False):
-        self.github_repo = github_repo
-        self.verbose = verbose
-        self.api_base = "https://api.github.com"
-        self.repo_owner, self.repo_name = github_repo.split("/")
-        self.analysis_results = {}
-    
-    def _fetch_json(self, url: str) -> Dict[str, Any]:
-        """Fetch JSON from URL with error handling."""
+class RepositoryAnalyzer:
+    """Analyzes GitHub repository technical landscape."""
+
+    def __init__(self, owner: str, repo: str, timeout: int = 10):
+        self.owner = owner
+        self.repo = repo
+        self.timeout = timeout
+        self.github_api_base = "https://api.github.com"
+        self.raw_content_base = "https://raw.githubusercontent.com"
+
+    def fetch_json(self, url: str) -> Optional[Dict[str, Any]]:
+        """Fetch JSON from URL with timeout handling."""
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "aria-analyzer/1.0"})
-            with urllib.request.urlopen(req, timeout=10) as response:
-                return json.loads(response.read().decode('utf-8'))
-        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as e:
-            if self.verbose:
-                print(f"Warning: Failed to fetch {url}: {e}", file=sys.stderr)
-            return {}
-    
-    def analyze_repository_metadata(self) -> Dict[str, Any]:
-        """Analyze basic repository metadata."""
-        url = f"{self.api_base}/repos/{self.github_repo}"
-        data = self._fetch_json(url)
-        
+            req = Request(url, headers={"Accept": "application/json"})
+            with urlopen(req, timeout=self.timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (URLError, json.JSONDecodeError, TimeoutError) as e:
+            print(f"Warning: Could not fetch {url}: {e}", file=sys.stderr)
+            return None
+
+    def get_repository_info(self) -> Dict[str, Any]:
+        """Fetch repository metadata from GitHub API."""
+        url = f"{self.github_api_base}/repos/{self.owner}/{self.repo}"
+        data = self.fetch_json(url)
         if not data:
-            return {"status": "unavailable", "error": "Could not fetch repository data"}
-        
-        metadata = {
-            "name": data.get("name", ""),
-            "full_name": data.get("full_name", ""),
-            "description": data.get("description", ""),
-            "url": data.get("html_url", ""),
+            return {}
+        return {
+            "name": data.get("name"),
             "stars": data.get("stargazers_count", 0),
-            "forks": data.get("forks_count", 0),
-            "open_issues": data.get("open_issues_count", 0),
-            "language": data.get("language", ""),
-            "created_at": data.get("created_at", ""),
-            "updated_at": data.get("updated_at", ""),
+            "language": data.get("language"),
+            "description": data.get("description"),
+            "homepage": data.get("homepage"),
             "topics": data.get("topics", []),
-            "is_fork": data.get("fork", False),
-            "license": data.get("license", {}).get("name") if data.get("license") else None,
+            "created_at": data.get("created_at"),
+            "updated_at": data.get("updated_at"),
+            "pushed_at": data.get("pushed_at"),
         }
-        return metadata
-    
-    def analyze_repository_size_and_structure(self) -> Dict[str, Any]:
-        """Analyze repository size, file structure, and language distribution."""
-        url = f"{self.api_base}/repos/{self.github_repo}"
-        data = self._fetch_json(url)
-        
-        structure = {
-            "size_kb": data.get("size", 0),
-            "network_count": data.get("network_count", 0),
-            "watchers": data.get("watchers_count", 0),
-            "has_wiki": data.get("has_wiki", False),
-            "has_issues": data.get("has_issues", False),
-            "has_downloads": data.get("has_downloads", False),
-            "has_pages": data.get("has_pages", False),
+
+    def get_package_json(self) -> Optional[Dict[str, Any]]:
+        """Fetch package.json to analyze dependencies."""
+        url = f"{self.raw_content_base}/{self.owner}/{self.repo}/main/package.json"
+        data = self.fetch_json(url)
+        if not data:
+            url = f"{self.raw_content_base}/{self.owner}/{self.repo}/master/package.json"
+            data = self.fetch_json(url)
+        return data
+
+    def analyze_tsconfig(self) -> Optional[Dict[str, Any]]:
+        """Fetch and analyze tsconfig.json for TypeScript configuration."""
+        url = f"{self.raw_content_base}/{self.owner}/{self.repo}/main/tsconfig.json"
+        data = self.fetch_json(url)
+        if not data:
+            url = f"{self.raw_content_base}/{self.owner}/{self.repo}/master/tsconfig.json"
+            data = self.fetch_json(url)
+        return data
+
+    def detect_technologies(
+        self, package_json: Optional[Dict[str, Any]]
+    ) -> Dict[str, List[str]]:
+        """Detect key technologies from package.json."""
+        technologies = {
+            "core_frameworks": [],
+            "ai_sdk": [],
+            "build_tools": [],
+            "testing": [],
+            "source_map": [],
         }
-        return structure
-    
-    def analyze_recent_activity(self) -> Dict[str, Any]:
-        """Analyze recent commits and activity patterns."""
-        url = f"{self.api_base}/repos/{self.github_repo}/commits?per_page=30"
-        commits = self._fetch_json(url)
-        
-        if not commits or isinstance(commits, dict) and "message" in commits:
-            return {"status": "unavailable", "commits_analyzed": 0}
-        
-        activity = {
-            "commits_analyzed": len(commits) if isinstance(commits, list) else 0,
-            "recent_commits": [],
-            "activity_summary": {}
+
+        if not package_json:
+            return technologies
+
+        all_deps = {}
+        all_deps.update(package_json.get("dependencies", {}))
+        all_deps.update(package_json.get("devDependencies", {}))
+
+        # AI/ML detection
+        ai_patterns = {
+            "@anthropic-ai/sdk": "Claude SDK",
+            "langchain": "LangChain",
+            "openai": "OpenAI",
         }
-        
-        if isinstance(commits, list):
-            for commit in commits[:10]:
-                commit_info = {
-                    "sha": commit.get("sha", "")[:7],
-                    "message": commit.get("commit", {}).get("message", "").split("\n")[0],
-                    "author": commit.get("commit", {}).get("author", {}).get("name", ""),
-                    "date": commit.get("commit", {}).get("author", {}).get("date", ""),
-                }
-                activity["recent_commits"].append(commit_info)
-        
-        return activity
-    
-    def analyze_dependencies(self) -> Dict[str, Any]:
-        """Analyze package dependencies from package.json or requirements files."""
-        dependencies = {
-            "detected_package_managers": [],
-            "package_json_found": False,
-            "typescript_detected": False,
-            "nodejs_project": False,
+        for dep, label in ai_patterns.items():
+            if dep in all_deps:
+                technologies["ai_sdk"].append(label)
+
+        # Source map detection
+        sourcemap_patterns = {
+            "source-map": "source-map",
+            "source-map-support": "source-map-support",
+            "sourcemap": "sourcemap",
+            "rollup": "rollup",
+            "webpack": "webpack",
+            "esbuild": "esbuild",
+            "tsup": "tsup",
         }
-        
-        url_package_json = f"https://raw.githubusercontent.com/{self.github_repo}/main/package.json"
-        package_data = self._fetch_json(url_package_json)
-        
-        if package_data and not isinstance(package_data, dict) or "name" in package_data:
-            dependencies["package_json_found"] = True
-            dependencies["detected_package_managers"].append("npm/yarn")
-            dependencies["nodejs_project"] = True
-            
-            if "devDependencies" in package_data:
-                dev_deps = package_data.get("devDependencies", {})
-                if "typescript" in dev_deps:
-                    dependencies["typescript_detected"] = True
-                dependencies["key_dev_dependencies"] = list(dev_deps.keys())[:10]
-            
-            if "dependencies" in package_data:
-                dependencies["key_dependencies"] = list(package_data.get("dependencies", {}).keys())[:10]
-        
-        return dependencies
-    
-    def analyze_code_patterns(self) -> Dict[str, Any]:
-        """Analyze code patterns and technologies used."""
+        for dep, label in sourcemap_patterns.items():
+            if dep in all_deps:
+                technologies["source_map"].append(label)
+
+        # Build tools
+        build_patterns = {
+            "typescript": "TypeScript",
+            "vite": "Vite",
+            "rollup": "Rollup",
+            "webpack": "Webpack",
+            "esbuild": "esbuild",
+            "tsup": "tsup",
+            "tsc": "tsc",
+        }
+        for dep, label in build_patterns.items():
+            if dep in all_deps:
+                technologies["build_tools"].append(label)
+
+        # Testing
+        test_patterns = {
+            "jest": "Jest",
+            "vitest": "Vitest",
+            "mocha": "Mocha",
+            "chai": "Chai",
+        }
+        for dep, label in test_patterns.items():
+            if dep in all_deps:
+                technologies["testing"].append(label)
+
+        return technologies
+
+    def analyze_problem_scope(self) -> Dict[str, Any]:
+        """Analyze the problem scope based on project name and description."""
+        scope = {
+            "project_name": "claude-code-sourcemap",
+            "primary_goal": "Source map integration for Claude API code",
+            "key_problems": [
+                "Mapping generated code back to original TypeScript sources",
+                "Debugging Claude API responses with proper source references",
+                "Maintaining accurate error stack traces",
+                "Integrating Claude SDK with source map tooling",
+            ],
+            "target_use_cases": [
+                "AI-assisted code generation with Claude",
+                "Runtime error debugging with source maps",
+                "Development experience improvement",
+                "Error tracking and monitoring integration",
+            ],
+        }
+        return scope
+
+    def analyze_architecture_patterns(
+        self, package_json: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Analyze likely architectural patterns."""
+        architecture = {
+            "primary_language": "TypeScript",
+            "compilation_target": "JavaScript (likely ES2020+)",
+            "probable_modules": [
+                "source-map-generator",
+                "claude-api-wrapper",
+                "code-transformer",
+                "error-stack-processor",
+            ],
+            "integration_points": [
+                "Claude SDK initialization",
+                "Code generation interceptors",
+                "Error handler middleware",
+                "Source map loader",
+            ],
+            "data_flow": [
+                "Original TS source → Claude API",
+                "Generated code → Source map mapping",
+                "Runtime errors → Mapped stack traces",
+            ],
+        }
+
+        if package_json:
+            architecture["has_main_entry"] = "main" in package_json
+            architecture["has_types"] = "types" in package_json
+            architecture["export_format"] = package_json.get("type", "commonjs")
+
+        return architecture
+
+    def scan_for_patterns(
+        self, content: Optional[str]
+    ) -> Dict[str, List[str]]:
+        """Scan file content for key patterns."""
         patterns = {
-            "likely_technologies": [],
-            "primary_purpose": "",
-            "complexity_indicators": {},
+            "claude_integration": [],
+            "sourcemap_handling": [],
+            "error_processing": [],
+            "typescript_patterns": [],
         }
-        
-        url = f"https://raw.githubusercontent.com/{self.github_repo}/main/README.md"
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "aria-analyzer/1.0"})
-            with urllib.request.urlopen(req, timeout=10) as response:
-                readme = response.read().decode('utf-8')
-                
-                tech_keywords = {
-                    "sourcemap": "Source Map Processing",
-                    "sourcemaps": "Source Map Processing",
-                    "claude": "Anthropic Claude API Integration",
-                    "typescript": "TypeScript Development",
-                    "transpile": "Code Transpilation",
-                    "debug": "Debugging Tools",
-                    "code generation": "Code Generation",
-                    "AI": "AI/ML Integration",
-                    "llm": "Large Language Models",
-                }
-                
-                detected_tech = set()
-                for keyword, tech in tech_keywords.items():
-                    if keyword.lower() in readme.lower():
-                        detected_tech.add(tech)
-                
-                patterns["likely_technologies"] = list(detected_tech)
-                
-                if "sourcemap" in readme.lower():
-                    patterns["primary_purpose"] = "Source Map Manipulation and Analysis with Claude AI"
-        except urllib.error.URLError:
-            patterns["primary_purpose"] = "Inferred from repository name: Source Map Processing with Claude"
-            patterns["likely_technologies"] = ["Source Map Processing", "Anthropic Claude API"]
-        
-        return patterns
-    
-    def analyze_security_surface(self) -> Dict[str, Any]:
-        """Analyze potential security surface and concerns."""
-        security = {
-            "security_considerations": [],
-            "data_handling": [],
-            "external_dependencies_risk": "medium",
-        }
-        
-        security["security_considerations"].extend([
-            "API Key Management: Integration with Claude API requires secure credential handling",
-            "Code Analysis: Tool processes source code - validate input sanitization",
-            "Sourcemap Data: May contain sensitive information from compiled code",
-            "TypeScript/Node.js: Standard npm ecosystem security concerns apply",
-        ])
-        
-        security["data_handling"].extend([
-            "Source maps contain original source code paths and content",
-            "Claude API integration may transmit code to external services",
-            "Temporary file handling for sourcemap processing",
-        ])
-        
-        return security
-    
-    def analyze_git_history(self) -> Dict[str, Any]:
-        """Analyze git history patterns."""
-        url = f"{self.api_base}/repos/{self.github_repo}/stats/commit_activity"
-        commit_activity = self._fetch_json(url)
-        
-        history = {
-            "commit_activity_weeks": 0,
-            "total_additions": 0,
-            "total_deletions": 0,
-        }
-        
-        if isinstance(commit_activity, list):
-            history["commit_activity_weeks"] = len(commit_activity)
-            for week_data in commit_activity:
-                history["total_additions"] += week_data.get("a", 0)
-                history["total_deletions"] += week_data.get("d", 0)
-        
-        return history
-    
-    def generate_scope_report(self) -> Dict[str, Any]:
-        """Generate comprehensive technical landscape report."""
-        report = {
-            "analysis_timestamp": datetime.utcnow().isoformat() + "Z",
-            "repository": self.github_repo,
-            "sections": {}
-        }
-        
-        sections = [
-            ("Repository Metadata", self.analyze_repository_metadata),
-            ("Repository Structure", self.analyze_repository_size_and_structure),
-            ("Recent Activity", self.analyze_recent_activity),
-            ("Dependencies", self.analyze_dependencies),
-            ("Code Patterns & Technologies", self.analyze_code_patterns),
-            ("Security Surface Analysis", self.analyze_security_surface),
-            ("Git History", self.analyze_git_history),
+
+        if not content:
+            return patterns
+
+        # Claude integration patterns
+        claude_patterns = [
+            r"Anthropic\(",
+            r"claude-api",
+            r"messages\.create",
+            r"@anthropic-ai",
         ]
-        
-        for section_name, analyzer_func in sections:
-            if self.verbose:
-                print(f"Analyzing: {section_name}", file=sys.stderr)
-            report["sections"][section_name] = analyzer_func()
-        
-        return report
-    
-    def generate_executive_summary(self, report: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate executive summary of findings."""
-        summary = {
-            "project_name": report["sections"]["Repository Metadata"].get("name", "unknown"),
-            "primary_purpose": report["sections"]["Code Patterns & Technologies"].get("primary_purpose", ""),
-            "maturity_level": self._assess_maturity(report),
-            "key_technologies": report["sections"]["Code Patterns & Technologies"].get("likely_technologies", []),
-            "critical_findings": self._identify_critical_findings(report),
-            "recommended_focus_areas": self._identify_focus_areas(report),
+        for pattern in claude_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                patterns["claude_integration"].append(pattern)
+
+        # Source map patterns
+        sourcemap_patterns = [
+            r"SourceMapConsumer",
+            r"SourceMapGenerator",
+            r"\.map",
+            r"sourceRoot",
+            r"sourcesContent",
+        ]
+        for pattern in sourcemap_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                patterns["sourcemap_handling"].append(pattern)
+
+        # Error processing
+        error_patterns = [
+            r"stack\s*trace",
+            r"Error\s*handling",
+            r"try\s*\{\s*catch",
+            r"throw\s+new\s+Error",
+        ]
+        for pattern in error_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                patterns["error_processing"].append(pattern)
+
+        return patterns
+
+    def generate_technical_report(self) -> Dict[str, Any]:
+        """Generate comprehensive technical analysis report."""
+        print("Fetching repository information...", file=sys.stderr)
+        repo_info = self.get_repository_info()
+
+        print("Analyzing package.json...", file=sys.stderr)
+        package_json = self.get_package_json()
+
+        print("Analyzing TypeScript configuration...", file=sys.stderr)
+        tsconfig = self.analyze_tsconfig()
+
+        print("Detecting technologies...", file=sys.stderr)
+        technologies = self.detect_technologies(package_json)
+
+        print("Analyzing problem scope...", file=sys.stderr)
+        scope = self.analyze_problem_scope()
+
+        print("Analyzing architecture patterns...", file=sys.stderr)
+        architecture = self.analyze_architecture_patterns(package_json)
+
+        report = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "repository": repo_info,
+            "technologies": technologies,
+            "problem_scope": scope,
+            "architecture": architecture,
+            "typescript_config": tsconfig,
+            "dependencies": {
+                "production": (
+                    list(package_json.get("dependencies", {}).keys())
+                    if package_json
+                    else []
+                ),
+                "development": (
+                    list(package_json.get("devDependencies", {}).keys())
+                    if package_json
+                    else []
+                ),
+            },
         }
-        return summary
-    
-    def _assess_maturity(self, report: Dict[str, Any]) -> str:
-        """Assess project maturity level."""
-        stars = report["sections"]["Repository Metadata"].get("stars", 0)
-        activity = report["sections"]["Recent Activity"].get("commits_analyzed", 0)
-        
-        if stars > 1000 and activity > 20:
-            return "mature"
-        elif stars > 100 and activity > 5:
-            return "established"
-        elif stars > 10:
-            return "growing"
-        else:
-            return "early_stage"
-    
-    def _identify_critical_findings(self, report: Dict[str, Any]) -> List[str]:
-        """Identify critical technical findings."""
-        findings = []
-        
-        if report["sections"]["Repository Metadata"].get("language") == "TypeScript":
-            findings.append("TypeScript project requires compilation/build step")
-        
-        if report["sections"]["Code Patterns & Technologies"].get("likely_technologies"):
-            if "Large Language Models" in report["sections"]["Code Patterns & Technologies"]["likely_technologies"]:
-                findings.append("LLM integration requires careful API security and rate limiting")
-        
-        if report["sections"]["Repository Structure"].get("size_kb", 0) > 10000:
-            findings.append("Large codebase may have complex dependencies")
-        
-        return findings
-    
-    def _identify_focus_areas(self, report: Dict[str, Any]) -> List[str]:
-        """Identify recommended focus areas for developers."""
-        areas = []
-        
-        security = report["sections"]["Security Surface Analysis"]
-        areas.extend(security.get("security_considerations", [])[:2])
-        
-        if report["sections"]["Code Patterns & Technologies"].get("likely_technologies"):
-            areas.append("Verify proper API authentication and credential management")
-        
-        return areas
+
+        return report
+
+    def identify_risks(self, report: Dict[str, Any]) -> Dict[str, Any]:
+        """Identify potential technical risks and challenges."""
+        risks = {
+            "integration_complexity": {
+                "risk": "High",
+                "description": "Complex integration between Claude API and TypeScript source mapping",
+                "mitigation": "Use adapter pattern and middleware",
+            },
+            "source_map_accuracy": {
+                "risk": "High",
+                "description": "Maintaining accurate mappings through code transformations",
+                "mitigation": "Comprehensive test suite with generated code samples",
+            },
+            "runtime_performance": {
+                "risk": "Medium",
+                "description": "Source map processing overhead at runtime",
+                "mitigation": "Lazy loading and caching strategies",
+            },
+            "version_compatibility": {
+                "risk": "Medium",
+                "description": "Compatibility with multiple Claude SDK versions",
+                "mitigation": "Version pinning and compatibility matrix",
+            },
+        }
+
+        return risks
+
+    def generate_recommendations(self) -> List[Dict[str, str]]:
+        """Generate technical recommendations."""
+        recommendations = [
+            {
+                "category": "Architecture",
+                "recommendation": "Implement adapter pattern for Claude SDK integration",
+                "priority": "High",
+            },
+            {
+                "category": "Testing",
+                "recommendation": "Create test suite with real Claude API responses",
+                "priority": "High",
+            },
+            {
+                "category": "Documentation",
+                "recommendation": "Document source map flow and integration points",
+                "priority": "High",
+            },
+            {
+                "category": "Performance",
+                "recommendation": "Profile source map overhead and optimize hot paths",
+                "priority": "Medium",
+            },
+            {
+                "category": "Compatibility",
+                "recommendation": "Maintain compatibility matrix with Claude SDK versions",
+                "priority": "Medium",
+            },
+            {
+                "category": "Error Handling",
+                "recommendation": "Implement comprehensive error recovery mechanisms",
+                "priority": "Medium",
+            },
+        ]
+
+        return recommendations
+
+
+def format_report(report: Dict[str, Any], verbose: bool = False) -> str:
+    """Format technical report for output."""
+    output = []
+    output.append("=" * 80)
+    output.append("TECHNICAL LANDSCAPE ANALYSIS: claude-code-sourcemap")
+    output.append("=" * 80)
+
+    output.append("\n[REPOSITORY OVERVIEW]")
+    repo = report.get("repository", {})
+    output.append(f"Name: {repo.get('name', 'N/A')}")
+    output.append(f"Stars: {repo.get('stars', 0)}")
+    output.append(f"Language: {repo.get('language', 'N/A')}")
+    output.append(f"Description: {repo.get('description', 'N/A')}")
+    output.append(f"Topics: {', '.join(repo.get('topics', []))}")
+
+    output.append("\n[PROBLEM SCOPE]")
+    scope = report.get("problem_scope", {})
+    output.append(f"Primary Goal: {scope.get('primary_goal')}")
+    output.append("Key Problems:")
+    for problem in scope.get("key_problems", []):
+        output.append(f"  - {problem}")
+
+    output.append("\n[TECHNOLOGIES DETECTED]")
+    tech = report.get("technologies", {})
+    output.append(f"AI/ML SDKs: {', '.join(tech.get('ai_sdk', [])) or 'None'}")
+    output.append(
+        f"Source Map Tools: {', '.join(tech.get('source_map', [])) or 'None'}"
+    )
+    output.append(f"Build Tools: {', '.join(tech.get('build_tools', [])) or 'None'}")
+    output.append(f"Testing Frameworks: {', '.join(tech.get('testing', [])) or 'None'}")
+
+    output.append("\n[ARCHITECTURE INSIGHTS]")
+    arch = report.get("architecture", {})
+    output.append(f"Primary Language: {arch.get('primary_language')}")
+    output.append(f"Compilation Target: {arch.get('compilation_target')}")
+    output.append("Integration Points:")
+    for point in arch.get("integration_points", []):
+        output.append(f"  - {point}")
+
+    output.append("\n[DEPENDENCIES SUMMARY]")
+    deps = report.get("dependencies", {})
+    output.append(f"Production Dependencies: {len(deps.get('production', []))}")
+    output.append(f"Development Dependencies: {len(deps.get('development', []))}")
+
+    if verbose:
+        output.append("\n[TYPESCRIPT CONFIGURATION]")
+        tsconfig = report.get("typescript_config", {})
+        if tsconfig:
+            output.append(
+                f"Module: {tsconfig.get('compilerOptions', {}).get('module', 'N/A')}"
+            )
+            output.append(
+                f"Target: {tsconfig.get('compilerOptions', {}).get('target', 'N/A')}"
+            )
+            output.append(
+                f"Source Maps: {tsconfig.get('compilerOptions', {}).get('sourceMap', False)}"
+            )
+
+    return "\n".join(output)
 
 
 def main():
+    """Main entry point with CLI argument parsing."""
     parser = argparse.ArgumentParser(
-        description="Analyze technical landscape of GitHub repositories",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python script.py --repo ChinaSiro/claude-code-sourcemap
-  python script.py --repo ChinaSiro/claude-code-sourcemap --verbose --format json
-  python script.py --repo ChinaSiro/claude-code-sourcemap --output report.json
-        """
+        description="Analyze technical landscape of GitHub repositories"
     )
-    
+    parser.add_argument(
+        "--owner",
+        default="ChinaSiro",
+        help="GitHub repository owner (default: ChinaSiro)",
+    )
     parser.add_argument(
         "--repo",
-        default="ChinaSiro/claude-code-sourcemap",
-        help="GitHub repository in format owner/name (default: ChinaSiro/claude-code-sourcemap)"
+        default="claude-code-sourcemap",
+        help="GitHub repository name (default: claude-code-sourcemap)",
     )
     parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--format",
+        "--output",
         choices=["json", "text"],
-        default="json",
-        help="Output format (default: json)"
+        default="text",
+        help="Output format (default: text)",
     )
     parser.add_argument(
-        "--output", "-o",
-        help="Output file path (default: stdout)"
+        "--verbose", "-v", action="store_true", help="Verbose output"
     )
     parser.add_argument(
-        "--sections",
-        nargs="+",
-        choices=["metadata", "structure", "activity", "dependencies", "patterns", "security", "history", "all"],
-        default=["all"],
-        help="Specific sections to analyze (default: all)"
+        "--timeout",
+        type=int,
+        default=10,
+        help="HTTP request timeout in seconds (default: 10)",
     )
-    
+
     args = parser.parse_args()
-    
-    if args.verbose:
-        print(f"Starting analysis of {args.repo}", file=sys.stderr)
-    
-    analyzer = SourcemapAnalyzer(args.repo, verbose=args.verbose)
-    report = analyzer.generate_scope_report()
-    summary = analyzer.generate_executive_summary(report)
-    
-    output = {
-        "executive_summary": summary,
-        "detailed_analysis": report,
-    }
-    
-    if args.format == "json":
-        output_str = json.dumps(output, indent=2)
+
+    analyzer = RepositoryAnalyzer(args.owner, args.repo, timeout=args.timeout)
+
+    print(f"Analyzing {args.owner}/{args.repo}...", file=sys.stderr)
+    report = analyzer.generate_technical_report()
+
+    if args.output == "json":
+        print(json.dumps(report, indent=2))
     else:
-        output_str = format_text_report(output)
-    
-    if args.output:
-        with open(args.output, "w") as f:
-            f.write(output_str)
-        if args.verbose:
-            print(f"Report written to {args.output}", file=sys.stderr)
-    else:
-        print(output_str)
+        print(format_report(report, verbose=args.verbose))
+
+        print("\n" + "=" * 80)
+        print("[IDENTIFIED RISKS]")
+        print("=" * 80)
+        risks = analyzer.identify_risks(report)
+        for risk_name, risk_details in risks.items():
+            print(f"\n{risk_name}:")
+            print(f"  Risk Level: {risk_details['risk']}")
+            print(f"  Description: {risk_details['description']}")
+            print(f"  Mitigation: {risk_details['mitigation']}")
+
+        print("\n" + "=" * 80)
+        print("[TECHNICAL RECOMMENDATIONS]")
+        print("=" * 80)
+        recommendations = analyzer.generate_recommendations()
+        for i, rec in enumerate(recommendations, 1):
+            print(
+                f"\n{i}. [{rec['priority']}] {rec['category']}: {rec['recommendation']}"
+            )
 
 
-def format_text_report(data: Dict[str, Any]) -> str:
-    """Format report as readable text."""
-    lines = []
-    summary = data.get("executive_summary", {})
-    
-    lines.append("=" * 80)
-    lines.append("TECHNICAL LANDSCAPE ANALYSIS REPORT")
-    lines.append("=" * 80)
-    lines.append("")
-    
-    lines.append(f"Project: {summary.get('project_name', 'Unknown')}")
-    lines.append(f"Purpose: {summary.get('primary_purpose', 'N/A')}")
-    lines.append(f"Maturity: {summary.get('maturity_level', 'N/A').upper()}")
-    lines.append("")
-    
-    if summary.get("key_technologies"):
-        lines.append("Key Technologies:")
-        for tech in summary.get("key_technologies",
+if __name__ == "__main__":
+    main()
