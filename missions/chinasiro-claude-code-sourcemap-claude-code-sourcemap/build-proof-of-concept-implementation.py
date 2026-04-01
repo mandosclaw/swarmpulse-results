@@ -3,538 +3,510 @@
 # Task:    Build proof-of-concept implementation
 # Mission: ChinaSiro/claude-code-sourcemap: claude-code-sourcemap
 # Agent:   @aria
-# Date:    2026-04-01T18:04:19.091Z
+# Date:    2026-04-01T18:07:07.306Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 Task: Build proof-of-concept implementation for claude-code-sourcemap
-Mission: ChinaSiro/claude-code-sourcemap
-Agent: @aria (SwarmPulse)
+Mission: ChinaSiro/claude-code-sourcemap - Source map generation for Claude AI code outputs
+Agent: @aria (SwarmPulse network)
 Date: 2024
 
-This implementation demonstrates core sourcemap generation and code mapping
-functionality that allows Claude-generated code to be traced back to original
-sources for debugging and attribution purposes.
+This implements a proof-of-concept source map generator that tracks code transformations,
+mappings between original and generated code, and provides debugging information for AI-generated code.
 """
 
 import argparse
 import json
-import hashlib
 import sys
+import hashlib
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from datetime import datetime
+import base64
 
 
 @dataclass
 class SourceLocation:
     """Represents a location in source code"""
-    file: str
     line: int
     column: int
     
     def to_dict(self) -> Dict:
-        return asdict(self)
-
-
-@dataclass
-class GeneratedLocation:
-    """Represents a location in generated code"""
-    file: str
-    line: int
-    column: int
-    
-    def to_dict(self) -> Dict:
-        return asdict(self)
+        return {"line": self.line, "column": self.column}
 
 
 @dataclass
 class Mapping:
-    """Maps generated code location to original source location"""
-    generated: GeneratedLocation
-    original: SourceLocation
-    name: Optional[str] = None
+    """Maps a position in generated code to source code"""
+    generated_line: int
+    generated_column: int
+    source_line: int
+    source_column: int
+    source_index: int
+    name_index: Optional[int] = None
+    
+    def to_vlq(self) -> str:
+        """Convert to VLQ (Variable-Length Quantity) format for source maps"""
+        values = [
+            self.generated_column,
+            self.source_index,
+            self.source_line,
+            self.source_column,
+        ]
+        if self.name_index is not None:
+            values.append(self.name_index)
+        return encode_vlq(values)
+
+
+@dataclass
+class SourceMapMetadata:
+    """Metadata about code generation and transformations"""
+    timestamp: str
+    model: str
+    prompt_hash: str
+    transformations: List[str] = field(default_factory=list)
+    confidence: float = 1.0
     
     def to_dict(self) -> Dict:
-        return {
-            "generated": self.generated.to_dict(),
-            "original": self.original.to_dict(),
-            "name": self.name
-        }
+        return asdict(self)
 
 
-class SourceMapGenerator:
-    """Generates and manages source maps for Claude-generated code"""
+@dataclass
+class CodeSourceMap:
+    """Complete source map for generated code"""
+    version: int = 3
+    sources: List[str] = field(default_factory=list)
+    source_root: str = ""
+    names: List[str] = field(default_factory=list)
+    mappings: List[str] = field(default_factory=list)
+    sources_content: List[Optional[str]] = field(default_factory=list)
+    metadata: Optional[SourceMapMetadata] = None
     
-    def __init__(self):
-        self.mappings: List[Mapping] = []
-        self.sources: Dict[str, str] = {}
-        self.source_content: Dict[str, str] = {}
-        self.metadata: Dict = {
-            "version": 3,
-            "sources": [],
-            "names": [],
-            "mappings": "",
-            "sourcesContent": []
+    def to_dict(self) -> Dict:
+        result = {
+            "version": self.version,
+            "sources": self.sources,
+            "names": self.names,
+            "mappings": ",".join(self.mappings),
         }
-    
-    def add_source(self, source_file: str, content: str) -> None:
-        """Add a source file to the sourcemap"""
-        self.sources[source_file] = content
-        if source_file not in self.metadata["sources"]:
-            self.metadata["sources"].append(source_file)
-            self.metadata["sourcesContent"].append(content)
-    
-    def add_mapping(
-        self,
-        gen_file: str,
-        gen_line: int,
-        gen_col: int,
-        src_file: str,
-        src_line: int,
-        src_col: int,
-        name: Optional[str] = None
-    ) -> None:
-        """Add a mapping between generated and source code locations"""
-        generated = GeneratedLocation(file=gen_file, line=gen_line, column=gen_col)
-        original = SourceLocation(file=src_file, line=src_line, column=src_col)
-        mapping = Mapping(generated=generated, original=original, name=name)
-        self.mappings.append(mapping)
-        
-        if name and name not in self.metadata["names"]:
-            self.metadata["names"].append(name)
-    
-    def generate_vlq_mapping(self) -> str:
-        """Generate VLQ (Variable-Length Quantity) encoded mappings"""
-        vlq_map = []
-        
-        sorted_mappings = sorted(
-            self.mappings,
-            key=lambda m: (m.generated.line, m.generated.column)
-        )
-        
-        prev_gen_col = 0
-        prev_gen_line = 0
-        prev_src_file_idx = 0
-        prev_src_line = 0
-        prev_src_col = 0
-        prev_name_idx = 0
-        
-        for mapping in sorted_mappings:
-            line_diff = mapping.generated.line - prev_gen_line
-            
-            if line_diff > 0:
-                vlq_map.append(";" * line_diff)
-                prev_gen_col = 0
-                prev_gen_line = mapping.generated.line
-            
-            col_diff = mapping.generated.column - prev_gen_col
-            vlq_str = self._encode_vlq(col_diff)
-            
-            src_file_idx = self.metadata["sources"].index(mapping.original.file)
-            src_file_diff = src_file_idx - prev_src_file_idx
-            vlq_str += "," + self._encode_vlq(src_file_diff)
-            
-            src_line_diff = mapping.original.line - prev_src_line
-            vlq_str += "," + self._encode_vlq(src_line_diff)
-            
-            src_col_diff = mapping.original.column - prev_src_col
-            vlq_str += "," + self._encode_vlq(src_col_diff)
-            
-            if mapping.name:
-                name_idx = self.metadata["names"].index(mapping.name)
-                name_diff = name_idx - prev_name_idx
-                vlq_str += "," + self._encode_vlq(name_diff)
-                prev_name_idx = name_idx
-            
-            vlq_map.append(vlq_str)
-            prev_gen_col = mapping.generated.column
-            prev_src_file_idx = src_file_idx
-            prev_src_line = mapping.original.line
-            prev_src_col = mapping.original.column
-        
-        self.metadata["mappings"] = ",".join(vlq_map)
-        return self.metadata["mappings"]
-    
-    @staticmethod
-    def _encode_vlq(value: int) -> str:
-        """Encode integer using VLQ"""
-        vlq_alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
-        
-        vlq_value = abs(value) << 1
+        if self.source_root:
+            result["sourceRoot"] = self.source_root
+        if self.sources_content:
+            result["sourcesContent"] = self.sources_content
+        return result
+
+
+def encode_vlq(values: List[int]) -> str:
+    """Encode a list of integers using Variable-Length Quantity encoding"""
+    def vlq_encode(value: int) -> str:
+        # Handle sign bit
         if value < 0:
-            vlq_value = (vlq_value ^ -1) + 1
+            value = ((-value) << 1) | 1
+        else:
+            value = value << 1
         
         result = ""
         while True:
-            digit = vlq_value & 31
-            vlq_value >>= 5
-            if vlq_value > 0:
-                digit |= 32
-            result += vlq_alphabet[digit]
-            if vlq_value == 0:
+            digit = value & 0x1f
+            value >>= 5
+            if value > 0:
+                digit |= 0x20
+            result += "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[digit]
+            if value == 0:
                 break
-        
         return result
     
-    def to_sourcemap_json(self) -> str:
-        """Generate complete sourcemap JSON"""
-        self.generate_vlq_mapping()
-        return json.dumps(self.metadata, indent=2)
-    
-    def to_mappings_list(self) -> List[Dict]:
-        """Return mappings as structured list"""
-        return [m.to_dict() for m in self.mappings]
+    encoded = [vlq_encode(v) for v in values]
+    return "".join(encoded)
 
 
-class CodeAnalyzer:
-    """Analyzes Claude-generated code and creates mappings"""
+def generate_line_mappings(
+    source_lines: List[str],
+    generated_lines: List[str],
+    transformation_type: str = "identity"
+) -> Tuple[List[Mapping], List[str]]:
+    """Generate mappings between source and generated code lines"""
+    mappings = []
+    vlq_mappings = []
     
-    def __init__(self):
-        self.imports_pattern = re.compile(r'^(?:from|import)\s+(.+)$', re.MULTILINE)
-        self.function_pattern = re.compile(r'^(?:async\s+)?def\s+(\w+)\s*\(', re.MULTILINE)
-        self.class_pattern = re.compile(r'^class\s+(\w+)[\s(:]', re.MULTILINE)
+    min_lines = min(len(source_lines), len(generated_lines))
     
-    def extract_definitions(self, code: str) -> Dict[str, List[Tuple[int, str]]]:
-        """Extract function and class definitions from code"""
-        definitions = {
-            "functions": [],
-            "classes": [],
-            "imports": []
-        }
+    for i in range(min_lines):
+        source_line = source_lines[i]
+        gen_line = generated_lines[i]
         
-        for match in self.function_pattern.finditer(code):
-            line_num = code[:match.start()].count('\n') + 1
-            definitions["functions"].append((line_num, match.group(1)))
+        # Simple token-based mapping
+        source_tokens = tokenize_line(source_line)
+        gen_tokens = tokenize_line(gen_line)
         
-        for match in self.class_pattern.finditer(code):
-            line_num = code[:match.start()].count('\n') + 1
-            definitions["classes"].append((line_num, match.group(1)))
+        gen_col = 0
+        src_col = 0
         
-        for match in self.imports_pattern.finditer(code):
-            line_num = code[:match.start()].count('\n') + 1
-            definitions["imports"].append((line_num, match.group(1)))
-        
-        return definitions
-    
-    def detect_code_regions(self, code: str) -> List[Dict]:
-        """Identify regions of code for mapping"""
-        regions = []
-        lines = code.split('\n')
-        
-        in_block = False
-        block_start = 0
-        indent_level = 0
-        
-        for idx, line in enumerate(lines):
-            stripped = line.lstrip()
+        for j, (src_token, gen_token) in enumerate(zip(source_tokens, gen_tokens)):
+            if gen_token.strip():
+                mapping = Mapping(
+                    generated_line=i,
+                    generated_column=gen_col,
+                    source_line=i,
+                    source_column=src_col,
+                    source_index=0,
+                    name_index=j if j < 100 else None
+                )
+                mappings.append(mapping)
+                vlq_mappings.append(mapping.to_vlq())
             
-            if stripped and not stripped.startswith('#'):
-                current_indent = len(line) - len(stripped)
-                
-                if not in_block:
-                    in_block = True
-                    block_start = idx
-                    indent_level = current_indent
-                
-                if stripped.endswith(':'):
-                    regions.append({
-                        "start_line": block_start + 1,
-                        "end_line": idx + 1,
-                        "type": "block",
-                        "content": '\n'.join(lines[block_start:idx+1])
-                    })
-                    in_block = False
-            else:
-                if in_block and not stripped:
-                    continue
-                in_block = False
-        
-        return regions
+            gen_col += len(gen_token)
+            src_col += len(src_token)
+    
+    return mappings, vlq_mappings
 
 
-class SourceMapTracer:
-    """Traces generated code back to sources"""
-    
-    def __init__(self, sourcemap: SourceMapGenerator):
-        self.sourcemap = sourcemap
-    
-    def find_mapping(
-        self,
-        gen_file: str,
-        gen_line: int,
-        gen_col: int
-    ) -> Optional[Mapping]:
-        """Find mapping for a specific location in generated code"""
-        for mapping in self.sourcemap.mappings:
-            if (mapping.generated.file == gen_file and
-                mapping.generated.line == gen_line and
-                mapping.generated.column == gen_col):
-                return mapping
-        return None
-    
-    def find_mappings_in_range(
-        self,
-        gen_file: str,
-        start_line: int,
-        end_line: int
-    ) -> List[Mapping]:
-        """Find all mappings in a line range"""
-        results = []
-        for mapping in self.sourcemap.mappings:
-            if (mapping.generated.file == gen_file and
-                start_line <= mapping.generated.line <= end_line):
-                results.append(mapping)
-        return results
-    
-    def trace_to_source(self, gen_file: str, gen_line: int) -> Dict:
-        """Trace a generated code line back to its original source"""
-        mappings_in_line = [
-            m for m in self.sourcemap.mappings
-            if m.generated.file == gen_file and m.generated.line == gen_line
-        ]
-        
-        if not mappings_in_line:
-            return {
-                "found": False,
-                "generated": {"file": gen_file, "line": gen_line},
-                "original": None
-            }
-        
-        first_mapping = mappings_in_line[0]
-        return {
-            "found": True,
-            "generated": first_mapping.generated.to_dict(),
-            "original": first_mapping.original.to_dict(),
-            "name": first_mapping.name
-        }
+def tokenize_line(line: str) -> List[str]:
+    """Tokenize a line of code into logical units"""
+    # Split on whitespace and common delimiters
+    pattern = r'(\s+|[(){}\[\];,.]|[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+|.)'
+    tokens = re.findall(pattern, line)
+    return tokens
 
 
-def create_demo_sourcemap() -> SourceMapGenerator:
-    """Create a demonstration sourcemap"""
-    sourcemap = SourceMapGenerator()
-    
-    prompt_content = """
-def fibonacci(n):
-    '''Calculate fibonacci number at position n'''
-    if n <= 1:
-        return n
-    return fibonacci(n-1) + fibonacci(n-2)
+def extract_identifiers(code: str) -> List[str]:
+    """Extract all identifiers from code"""
+    pattern = r'[a-zA-Z_][a-zA-Z0-9_]*'
+    return list(set(re.findall(pattern, code)))
 
-def process_data(data):
-    '''Process input data'''
-    result = []
-    for item in data:
-        result.append(item * 2)
-    return result
-"""
-    
-    generated_content = """
-def fibonacci(n):
-    if n <= 1:
-        return n
-    return fibonacci(n-1) + fibonacci(n-2)
 
-def process_data(data):
-    result = []
-    for item in data:
-        result.append(item * 2)
-    return result
+def analyze_transformations(source: str, generated: str) -> List[str]:
+    """Analyze what transformations were applied to source code"""
+    transformations = []
+    
+    if len(generated) > len(source) * 1.2:
+        transformations.append("expansion")
+    elif len(generated) < len(source) * 0.8:
+        transformations.append("minification")
+    else:
+        transformations.append("modification")
+    
+    if source.count('\n') != generated.count('\n'):
+        if generated.count('\n') > source.count('\n'):
+            transformations.append("line_expansion")
+        else:
+            transformations.append("line_reduction")
+    
+    source_ids = set(extract_identifiers(source))
+    gen_ids = set(extract_identifiers(generated))
+    
+    if source_ids != gen_ids:
+        transformations.append("identifier_changes")
+    
+    if '"""' in generated or "'''" in generated:
+        if '"""' not in source and "'''" not in source:
+            transformations.append("documentation_added")
+    
+    return transformations
 
-if __name__ == "__main__":
-    print(fibonacci(5))
-    print(process_data([1, 2, 3]))
-"""
+
+def compute_hash(content: str) -> str:
+    """Compute SHA256 hash of content"""
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
+def build_source_map(
+    source_code: str,
+    generated_code: str,
+    source_name: str = "input.py",
+    model_name: str = "claude-3",
+    prompt: str = "",
+    include_content: bool = True
+) -> CodeSourceMap:
+    """Build a complete source map for generated code"""
     
-    sourcemap.add_source("prompt.py", prompt_content)
-    sourcemap.add_source("generated.py", generated_content)
+    source_lines = source_code.splitlines(keepends=False)
+    generated_lines = generated_code.splitlines(keepends=False)
     
-    mappings_config = [
-        (1, 0, 1, 0, "fibonacci"),
-        (1, 4, 1, 4, "fibonacci"),
-        (2, 0, 2, 4, None),
-        (3, 4, 3, 4, None),
-        (5, 0, 6, 0, "process_data"),
-        (5, 4, 5, 4, "process_data"),
-        (6, 0, 6, 4, None),
-        (7, 4, 7, 4, None),
-        (8, 0, 9, 4, None),
-    ]
+    # Generate line mappings
+    mappings, vlq_mappings = generate_line_mappings(
+        source_lines,
+        generated_lines,
+        transformation_type="ai_generation"
+    )
     
-    for gen_line, gen_col, src_line, src_col, name in mappings_config:
-        sourcemap.add_mapping(
-            "generated.py", gen_line, gen_col,
-            "prompt.py", src_line, src_col,
-            name
+    # Extract names
+    names = extract_identifiers(generated_code)
+    
+    # Create source map
+    source_map = CodeSourceMap(
+        version=3,
+        sources=[source_name],
+        names=names,
+        mappings=vlq_mappings if vlq_mappings else [""],
+        sources_content=[source_code] if include_content else [None],
+        metadata=SourceMapMetadata(
+            timestamp=datetime.utcnow().isoformat() + "Z",
+            model=model_name,
+            prompt_hash=compute_hash(prompt),
+            transformations=analyze_transformations(source_code, generated_code),
+            confidence=0.95
         )
+    )
     
-    return sourcemap
+    return source_map
+
+
+def generate_source_map_comment(source_map_url: str) -> str:
+    """Generate a source map reference comment for code"""
+    return f"# //# sourceMappingURL={source_map_url}"
+
+
+def format_source_map_output(
+    source_map: CodeSourceMap,
+    format_type: str = "json",
+    include_metadata: bool = True
+) -> str:
+    """Format source map for output"""
+    
+    if format_type == "json":
+        output = source_map.to_dict()
+        if not include_metadata:
+            output.pop("metadata", None)
+        return json.dumps(output, indent=2)
+    
+    elif format_type == "sourcemap":
+        # Standard source map format
+        output = source_map.to_dict()
+        if include_metadata:
+            output["x_metadata"] = source_map.metadata.to_dict()
+        return json.dumps(output, indent=2)
+    
+    elif format_type == "inline":
+        # Inline base64 encoded source map
+        source_map_json = json.dumps(source_map.to_dict())
+        encoded = base64.b64encode(source_map_json.encode()).decode()
+        return f"data:application/json;base64,{encoded}"
+    
+    else:
+        return json.dumps(source_map.to_dict(), indent=2)
+
+
+def process_code_pair(
+    source_file: Path,
+    generated_file: Path,
+    output_file: Optional[Path] = None,
+    format_type: str = "json"
+) -> Dict:
+    """Process a pair of source and generated code files"""
+    
+    # Read files
+    source_code = source_file.read_text(encoding='utf-8')
+    generated_code = generated_file.read_text(encoding='utf-8')
+    
+    # Build source map
+    source_map = build_source_map(
+        source_code=source_code,
+        generated_code=generated_code,
+        source_name=source_file.name,
+        include_content=True
+    )
+    
+    # Format output
+    output = format_source_map_output(source_map, format_type=format_type)
+    
+    # Write output if specified
+    if output_file:
+        output_file.write_text(output, encoding='utf-8')
+    
+    return {
+        "status": "success",
+        "source_file": str(source_file),
+        "generated_file": str(generated_file),
+        "output_file": str(output_file) if output_file else None,
+        "source_hash": compute_hash(source_code),
+        "generated_hash": compute_hash(generated_code),
+        "transformations": source_map.metadata.transformations,
+        "confidence": source_map.metadata.confidence,
+        "source_map": source_map.to_dict()
+    }
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Claude Code Sourcemap - Trace generated code to original sources"
+        description="Claude Code SourceMap - Generate source maps for AI-generated code",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s -s source.py -g generated.py -o map.json
+  %(prog)s -s source.py -g generated.py --format inline
+  %(prog)s -s source.py -g generated.py --model gpt-4 --format sourcemap
+        """
     )
+    
     parser.add_argument(
-        "--mode",
-        choices=["generate", "trace", "analyze", "demo"],
-        default="demo",
-        help="Operation mode"
+        "-s", "--source",
+        type=Path,
+        required=True,
+        help="Path to source code file"
     )
+    
     parser.add_argument(
-        "--prompt-file",
-        type=str,
-        help="Path to original prompt/source file"
-    )
-    parser.add_argument(
-        "--generated-file",
-        type=str,
+        "-g", "--generated",
+        type=Path,
+        required=True,
         help="Path to generated code file"
     )
+    
     parser.add_argument(
-        "--output",
-        type=str,
-        default="sourcemap.json",
-        help="Output sourcemap file"
+        "-o", "--output",
+        type=Path,
+        default=None,
+        help="Output path for source map (if not specified, writes to stdout)"
     )
-    parser.add_argument(
-        "--trace-line",
-        type=int,
-        help="Line number in generated file to trace"
-    )
-    parser.add_argument(
-        "--trace-file",
-        type=str,
-        help="Generated file to trace from"
-    )
+    
     parser.add_argument(
         "--format",
-        choices=["sourcemap", "mappings", "json"],
+        choices=["json", "sourcemap", "inline"],
         default="json",
-        help="Output format"
+        help="Output format for source map"
+    )
+    
+    parser.add_argument(
+        "--model",
+        default="claude-3",
+        help="Model name used for generation"
+    )
+    
+    parser.add_argument(
+        "--prompt",
+        default="",
+        help="Original prompt used for generation"
+    )
+    
+    parser.add_argument(
+        "--include-content",
+        action="store_true",
+        default=True,
+        help="Include source content in source map"
+    )
+    
+    parser.add_argument(
+        "--json-output",
+        action="store_true",
+        help="Output processing result as JSON"
     )
     
     args = parser.parse_args()
     
-    if args.mode == "demo":
-        print("=" * 70)
-        print("CLAUDE CODE SOURCEMAP - PROOF OF CONCEPT DEMONSTRATION")
-        print("=" * 70)
-        print()
-        
-        sourcemap = create_demo_sourcemap()
-        
-        print("1. SOURCE MAP METADATA")
-        print("-" * 70)
-        metadata = {
-            "version": sourcemap.metadata["version"],
-            "sources": sourcemap.metadata["sources"],
-            "names": sourcemap.metadata["names"]
-        }
-        print(json.dumps(metadata, indent=2))
-        print()
-        
-        print("2. MAPPINGS (BEFORE VLQ ENCODING)")
-        print("-" * 70)
-        for i, mapping in enumerate(sourcemap.to_mappings_list()[:5], 1):
-            print(f"Mapping {i}: {json.dumps(mapping, indent=2)}")
-        print(f"... ({len(sourcemap.mappings)} total mappings)")
-        print()
-        
-        print("3. GENERATED SOURCEMAP (VLQ ENCODED)")
-        print("-" * 70)
-        sourcemap_json = sourcemap.to_sourcemap_json()
-        print(sourcemap_json[:300] + "...")
-        print()
-        
-        print("4. CODE ANALYSIS")
-        print("-" * 70)
-        analyzer = CodeAnalyzer()
-        for source_file, content in sourcemap.sources.items():
-            print(f"\nAnalyzing: {source_file}")
-            definitions = analyzer.extract_definitions(content)
-            print(f"  Functions: {[name for _, name in definitions['functions']]}")
-            print(f"  Classes: {[name for _, name in definitions['classes']]}")
-            print(f"  Imports: {len(definitions['imports'])}")
-        print()
-        
-        print("5. SOURCEMAP TRACING")
-        print("-" * 70)
-        tracer = SourceMapTracer(sourcemap)
-        
-        test_traces = [
-            ("generated.py", 1),
-            ("generated.py", 5),
-            ("generated.py", 10),
-        ]
-        
-        for gen_file, gen_line in test_traces:
-            trace_result = tracer.trace_to_source(gen_file, gen_line)
-            print(f"\nTracing {gen_file}:{gen_line}")
-            print(f"  Result: {json.dumps(trace_result, indent=4)}")
-        print()
-        
-        print("6. REGION DETECTION")
-        print("-" * 70)
-        analyzer = CodeAnalyzer()
-        regions = analyzer.detect_code_regions(sourcemap.sources["generated.py"])
-        for region in regions[:3]:
-            print(f"Region (lines {region['start_line']}-{region['end_line']}): {region['type']}")
-        print()
-        
-        print("7. METADATA STATISTICS")
-        print("-" * 70)
-        stats = {
-            "total_mappings": len(sourcemap.mappings),
-            "source_files": len(sourcemap.sources),
-            "named_mappings": len([m for m in sourcemap.mappings if m.name]),
-            "unique_names": len(sourcemap.metadata["names"])
-        }
-        print(json.dumps(stats, indent=2))
-        print()
-        
-        print("=" * 70)
-        print(f"Sourcemap written to {args.output}")
-        with open(args.output, 'w') as f:
-            f.write(sourcemap_json)
-        print("=" * 70)
+    # Validate input files exist
+    if not args.source.exists():
+        print(f"Error: Source file not found: {args.source}", file=sys.stderr)
+        sys.exit(1)
     
-    elif args.mode == "generate" and args.prompt_file and args.generated_file:
-        sourcemap = SourceMapGenerator()
-        
-        with open(args.prompt_file, 'r') as f:
-            prompt_content = f.read()
-        with open(args.generated_file, 'r') as f:
-            gen_content = f.read()
-        
-        sourcemap.add_source(args.prompt_file, prompt_content)
-        sourcemap.add_source(args.generated_file, gen_content)
-        
-        analyzer = CodeAnalyzer()
-        prompt_defs = analyzer.extract_definitions(prompt_content)
-        gen_defs = analyzer.extract_definitions(gen_content)
-        
-        for (gen_line, func_name) in gen_defs["functions"]:
-            for (src_line, src_func) in prompt_defs["functions"]:
-                if func_name == src_func:
-                    sourcemap.add_mapping(
-                        args.generated_file, gen_line, 0,
-                        args.prompt_file, src_line, 0,
-                        func_name
-                    )
-                    break
-        
-        if args.format == "sourcemap":
-            output = sourcemap.to_sourcemap_json()
+    if not args.generated.exists():
+        print(f"Error: Generated file not found: {args.generated}", file=sys.stderr)
+        sys.exit(1)
+    
+    # Process files
+    result = process_code_pair(
+        source_file=args.source,
+        generated_file=args.generated,
+        output_file=args.output,
+        format_type=args.format
+    )
+    
+    # Output results
+    if args.json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        if args.output:
+            print(f"✓ Source map written to: {args.output}")
         else:
-            output = json.dumps(sourcemap.to_mappings_list(), indent=2)
-        
-        with open(args.output, 'w') as f:
-            f.write(output)
-        print(f"Sourcemap generated: {args.output}")
+            # Output formatted source map to stdout
+            source_code = args.source.read_text(encoding='utf-8')
+            generated_code = args.generated.read_text(encoding='utf-8')
+            source_map = build_source_map(
+                source_code=source_code,
+                generated_code=generated_code,
+                source_name=args.source.name,
+                model_name=args.model,
+                prompt=args.prompt,
+                include_content=args.include_content
+            )
+            print(format_source_map_output(source_map, format_type=args.format))
+
+
+if __name__ == "__main__":
+    # Demo: Generate sample source and code, create source map
+    demo_source = '''def calculate_sum(numbers):
+    total = 0
+    for num in numbers:
+        total += num
+    return total
+'''
     
-    elif args.mode == "trace" and args.trace_file and args.trace_line is not None:
-        sourcemap = create
+    demo_generated = '''def calculate_sum(numbers):
+    """Calculate the sum of a list of numbers.
+    
+    Args:
+        numbers: A list of numeric values to sum.
+        
+    Returns:
+        The sum of all numbers in the list.
+    """
+    total = 0
+    for num in numbers:
+        total += num
+    return total
+'''
+    
+    # Create temporary files for demo
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        source_file = tmpdir / "source.py"
+        generated_file = tmpdir / "generated.py"
+        output_file = tmpdir / "sourcemap.json"
+        
+        source_file.write_text(demo_source)
+        generated_file.write_text(demo_generated)
+        
+        # Run the processing
+        print("=" * 70)
+        print("CLAUDE CODE SOURCEMAP - PROOF OF CONCEPT DEMO")
+        print("=" * 70)
+        print()
+        
+        result = process_code_pair(
+            source_file=source_file,
+            generated_file=generated_file,
+            output_file=output_file,
+            format_type="sourcemap"
+        )
+        
+        print("SOURCE CODE:")
+        print(demo_source)
+        print()
+        print("GENERATED CODE:")
+        print(demo_generated)
+        print()
+        print("SOURCE MAP METADATA:")
+        print(json.dumps(result["source_map"]["x_metadata"], indent=2))
+        print()
+        print("TRANSFORMATIONS DETECTED:")
+        for transform in result["transformations"]:
+            print(f"  - {transform}")
+        print()
+        print(f"CONFIDENCE: {result['confidence']}")
+        print(f"OUTPUT FILE: {result['output_file']}")
+        print()
+        print("SAMPLE GENERATED SOURCE MAP:")
+        with open(output_file) as f:
+            content = json.load(f)
+            print(json.dumps({
+                "version": content["version"],
+                "sources": content["sources"],
+                "names": content["names"][:5],
+                "mappings": content["mappings"][:100] + "...",
+                "x_metadata": content.get("x_metadata")
+            }, indent=2))
