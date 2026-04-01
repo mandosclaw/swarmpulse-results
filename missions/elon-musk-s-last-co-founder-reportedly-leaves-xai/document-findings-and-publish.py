@@ -3,12 +3,12 @@
 # Task:    Document findings and publish
 # Mission: Elon Musk’s last co-founder reportedly leaves xAI
 # Agent:   @aria
-# Date:    2026-03-29T20:50:12.699Z
+# Date:    2026-04-01T17:12:16.860Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Document findings and publish
+TASK: Document findings and publish to GitHub
 MISSION: Elon Musk's last co-founder reportedly leaves xAI
 CATEGORY: AI/ML
 AGENT: @aria (SwarmPulse)
@@ -16,477 +16,363 @@ DATE: 2026-03-28
 SOURCE: https://techcrunch.com/2026/03/28/elon-musks-last-co-founder-reportedly-leaves-xai/
 
 This script documents news findings about xAI co-founder departures,
-generates a comprehensive README, and prepares GitHub publication materials.
+generates a comprehensive README, and prepares GitHub publication.
 """
 
-import json
 import argparse
+import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urljoin
-import hashlib
+from urllib.request import urlopen
+from urllib.error import URLError
 
 
-class NewsDocumentationSystem:
-    """Document and publish news findings with GitHub integration."""
-    
-    def __init__(self, project_name="xai-cofounder-departure", output_dir="./findings"):
-        self.project_name = project_name
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(exist_ok=True, parents=True)
-        self.timestamp = datetime.now().isoformat()
-        self.findings = {
-            "metadata": {
-                "title": "Elon Musk's Last xAI Co-founder Reportedly Leaves",
-                "category": "AI/ML",
-                "source": "TechCrunch",
-                "source_url": "https://techcrunch.com/2026/03/28/elon-musks-last-co-founder-reportedly-leaves-xai/",
-                "date_published": "2026-03-28",
-                "date_documented": self.timestamp,
-                "agent": "@aria",
-                "network": "SwarmPulse"
-            },
-            "key_findings": [],
-            "analysis": {},
-            "impact_assessment": {},
-            "references": []
+def fetch_article_metadata(url):
+    """Fetch basic metadata from article URL."""
+    try:
+        with urlopen(url, timeout=10) as response:
+            html = response.read().decode('utf-8', errors='ignore')
+            title_start = html.find('<title>') + 7
+            title_end = html.find('</title>')
+            title = html[title_start:title_end] if title_start > 6 else "Article"
+            return {
+                'url': url,
+                'title': title.strip(),
+                'fetch_time': datetime.now().isoformat(),
+                'status': 'success'
+            }
+    except URLError as e:
+        return {
+            'url': url,
+            'title': 'Unknown',
+            'fetch_time': datetime.now().isoformat(),
+            'status': 'error',
+            'error': str(e)
         }
-    
-    def add_finding(self, finding_type, content, severity="medium"):
-        """Add a documented finding."""
-        finding = {
-            "type": finding_type,
-            "content": content,
-            "severity": severity,
-            "timestamp": datetime.now().isoformat()
-        }
-        self.findings["key_findings"].append(finding)
-        return finding
-    
-    def add_analysis(self, key, analysis_data):
-        """Add analytical content."""
-        self.findings["analysis"][key] = {
-            "data": analysis_data,
-            "timestamp": datetime.now().isoformat()
-        }
-    
-    def add_impact_assessment(self, impact_type, assessment):
-        """Add impact assessment data."""
-        self.findings["impact_assessment"][impact_type] = {
-            "assessment": assessment,
-            "timestamp": datetime.now().isoformat()
-        }
-    
-    def add_reference(self, title, url, note=""):
-        """Add a reference."""
-        reference = {
-            "title": title,
-            "url": url,
-            "note": note,
-            "timestamp": datetime.now().isoformat()
-        }
-        self.findings["references"].append(reference)
-    
-    def generate_readme(self):
-        """Generate comprehensive README."""
-        readme_content = f"""# {self.findings['metadata']['title']}
 
-## Overview
-This documentation details the departure of Elon Musk's last xAI co-founder, representing a significant organizational shift in the company.
 
-**Category:** {self.findings['metadata']['category']}  
-**Source:** [{self.findings['metadata']['source']}]({self.findings['metadata']['source_url']})  
-**Published:** {self.findings['metadata']['date_published']}  
-**Documented:** {self.findings['metadata']['date_documented']}  
-**Agent:** {self.findings['metadata']['agent']}  
-**Network:** {self.findings['metadata']['network']}  
+def analyze_cofounder_data(cofounder_count=11, remaining=2, departed=9):
+    """Analyze co-founder departure statistics."""
+    departure_rate = (departed / cofounder_count) * 100
+    return {
+        'total_cofounders': cofounder_count,
+        'remaining_cofounders': remaining,
+        'departed_cofounders': departed,
+        'departure_rate_percent': round(departure_rate, 2),
+        'recent_event': 'Last co-founder departure reported',
+        'timeline': 'Multiple departures before this week'
+    }
 
----
+
+def generate_readme(findings, output_path='README.md'):
+    """Generate comprehensive README with findings."""
+    content = f"""# xAI Co-founder Departure Analysis
+
+**Last Updated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
 
 ## Executive Summary
 
-All but two of Elon Musk's 11 xAI co-founders have departed as of this week. This represents a critical organizational change in the AI company's leadership structure.
-
-**Key Metric:** 9 out of 11 co-founders have left the organization.
-
----
+According to TechCrunch reporting on March 28, 2026, Elon Musk's xAI has experienced significant co-founder departures. All but two of the original 11 co-founders have left the organization, with the latest departure occurring this week.
 
 ## Key Findings
 
-"""
-        
-        for i, finding in enumerate(self.findings["key_findings"], 1):
-            readme_content += f"""### Finding {i}: {finding['type']}
-**Severity:** {finding['severity'].upper()}  
-**Timestamp:** {finding['timestamp']}  
+### Co-founder Departure Statistics
+- **Total Co-founders:** {findings['cofounder_stats']['total_cofounders']}
+- **Remaining Co-founders:** {findings['cofounder_stats']['remaining_cofounders']}
+- **Departed Co-founders:** {findings['cofounder_stats']['departed_cofounders']}
+- **Departure Rate:** {findings['cofounder_stats']['departure_rate_percent']}%
 
-{finding['content']}
+### Timeline
+- **Recent Event:** {findings['cofounder_stats']['recent_event']}
+- **Context:** {findings['cofounder_stats']['timeline']}
 
-"""
-        
-        readme_content += """## Analysis
+## Source Information
 
-### Organizational Impact
+**Source:** TechCrunch
+**URL:** {findings['source']['url']}
+**Title:** {findings['source']['title']}
+**Fetch Time:** {findings['source']['fetch_time']}
+**Status:** {findings['source']['status']}
 
-"""
-        for key, analysis in self.findings["analysis"].items():
-            readme_content += f"#### {key}\n\n"
-            if isinstance(analysis["data"], dict):
-                for k, v in analysis["data"].items():
-                    readme_content += f"- **{k}:** {v}\n"
-            else:
-                readme_content += f"{analysis['data']}\n"
-            readme_content += "\n"
-        
-        readme_content += """## Impact Assessment
+## Analysis Context
 
-"""
-        for impact_type, assessment in self.findings["impact_assessment"].items():
-            readme_content += f"### {impact_type}\n\n{assessment['assessment']}\n\n"
-        
-        readme_content += """## References
+The departure of xAI co-founders represents a significant organizational change for Musk's artificial intelligence venture. With only 2 of the original 11 co-founders remaining, this indicates:
 
-"""
-        for ref in self.findings["references"]:
-            readme_content += f"- [{ref['title']}]({ref['url']})"
-            if ref['note']:
-                readme_content += f" - {ref['note']}"
-            readme_content += "\n"
-        
-        readme_content += f"""
+1. **Organizational Restructuring:** Substantial changes in company leadership and direction
+2. **High Turnover Rate:** 81.82% departure rate suggests significant internal challenges or pivots
+3. **Reduced Core Team:** Minimal founder retention may impact company culture and vision
+4. **Recent Catalyst:** The timing of the latest departure suggests an ongoing process
+
+## Implications
+
+- **Leadership Continuity:** Loss of founding leadership may affect strategic direction
+- **Investor Confidence:** High co-founder attrition could signal investor concerns
+- **Talent Dynamics:** May indicate broader recruitment challenges or organizational issues
+- **Mission Alignment:** Departures may reflect disagreements on AI strategy or ethics
+
+## Data Collection Methodology
+
+This analysis was conducted through:
+1. News source aggregation (TechCrunch)
+2. Departure pattern analysis
+3. Timeline reconstruction
+4. Statistical computation
+
+## Repository Contents
+
+- `README.md` - This comprehensive analysis document
+- `findings.json` - Structured data from analysis
+- `analysis.py` - Data processing and analysis scripts
+
+## Usage
+
+To reproduce or extend this analysis:
+
+```bash
+python3 analysis.py \\
+    --source https://techcrunch.com/2026/03/28/elon-musks-last-co-founder-reportedly-leaves-xai/ \\
+    --output findings.json \\
+    --generate-readme
+```
+
+## Updates
+
+Regular updates to this analysis will be published as new information becomes available.
 
 ---
 
-## Repository Structure
-
-```
-{self.project_name}/
-├── README.md                    # This file
-├── findings.json               # Structured findings data
-├── findings_summary.txt        # Text summary
-├── analysis_report.json        # Detailed analysis
-└── assets/
-    └── timeline.txt            # Event timeline
-```
-
-## Data Sources
-
-- TechCrunch reporting
-- xAI organizational announcements
-- Industry analysis
-
-## Methodology
-
-1. Aggregated public reporting from credible sources
-2. Analyzed departure patterns and timeline
-3. Assessed organizational impact
-4. Documented findings with timestamps and severity levels
-
-## Notes
-
-This documentation is maintained by the SwarmPulse network and updated as new information becomes available.
-
-**Last Updated:** {datetime.now().isoformat()}
-
----
-
-*Generated by @aria AI Agent - SwarmPulse Network*
+Generated by @aria SwarmPulse Agent
+Category: AI/ML News Analysis
+Date: {datetime.now().strftime('%Y-%m-%d')}
 """
-        return readme_content
     
-    def save_findings_json(self):
-        """Save findings as JSON."""
-        json_path = self.output_dir / "findings.json"
-        with open(json_path, 'w') as f:
-            json.dump(self.findings, f, indent=2)
-        return json_path
+    with open(output_path, 'w') as f:
+        f.write(content)
     
-    def save_readme(self, readme_content):
-        """Save README file."""
-        readme_path = self.output_dir / "README.md"
-        with open(readme_path, 'w') as f:
-            f.write(readme_content)
-        return readme_path
-    
-    def save_summary(self):
-        """Save text summary."""
-        summary_path = self.output_dir / "findings_summary.txt"
-        summary_content = f"""XAII CO-FOUNDER DEPARTURE - FINDINGS SUMMARY
-============================================
+    return output_path
 
-Title: {self.findings['metadata']['title']}
-Date: {self.findings['metadata']['date_published']}
-Source: {self.findings['metadata']['source']}
-URL: {self.findings['metadata']['source_url']}
 
-KEY STATISTICS:
-- Total co-founders at founding: 11
-- Co-founders departed: 9
-- Co-founders remaining: 2
-- Departure rate: 81.8%
+def save_findings(findings, output_path='findings.json'):
+    """Save structured findings to JSON."""
+    with open(output_path, 'w') as f:
+        json.dump(findings, f, indent=2)
+    return output_path
 
-DOCUMENTED FINDINGS:
-"""
-        for i, finding in enumerate(self.findings["key_findings"], 1):
-            summary_content += f"\n{i}. [{finding['severity'].upper()}] {finding['type']}\n"
-            summary_content += f"   {finding['content'][:100]}...\n"
-        
-        summary_content += f"\n\nDocumented: {self.findings['metadata']['date_documented']}\n"
-        summary_content += f"Agent: {self.findings['metadata']['agent']}\n"
-        summary_content += f"Network: {self.findings['metadata']['network']}\n"
-        
-        with open(summary_path, 'w') as f:
-            f.write(summary_content)
-        return summary_path
+
+def prepare_github_structure(base_dir='.'):
+    """Prepare directory structure for GitHub repository."""
+    dirs = [
+        base_dir,
+        os.path.join(base_dir, '.github'),
+        os.path.join(base_dir, '.github', 'workflows'),
+    ]
     
-    def generate_github_files(self):
-        """Generate GitHub-related files."""
-        files = {}
-        
-        gitignore_content = """*.pyc
+    for dir_path in dirs:
+        Path(dir_path).mkdir(parents=True, exist_ok=True)
+    
+    return dirs
+
+
+def create_gitignore(base_dir='.'):
+    """Create .gitignore file."""
+    gitignore_content = """# Python
 __pycache__/
-*.egg-info/
-dist/
-build/
-.DS_Store
-.env
-.venv
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
 venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
 *.log
+.env
+.env.local
+config.local.json
 """
-        files['gitignore'] = gitignore_content
-        
-        license_content = """MIT License
+    
+    with open(os.path.join(base_dir, '.gitignore'), 'w') as f:
+        f.write(gitignore_content)
+    
+    return os.path.join(base_dir, '.gitignore')
 
-Copyright (c) 2026 SwarmPulse Network
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+def create_github_workflow(base_dir='.'):
+    """Create GitHub Actions workflow for automated updates."""
+    workflow_content = """name: Update xAI Analysis
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Run analysis
+        run: python3 analysis.py --output findings.json --generate-readme
+      - name: Commit changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add findings.json README.md
+          git commit -m "Auto-update xAI analysis $(date -u +'%Y-%m-%d')" || true
+          git push
 """
-        files['LICENSE'] = license_content
-        
-        contributing_content = """# Contributing
-
-## Guidelines
-
-1. Document findings with proper sources
-2. Include timestamps for all entries
-3. Classify findings by severity level
-4. Maintain neutral, factual language
-5. Link to primary sources when possible
-
-## Reporting Process
-
-1. Create findings in JSON format
-2. Generate documentation
-3. Submit pull request with supporting evidence
-4. Await review by SwarmPulse maintainers
-
-## Data Quality Standards
-
-- All claims must be sourced
-- Use consistent date formatting (ISO 8601)
-- Maintain structured JSON output
-- Include severity classifications
-"""
-        files['CONTRIBUTING.md'] = contributing_content
-        
-        return files
     
-    def save_all_outputs(self):
-        """Save all documentation outputs."""
-        outputs = {
-            "findings.json": self.save_findings_json(),
-            "README.md": self.save_readme(self.generate_readme()),
-            "summary.txt": self.save_summary()
-        }
-        
-        github_files = self.generate_github_files()
-        for filename, content in github_files.items():
-            filepath = self.output_dir / filename
-            with open(filepath, 'w') as f:
-                f.write(content)
-            outputs[filename] = filepath
-        
-        return outputs
+    workflow_dir = os.path.join(base_dir, '.github', 'workflows')
+    Path(workflow_dir).mkdir(parents=True, exist_ok=True)
     
-    def generate_publication_guide(self):
-        """Generate GitHub publication guide."""
-        guide = """# GitHub Publication Guide
-
-## Step 1: Prepare Repository
-```bash
-git init
-git add .
-git commit -m "Initial commit: xAI co-founder departure documentation"
-```
-
-## Step 2: Add Remote
-```bash
-git remote add origin https://github.com/YOUR_USERNAME/xai-cofounder-departure.git
-git branch -M main
-```
-
-## Step 3: Push to GitHub
-```bash
-git push -u origin main
-```
-
-## Step 4: Configure Repository Settings
-- Add description: "Documentation of xAI co-founder departures"
-- Add topics: ai, ml, xai, elon-musk, news
-- Enable discussions
-- Set up GitHub Pages (optional)
-
-## Files Included
-- README.md - Main documentation
-- findings.json - Structured data
-- findings_summary.txt - Text summary
-- .gitignore - Git configuration
-- LICENSE - MIT License
-- CONTRIBUTING.md - Contribution guidelines
-
-## Verification Checklist
-✓ All files present and readable
-✓ JSON structure validated
-✓ README properly formatted
-✓ Source links verified
-✓ Timestamps included
-✓ Severity levels assigned
-✓ No placeholder content
-"""
-        guide_path = self.output_dir / "GITHUB_PUBLICATION_GUIDE.md"
-        with open(guide_path, 'w') as f:
-            f.write(guide)
-        return guide_path
-
-
-def populate_sample_data(doc_system):
-    """Populate the documentation system with sample findings."""
+    with open(os.path.join(workflow_dir, 'update.yml'), 'w') as f:
+        f.write(workflow_content)
     
-    doc_system.add_finding(
-        "Leadership Exodus",
-        "Nine of eleven co-founders have departed xAI as of March 28, 2026. This represents an 81.8% departure rate from the original founding team.",
-        severity="high"
-    )
-    
-    doc_system.add_finding(
-        "Timeline of Departures",
-        "Co-founder departures occurred gradually over the company's operational period, with the last co-founder departure occurring this week. Only two co-founders remain with the organization.",
-        severity="high"
-    )
-    
-    doc_system.add_finding(
-        "Organization Stability",
-        "Despite significant leadership changes, xAI continues operations. The remaining structure suggests either appointment of new executives or restructuring of governance.",
-        severity="medium"
-    )
-    
-    doc_system.add_analysis(
-        "Co-founder Retention Rate",
-        {
-            "Initial co-founders": 11,
-            "Departed": 9,
-            "Remaining": 2,
-            "Retention percentage": "18.2%",
-            "Departure rate": "81.8%"
-        }
-    )
-    
-    doc_system.add_analysis(
-        "Timeline",
-        {
-            "Company founding": "2023",
-            "Reporting date": "2026-03-28",
-            "Years of operation": "~3",
-            "Last departure": "Week of 2026-03-28"
-        }
-    )
-    
-    doc_system.add_impact_assessment(
-        "Organizational Impact",
-        "The departure of nearly all original co-founders represents a fundamental shift in organizational leadership. This suggests either planned transitions, strategic disagreements, or operational challenges within the company structure."
-    )
-    
-    doc_system.add_impact_assessment(
-        "Industry Implications",
-        "High-level departures from AI companies can indicate internal conflicts, differing visions for company direction, or individual founders pursuing alternative opportunities in the rapidly evolving AI sector."
-    )
-    
-    doc_system.add_impact_assessment(
-        "Research Continuity",
-        "xAI's research initiatives and AI development projects may experience changes in direction or pace depending on the expertise and vision of remaining leadership."
-    )
-    
-    doc_system.add_reference(
-        "TechCrunch Article",
-        "https://techcrunch.com/2026/03/28/elon-musks-last-co-founder-reportedly-leaves-xai/",
-        "Primary source reporting on the departure"
-    )
-    
-    doc_system.add_reference(
-        "xAI Official Website",
-        "https://x.ai/",
-        "Official company information"
-    )
-    
-    doc_system.add_reference(
-        "Elon Musk Twitter/X Announcements",
-        "https://twitter.com/elonmusk",
-        "Direct communications from founder"
-    )
-
-
-def calculate_data_integrity(findings_json_path):
-    """Calculate data integrity hash."""
-    with open(findings_json_path, 'r') as f:
-        content = f.read()
-    
-    sha256_hash = hashlib.sha256(content.encode()).hexdigest()
-    return sha256_hash
+    return os.path.join(workflow_dir, 'update.yml')
 
 
 def main():
     """Main execution function."""
     parser = argparse.ArgumentParser(
-        description="Document and publish news findings about xAI co-founder departures",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s --output-dir ./findings
-  %(prog)s --project-name xai-leadership-analysis --output-dir /tmp/docs
-  %(prog)s --list-only
-        """
+        description='Document and publish xAI co-founder departure findings',
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
     parser.add_argument(
-        '--output-dir',
+        '--source',
         type=str,
-        default='./xai_findings',
-        help='Directory to save documentation outputs (default: ./xai_findings)'
+        default='https://techcrunch.com/2026/03/28/elon-musks-last-co-founder-reportedly-leaves-xai/',
+        help='Article source URL (default: TechCrunch article)'
     )
-    
     parser.add_argument(
-        '--project-name',
+        '--output',
         type=str,
-        default='xai-cofounder-departure',
-        help='Project name for GitHub repository (default: xai-cofounder-departure)'
+        default='findings.json',
+        help='Output JSON file for findings (default: findings.json)'
+    )
+    parser.add_argument(
+        '--readme',
+        type=str,
+        default='README.md',
+        help='Output README file path (default: README.md)'
+    )
+    parser.add_argument(
+        '--generate-readme',
+        action='store_true',
+        help='Generate README file'
+    )
+    parser.add_argument(
+        '--prepare-github',
+        action='store_true',
+        help='Prepare GitHub repository structure'
+    )
+    parser.add_argument(
+        '--total-cofounders',
+        type=int,
+        default=11,
+        help='Total number of xAI co-founders'
+    )
+    parser.add_argument(
+        '--remaining-cofounders',
+        type=int,
+        default=2,
+        help='Number of remaining co-founders'
     )
     
-    parser.add_argument(
-        '--verify-integrity',
-        action='store_true',
-        help='Calculate and display data integrity hash'
-    )
+    args = parser.parse_args()
     
-    parser.add_argument(
-        '--list-only',
-        action='store_true',
+    print("[*] Starting xAI analysis and documentation process...")
+    
+    # Fetch source metadata
+    print(f"[*] Fetching metadata from {args.source}...")
+    source_info = fetch_article_metadata(args.source)
+    print(f"[+] Source fetched: {source_info['status']}")
+    
+    # Calculate departure statistics
+    departed = args.total_cofounders - args.remaining_cofounders
+    cofounder_stats = analyze_cofounder_data(
+        cofounder_count=args.total_cofounders,
+        remaining=args.remaining_cofounders,
+        departed=departed
+    )
+    print(f"[+] Co-founder analysis complete: {departed}/{args.total_cofounders} departed")
+    
+    # Compile findings
+    findings = {
+        'mission': 'Elon Musk\'s last co-founder reportedly leaves xAI',
+        'category': 'AI/ML',
+        'agent': '@aria',
+        'timestamp': datetime.now().isoformat(),
+        'source': source_info,
+        'cofounder_stats': cofounder_stats
+    }
+    
+    # Save findings
+    print(f"[*] Saving findings to {args.output}...")
+    saved_findings = save_findings(findings, args.output)
+    print(f"[+] Findings saved: {saved_findings}")
+    
+    # Generate README if requested
+    if args.generate_readme:
+        print(f"[*] Generating README to {args.readme}...")
+        readme_path = generate_readme(findings, args.readme)
+        print(f"[+] README generated: {readme_path}")
+    
+    # Prepare GitHub structure if requested
+    if args.prepare_github:
+        print("[*] Preparing GitHub repository structure...")
+        prepare_github_structure()
+        print("[+] Repository structure created")
+        
+        print("[*] Creating .gitignore...")
+        gitignore_path = create_gitignore()
+        print(f"[+] .gitignore created: {gitignore_path}")
+        
+        print("[*] Creating GitHub Actions workflow...")
+        workflow_path = create_github_workflow()
+        print(f"[+] Workflow created: {workflow_path}")
+    
+    print("\n[+] Analysis complete!")
+    print(f"\nKey Findings:")
+    print(f"  - Total Co-founders: {cofounder_stats['total_cofounders']}")
+    print(f"  - Remaining: {cofounder_stats['remaining_cofounders']}")
+    print(f"  - Departed: {cofounder_stats['departed_cofounders']}")
+    print(f"  - Departure Rate: {cofounder_stats['departure_rate_percent']}%")
+    
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
