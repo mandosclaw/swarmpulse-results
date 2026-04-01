@@ -3,19 +3,19 @@
 # Task:    Benchmark and evaluate performance
 # Mission: Airbnb is introducing a private car pick-up service
 # Agent:   @aria
-# Date:    2026-03-31T09:29:17.324Z
+# Date:    2026-04-01T18:02:07.961Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Benchmark and evaluate performance of Airbnb's private car pick-up service
-MISSION: Airbnb is introducing a private car pick-up service
-AGENT: @aria (SwarmPulse network)
-DATE: 2026-03-31
-CATEGORY: AI/ML
-SOURCE: https://techcrunch.com/2026/03/31/airbnb-private-car-pick-up-service-welcome-pickups/
+Task: Benchmark and evaluate performance for Airbnb private car pick-up service
+Mission: Airbnb is introducing a private car pick-up service
+Agent: @aria in SwarmPulse network
+Date: 2026-03-31
 
-Measures accuracy, latency, and cost tradeoffs for the car pick-up service.
+This module measures accuracy, latency, and cost tradeoffs for the Airbnb-Welcome Pickups
+integration by simulating pickup requests, tracking performance metrics, and generating
+comprehensive evaluation reports.
 """
 
 import argparse
@@ -26,357 +26,477 @@ import time
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple
-import hashlib
+from enum import Enum
+
+
+class PickupStatus(Enum):
+    """Enum for pickup request statuses."""
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    DRIVER_ASSIGNED = "driver_assigned"
+    IN_TRANSIT = "in_transit"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class AccuracyMetric(Enum):
+    """Enum for accuracy metrics."""
+    DRIVER_MATCH = "driver_match"
+    LOCATION_ACCURACY = "location_accuracy"
+    ETA_ACCURACY = "eta_accuracy"
+    REQUEST_FULFILLMENT = "request_fulfillment"
 
 
 @dataclass
 class PickupRequest:
     """Represents a pickup request."""
     request_id: str
-    origin_lat: float
-    origin_lon: float
-    destination_lat: float
-    destination_lon: float
+    timestamp: str
+    user_location: Tuple[float, float]
+    destination: Tuple[float, float]
+    distance_km: float
+    estimated_cost: float
     requested_time: str
-    passenger_count: int
-    vehicle_type: str
+    status: str
 
 
 @dataclass
 class PickupResult:
-    """Represents a pickup service result."""
+    """Represents the result of a pickup request."""
     request_id: str
-    estimated_arrival_minutes: int
-    actual_arrival_minutes: int
-    estimated_cost: float
+    status: str
+    latency_seconds: float
     actual_cost: float
-    vehicle_assigned: str
-    completion_status: str
-    booking_to_arrival_ms: int
-    distance_km: float
+    eta_accuracy_percent: float
+    location_accuracy_percent: float
+    driver_match_score: float
+    request_fulfillment: bool
     timestamp: str
 
 
-class PickupServiceBenchmark:
-    """Benchmarks and evaluates the Airbnb pick-up service performance."""
+class PickupBenchmark:
+    """Benchmark and evaluate Airbnb-Welcome Pickups integration."""
 
-    def __init__(self, seed: int = 42):
-        """Initialize benchmark with optional seed for reproducibility."""
+    def __init__(self, num_requests: int = 100, seed: int = 42):
+        """Initialize the benchmark.
+        
+        Args:
+            num_requests: Number of pickup requests to simulate
+            seed: Random seed for reproducibility
+        """
+        self.num_requests = num_requests
+        self.seed = seed
         random.seed(seed)
-        self.results: List[PickupResult] = []
         self.requests: List[PickupRequest] = []
+        self.results: List[PickupResult] = []
+        self.accuracy_metrics: Dict[str, List[float]] = {
+            metric.value: [] for metric in AccuracyMetric
+        }
 
-    def generate_test_requests(self, count: int) -> List[PickupRequest]:
-        """Generate synthetic pickup requests for testing."""
-        vehicle_types = ["economy", "comfort", "premium"]
-        requests = []
-
-        for i in range(count):
-            origin_lat = random.uniform(37.7, 37.8)
-            origin_lon = random.uniform(-122.5, -122.4)
-            destination_lat = random.uniform(37.7, 37.8)
-            destination_lon = random.uniform(-122.5, -122.4)
-
+    def generate_requests(self) -> List[PickupRequest]:
+        """Generate synthetic pickup requests.
+        
+        Returns:
+            List of PickupRequest objects
+        """
+        self.requests = []
+        base_time = datetime.now()
+        
+        for i in range(self.num_requests):
+            request_id = f"REQ_{i+1:05d}"
+            timestamp = (base_time + timedelta(seconds=i*10)).isoformat()
+            
+            # Generate random locations (simulating lat/lon coordinates)
+            user_lat = random.uniform(40.7128, 40.7580)  # NYC bounds
+            user_lon = random.uniform(-74.0060, -73.9352)
+            dest_lat = random.uniform(40.7128, 40.7580)
+            dest_lon = random.uniform(-74.0060, -73.9352)
+            
+            distance_km = random.uniform(1.0, 25.0)
+            estimated_cost = round(5.0 + (distance_km * 2.5), 2)
+            requested_time = (base_time + timedelta(minutes=random.randint(5, 120))).isoformat()
+            
             request = PickupRequest(
-                request_id=f"PKP_{i:06d}_{hashlib.md5(str(time.time()).encode()).hexdigest()[:8]}",
-                origin_lat=origin_lat,
-                origin_lon=origin_lon,
-                destination_lat=destination_lat,
-                destination_lon=destination_lon,
-                requested_time=datetime.now().isoformat(),
-                passenger_count=random.randint(1, 6),
-                vehicle_type=random.choice(vehicle_types)
+                request_id=request_id,
+                timestamp=timestamp,
+                user_location=(user_lat, user_lon),
+                destination=(dest_lat, dest_lon),
+                distance_km=distance_km,
+                estimated_cost=estimated_cost,
+                requested_time=requested_time,
+                status=PickupStatus.PENDING.value
             )
-            requests.append(request)
+            self.requests.append(request)
+        
+        return self.requests
 
-        self.requests = requests
-        return requests
-
-    def calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        """Calculate approximate distance in kilometers using Haversine formula."""
-        from math import radians, cos, sin, asin, sqrt
-
-        lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-        dlon = lon2 - lon1
-        dlat = lat2 - lat1
-        a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
-        c = 2 * asin(sqrt(a))
-        r = 6371
-        return c * r
-
-    def simulate_pickup(self, request: PickupRequest) -> PickupResult:
-        """Simulate a pickup request with realistic performance characteristics."""
-        distance = self.calculate_distance(
-            request.origin_lat, request.origin_lon,
-            request.destination_lat, request.destination_lon
-        )
-
-        base_cost_per_km = {
-            "economy": 0.85,
-            "comfort": 1.15,
-            "premium": 1.65
-        }
-
-        estimated_cost = distance * base_cost_per_km.get(request.vehicle_type, 1.0)
-        estimated_cost += random.uniform(2.0, 5.0)
-
-        estimated_arrival = max(2, int(distance * 3 + random.gauss(0, 2)))
-
-        actual_arrival = max(1, estimated_arrival + random.randint(-2, 5))
-        actual_cost = estimated_cost * random.uniform(0.95, 1.08)
-
-        latency_ms = random.randint(200, 3000)
-
-        completion_statuses = ["completed", "completed", "completed", "cancelled", "no_show"]
-        status = random.choice(completion_statuses)
-
-        vehicle_assigned = f"WELCOME_{random.randint(1000, 9999)}"
-
-        result = PickupResult(
-            request_id=request.request_id,
-            estimated_arrival_minutes=estimated_arrival,
-            actual_arrival_minutes=actual_arrival,
-            estimated_cost=round(estimated_cost, 2),
-            actual_cost=round(actual_cost, 2),
-            vehicle_assigned=vehicle_assigned,
-            completion_status=status,
-            booking_to_arrival_ms=latency_ms,
-            distance_km=round(distance, 2),
-            timestamp=datetime.now().isoformat()
-        )
-
-        self.results.append(result)
-        return result
-
-    def calculate_accuracy_metrics(self) -> Dict[str, float]:
-        """Calculate accuracy metrics for ETA and cost predictions."""
-        if not self.results:
-            return {}
-
-        eta_errors = []
-        cost_errors = []
-        completed_results = [r for r in self.results if r.completion_status == "completed"]
-
-        for result in completed_results:
-            eta_error = abs(result.estimated_arrival_minutes - result.actual_arrival_minutes)
-            eta_errors.append(eta_error)
-
-            cost_error_pct = abs(result.estimated_cost - result.actual_cost) / result.estimated_cost * 100
-            cost_errors.append(cost_error_pct)
-
-        if not eta_errors:
-            return {}
-
-        return {
-            "mean_eta_error_minutes": round(statistics.mean(eta_errors), 2),
-            "median_eta_error_minutes": round(statistics.median(eta_errors), 2),
-            "stdev_eta_error_minutes": round(statistics.stdev(eta_errors), 2) if len(eta_errors) > 1 else 0.0,
-            "mean_cost_error_percent": round(statistics.mean(cost_errors), 2),
-            "median_cost_error_percent": round(statistics.median(cost_errors), 2),
-            "eta_accuracy_within_2min": round(sum(1 for e in eta_errors if e <= 2) / len(eta_errors) * 100, 2),
-            "cost_accuracy_within_5pct": round(sum(1 for e in cost_errors if e <= 5) / len(cost_errors) * 100, 2)
-        }
-
-    def calculate_latency_metrics(self) -> Dict[str, float]:
-        """Calculate latency metrics for booking to assignment."""
-        if not self.results:
-            return {}
-
-        latencies = [r.booking_to_arrival_ms for r in self.results]
-
-        return {
-            "mean_latency_ms": round(statistics.mean(latencies), 2),
-            "median_latency_ms": round(statistics.median(latencies), 2),
-            "p95_latency_ms": round(sorted(latencies)[int(len(latencies) * 0.95)], 2),
-            "p99_latency_ms": round(sorted(latencies)[int(len(latencies) * 0.99)], 2),
-            "max_latency_ms": round(max(latencies), 2),
-            "min_latency_ms": round(min(latencies), 2)
-        }
-
-    def calculate_cost_metrics(self) -> Dict[str, float]:
-        """Calculate cost-related metrics."""
-        if not self.results:
-            return {}
-
-        estimated_costs = [r.estimated_cost for r in self.results]
-        actual_costs = [r.actual_cost for r in self.results]
-        cost_overages = [actual - estimated for actual, estimated in zip(actual_costs, estimated_costs)]
-
-        return {
-            "mean_estimated_cost": round(statistics.mean(estimated_costs), 2),
-            "mean_actual_cost": round(statistics.mean(actual_costs), 2),
-            "mean_cost_overage": round(statistics.mean(cost_overages), 2),
-            "total_estimated_revenue": round(sum(estimated_costs), 2),
-            "total_actual_revenue": round(sum(actual_costs), 2),
-            "revenue_variance_percent": round((sum(actual_costs) - sum(estimated_costs)) / sum(estimated_costs) * 100, 2)
-        }
-
-    def calculate_completion_metrics(self) -> Dict[str, float]:
-        """Calculate service completion and reliability metrics."""
-        if not self.results:
-            return {}
-
-        total = len(self.results)
-        completed = sum(1 for r in self.results if r.completion_status == "completed")
-        cancelled = sum(1 for r in self.results if r.completion_status == "cancelled")
-        no_show = sum(1 for r in self.results if r.completion_status == "no_show")
-
-        return {
-            "completion_rate": round(completed / total * 100, 2),
-            "cancellation_rate": round(cancelled / total * 100, 2),
-            "no_show_rate": round(no_show / total * 100, 2),
-            "total_requests": total,
-            "completed_requests": completed
-        }
-
-    def calculate_performance_by_vehicle_type(self) -> Dict[str, Dict[str, float]]:
-        """Calculate performance metrics broken down by vehicle type."""
-        results_by_type = {}
-
-        for result in self.results:
-            if result.completion_status != "completed":
-                continue
-
-            vtype = result.vehicle_type if hasattr(result, 'vehicle_type') else "unknown"
-            if vtype not in results_by_type:
-                results_by_type[vtype] = []
-            results_by_type[vtype].append(result)
-
-        metrics_by_type = {}
-        for vtype, type_results in results_by_type.items():
-            if not type_results:
-                continue
-
-            eta_errors = [abs(r.estimated_arrival_minutes - r.actual_arrival_minutes) for r in type_results]
-            costs = [r.actual_cost for r in type_results]
-
-            metrics_by_type[vtype] = {
-                "count": len(type_results),
-                "mean_eta_error_minutes": round(statistics.mean(eta_errors), 2),
-                "mean_actual_cost": round(statistics.mean(costs), 2),
-                "mean_latency_ms": round(statistics.mean([r.booking_to_arrival_ms for r in type_results]), 2)
-            }
-
-        return metrics_by_type
-
-    def run_benchmark(self, request_count: int) -> Dict:
-        """Run complete benchmark suite."""
-        print(f"[*] Generating {request_count} test requests...")
-        self.generate_test_requests(request_count)
-
-        print(f"[*] Simulating pickup requests...")
+    def simulate_pickup_execution(self) -> List[PickupResult]:
+        """Simulate the execution of pickup requests.
+        
+        Returns:
+            List of PickupResult objects
+        """
+        self.results = []
+        
         for request in self.requests:
-            self.simulate_pickup(request)
+            # Simulate request processing with varying latency
+            base_latency = random.gauss(3.0, 1.2)  # Normal distribution centered at 3s
+            latency = max(0.5, base_latency)  # Minimum 0.5 seconds
+            
+            # Simulate status outcomes (95% success rate)
+            success = random.random() < 0.95
+            
+            if success:
+                status = PickupStatus.COMPLETED.value
+                # Simulate actual cost variation from estimate
+                cost_variance = random.uniform(0.95, 1.05)
+                actual_cost = round(request.estimated_cost * cost_variance, 2)
+                
+                # Simulate accuracy metrics
+                eta_accuracy = random.gauss(92, 5)
+                eta_accuracy = max(70, min(100, eta_accuracy))
+                
+                location_accuracy = random.gauss(94, 3)
+                location_accuracy = max(80, min(100, location_accuracy))
+                
+                driver_match_score = random.gauss(0.88, 0.08)
+                driver_match_score = max(0.0, min(1.0, driver_match_score))
+                
+                request_fulfillment = random.random() < 0.97
+            else:
+                status = random.choice([
+                    PickupStatus.FAILED.value,
+                    PickupStatus.CANCELLED.value
+                ])
+                actual_cost = request.estimated_cost
+                eta_accuracy = 0.0
+                location_accuracy = 0.0
+                driver_match_score = 0.0
+                request_fulfillment = False
+            
+            result = PickupResult(
+                request_id=request.request_id,
+                status=status,
+                latency_seconds=round(latency, 3),
+                actual_cost=actual_cost,
+                eta_accuracy_percent=round(eta_accuracy, 2),
+                location_accuracy_percent=round(location_accuracy, 2),
+                driver_match_score=round(driver_match_score, 3),
+                request_fulfillment=request_fulfillment,
+                timestamp=datetime.now().isoformat()
+            )
+            self.results.append(result)
+            
+            # Record accuracy metrics
+            if status == PickupStatus.COMPLETED.value:
+                self.accuracy_metrics[AccuracyMetric.ETA_ACCURACY.value].append(eta_accuracy)
+                self.accuracy_metrics[AccuracyMetric.LOCATION_ACCURACY.value].append(location_accuracy)
+                self.accuracy_metrics[AccuracyMetric.DRIVER_MATCH.value].append(driver_match_score * 100)
+                self.accuracy_metrics[AccuracyMetric.REQUEST_FULFILLMENT.value].append(
+                    100.0 if request_fulfillment else 0.0
+                )
+        
+        return self.results
 
-        print(f"[*] Calculating metrics...")
-        metrics = {
-            "benchmark_timestamp": datetime.now().isoformat(),
-            "total_requests": len(self.results),
-            "accuracy_metrics": self.calculate_accuracy_metrics(),
-            "latency_metrics": self.calculate_latency_metrics(),
-            "cost_metrics": self.calculate_cost_metrics(),
-            "completion_metrics": self.calculate_completion_metrics(),
-            "performance_by_vehicle_type": self.calculate_performance_by_vehicle_type()
+    def calculate_latency_stats(self) -> Dict[str, float]:
+        """Calculate latency statistics.
+        
+        Returns:
+            Dictionary with latency statistics
+        """
+        latencies = [r.latency_seconds for r in self.results
+                    if r.status == PickupStatus.COMPLETED.value]
+        
+        if not latencies:
+            return {
+                "mean_seconds": 0.0,
+                "median_seconds": 0.0,
+                "std_dev_seconds": 0.0,
+                "p95_seconds": 0.0,
+                "p99_seconds": 0.0,
+                "min_seconds": 0.0,
+                "max_seconds": 0.0
+            }
+        
+        sorted_latencies = sorted(latencies)
+        return {
+            "mean_seconds": round(statistics.mean(latencies), 3),
+            "median_seconds": round(statistics.median(latencies), 3),
+            "std_dev_seconds": round(statistics.stdev(latencies) if len(latencies) > 1 else 0.0, 3),
+            "p95_seconds": round(sorted_latencies[int(len(sorted_latencies) * 0.95)], 3),
+            "p99_seconds": round(sorted_latencies[int(len(sorted_latencies) * 0.99)], 3),
+            "min_seconds": round(min(latencies), 3),
+            "max_seconds": round(max(latencies), 3)
         }
 
-        return metrics
+    def calculate_cost_stats(self) -> Dict[str, float]:
+        """Calculate cost statistics and tradeoffs.
+        
+        Returns:
+            Dictionary with cost statistics
+        """
+        completed_results = [r for r in self.results
+                            if r.status == PickupStatus.COMPLETED.value]
+        
+        if not completed_results:
+            return {
+                "estimated_total": 0.0,
+                "actual_total": 0.0,
+                "mean_actual_cost": 0.0,
+                "mean_estimated_cost": 0.0,
+                "total_cost_variance_percent": 0.0,
+                "cost_efficiency_ratio": 0.0
+            }
+        
+        estimated_costs = [self.requests[self.results.index(r)].estimated_cost
+                          for r in completed_results]
+        actual_costs = [r.actual_cost for r in completed_results]
+        
+        estimated_total = sum(estimated_costs)
+        actual_total = sum(actual_costs)
+        
+        return {
+            "estimated_total": round(estimated_total, 2),
+            "actual_total": round(actual_total, 2),
+            "mean_actual_cost": round(statistics.mean(actual_costs), 2),
+            "mean_estimated_cost": round(statistics.mean(estimated_costs), 2),
+            "total_cost_variance_percent": round(
+                ((actual_total - estimated_total) / estimated_total * 100) if estimated_total > 0 else 0.0,
+                2
+            ),
+            "cost_efficiency_ratio": round(
+                (estimated_total / actual_total) if actual_total > 0 else 0.0,
+                3
+            )
+        }
 
-    def export_results(self, filepath: str):
-        """Export detailed results to JSON file."""
-        export_data = {
-            "benchmark_summary": {
-                "timestamp": datetime.now().isoformat(),
-                "total_results": len(self.results),
-                "accuracy": self.calculate_accuracy_metrics(),
-                "latency": self.calculate_latency_metrics(),
-                "cost": self.calculate_cost_metrics(),
-                "completion": self.calculate_completion_metrics(),
-                "by_vehicle_type": self.calculate_performance_by_vehicle_type()
+    def calculate_accuracy_stats(self) -> Dict[str, Dict[str, float]]:
+        """Calculate accuracy statistics for all metrics.
+        
+        Returns:
+            Dictionary with accuracy statistics per metric
+        """
+        accuracy_stats = {}
+        
+        for metric, values in self.accuracy_metrics.items():
+            if not values:
+                accuracy_stats[metric] = {
+                    "mean": 0.0,
+                    "median": 0.0,
+                    "std_dev": 0.0,
+                    "min": 0.0,
+                    "max": 0.0,
+                    "sample_count": 0
+                }
+            else:
+                sorted_values = sorted(values)
+                accuracy_stats[metric] = {
+                    "mean": round(statistics.mean(values), 2),
+                    "median": round(statistics.median(values), 2),
+                    "std_dev": round(statistics.stdev(values) if len(values) > 1 else 0.0, 2),
+                    "min": round(min(values), 2),
+                    "max": round(max(values), 2),
+                    "sample_count": len(values)
+                }
+        
+        return accuracy_stats
+
+    def calculate_request_success_rate(self) -> Dict[str, float]:
+        """Calculate request success rates.
+        
+        Returns:
+            Dictionary with success rate metrics
+        """
+        total_requests = len(self.results)
+        completed = sum(1 for r in self.results if r.status == PickupStatus.COMPLETED.value)
+        failed = sum(1 for r in self.results if r.status == PickupStatus.FAILED.value)
+        cancelled = sum(1 for r in self.results if r.status == PickupStatus.CANCELLED.value)
+        
+        return {
+            "total_requests": total_requests,
+            "completed": completed,
+            "failed": failed,
+            "cancelled": cancelled,
+            "success_rate_percent": round((completed / total_requests * 100) if total_requests > 0 else 0.0, 2),
+            "failure_rate_percent": round((failed / total_requests * 100) if total_requests > 0 else 0.0, 2),
+            "cancellation_rate_percent": round((cancelled / total_requests * 100) if total_requests > 0 else 0.0, 2)
+        }
+
+    def generate_evaluation_report(self) -> Dict:
+        """Generate a comprehensive evaluation report.
+        
+        Returns:
+            Dictionary with complete evaluation metrics
+        """
+        return {
+            "benchmark_metadata": {
+                "total_requests": len(self.requests),
+                "seed": self.seed,
+                "timestamp": datetime.now().isoformat()
             },
-            "detailed_results": [asdict(r) for r in self.results]
+            "request_success_metrics": self.calculate_request_success_rate(),
+            "latency_metrics": self.calculate_latency_stats(),
+            "cost_metrics": self.calculate_cost_stats(),
+            "accuracy_metrics": self.calculate_accuracy_stats(),
+            "performance_summary": self.generate_performance_summary()
         }
 
+    def generate_performance_summary(self) -> Dict[str, str]:
+        """Generate a performance summary with ratings.
+        
+        Returns:
+            Dictionary with performance ratings
+        """
+        latency_stats = self.calculate_latency_stats()
+        cost_stats = self.calculate_cost_stats()
+        success_stats = self.calculate_request_success_rate()
+        accuracy_stats = self.calculate_accuracy_stats()
+        
+        # Determine latency rating
+        if latency_stats["mean_seconds"] < 2.0:
+            latency_rating = "EXCELLENT"
+        elif latency_stats["mean_seconds"] < 3.5:
+            latency_rating = "GOOD"
+        elif latency_stats["mean_seconds"] < 5.0:
+            latency_rating = "ACCEPTABLE"
+        else:
+            latency_rating = "POOR"
+        
+        # Determine cost efficiency rating
+        cost_variance = cost_stats["total_cost_variance_percent"]
+        if abs(cost_variance) < 2.0:
+            cost_rating = "EXCELLENT"
+        elif abs(cost_variance) < 5.0:
+            cost_rating = "GOOD"
+        elif abs(cost_variance) < 10.0:
+            cost_rating = "ACCEPTABLE"
+        else:
+            cost_rating = "POOR"
+        
+        # Determine success rate rating
+        success_rate = success_stats["success_rate_percent"]
+        if success_rate >= 98.0:
+            success_rating = "EXCELLENT"
+        elif success_rate >= 95.0:
+            success_rating = "GOOD"
+        elif success_rate >= 90.0:
+            success_rating = "ACCEPTABLE"
+        else:
+            success_rating = "POOR"
+        
+        # Determine accuracy rating
+        eta_accuracy = accuracy_stats[AccuracyMetric.ETA_ACCURACY.value]["mean"]
+        if eta_accuracy >= 95.0:
+            accuracy_rating = "EXCELLENT"
+        elif eta_accuracy >= 90.0:
+            accuracy_rating = "GOOD"
+        elif eta_accuracy >= 85.0:
+            accuracy_rating = "ACCEPTABLE"
+        else:
+            accuracy_rating = "POOR"
+        
+        return {
+            "latency_rating": latency_rating,
+            "cost_efficiency_rating": cost_rating,
+            "success_rate_rating": success_rating,
+            "accuracy_rating": accuracy_rating,
+            "overall_recommendation": self.determine_overall_recommendation(
+                latency_rating, cost_rating, success_rating, accuracy_rating
+            )
+        }
+
+    def determine_overall_recommendation(self, latency: str, cost: str, success: str, accuracy: str) -> str:
+        """Determine overall recommendation based on all metrics.
+        
+        Args:
+            latency: Latency rating
+            cost: Cost efficiency rating
+            success: Success rate rating
+            accuracy: Accuracy rating
+        
+        Returns:
+            Overall recommendation string
+        """
+        ratings = [latency, cost, success, accuracy]
+        excellent_count = ratings.count("EXCELLENT")
+        good_count = ratings.count("GOOD")
+        poor_count = ratings.count("POOR")
+        
+        if poor_count >= 2:
+            return "NEEDS_IMPROVEMENT"
+        elif excellent_count >= 3:
+            return "READY_FOR_PRODUCTION"
+        elif excellent_count >= 2 and poor_count == 0:
+            return "READY_FOR_PRODUCTION"
+        elif good_count >= 3:
+            return "READY_FOR_LIMITED_ROLLOUT"
+        else:
+            return "NEEDS_OPTIMIZATION"
+
+    def export_results_json(self, filepath: str) -> None:
+        """Export detailed results to JSON file.
+        
+        Args:
+            filepath: Path to export JSON file
+        """
+        export_data = {
+            "report": self.generate_evaluation_report(),
+            "individual_results": [asdict(r) for r in self.results[:20]]  # First 20 for brevity
+        }
+        
         with open(filepath, 'w') as f:
             json.dump(export_data, f, indent=2)
 
-        print(f"[+] Results exported to {filepath}")
+    def print_report(self) -> None:
+        """Print a formatted evaluation report to console."""
+        report = self.generate_evaluation_report()
+        
+        print("\n" + "="*80)
+        print("AIRBNB-WELCOME PICKUPS BENCHMARK REPORT")
+        print("="*80)
+        
+        print("\n[BENCHMARK METADATA]")
+        for key, value in report["benchmark_metadata"].items():
+            print(f"  {key}: {value}")
+        
+        print("\n[REQUEST SUCCESS METRICS]")
+        for key, value in report["request_success_metrics"].items():
+            print(f"  {key}: {value}")
+        
+        print("\n[LATENCY METRICS (seconds)]")
+        for key, value in report["latency_metrics"].items():
+            print(f"  {key}: {value}")
+        
+        print("\n[COST METRICS (USD)]")
+        for key, value in report["cost_metrics"].items():
+            print(f"  {key}: {value}")
+        
+        print("\n[ACCURACY METRICS]")
+        for metric, stats in report["accuracy_metrics"].items():
+            print(f"  {metric}:")
+            for key, value in stats.items():
+                print(f"    {key}: {value}")
+        
+        print("\n[PERFORMANCE SUMMARY]")
+        for key, value in report["performance_summary"].items():
+            print(f"  {key}: {value}")
+        
+        print("\n" + "="*80)
 
 
 def main():
+    """Main entry point with CLI argument parsing."""
     parser = argparse.ArgumentParser(
-        description="Benchmark Airbnb private car pick-up service performance"
+        description="Benchmark Airbnb-Welcome Pickups integration performance"
     )
     parser.add_argument(
-        "--requests",
+        "--num-requests",
         type=int,
         default=100,
-        help="Number of test pickup requests to simulate (default: 100)"
+        help="Number of pickup requests to simulate (default: 100)"
     )
     parser.add_argument(
         "--seed",
         type=int,
-        default=42,
-        help="Random seed for reproducibility (default: 42)"
-    )
-    parser.add_argument(
-        "--export",
-        type=str,
-        help="Export detailed results to JSON file"
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Print detailed results for each request"
-    )
-
-    args = parser.parse_args()
-
-    benchmark = PickupServiceBenchmark(seed=args.seed)
-
-    metrics = benchmark.run_benchmark(args.requests)
-
-    print("\n" + "=" * 70)
-    print("AIRBNB PICKUP SERVICE BENCHMARK REPORT")
-    print("=" * 70)
-
-    print("\n[ACCURACY METRICS]")
-    for key, value in metrics["accuracy_metrics"].items():
-        print(f"  {key}: {value}")
-
-    print("\n[LATENCY METRICS]")
-    for key, value in metrics["latency_metrics"].items():
-        print(f"  {key}: {value}")
-
-    print("\n[COST METRICS]")
-    for key, value in metrics["cost_metrics"].items():
-        print(f"  {key}: {value}")
-
-    print("\n[COMPLETION METRICS]")
-    for key, value in metrics["completion_metrics"].items():
-        print(f"  {key}: {value}")
-
-    print("\n[PERFORMANCE BY VEHICLE TYPE]")
-    for vtype, type_metrics in metrics["performance_by_vehicle_type"].items():
-        print(f"\n  {vtype.upper()}:")
-        for key, value in type_metrics.items():
-            print(f"    {key}: {value}")
-
-    if args.verbose:
-        print("\n[DETAILED RESULTS]")
-        for result in benchmark.results[:10]:
-            print(f"  {result.request_id}: ETA error {abs(result.estimated_arrival_minutes - result.actual_arrival_minutes)}min, "
-                  f"Cost error ${abs(result.estimated_cost - result.actual_cost):.2f}, "
-                  f"Latency {result.booking_to_arrival_ms}ms")
-        if len(benchmark.results) > 10:
-            print(f"  ... and {len(benchmark.results) - 10} more")
-
-    if args.export:
-        benchmark.export_results(args.export)
-
-    print("\n" + "=" * 70)
-    print("Benchmark complete!")
-    print("=" * 70)
-
-
-if __name__ == "__main__":
-    main()
+        default=42
