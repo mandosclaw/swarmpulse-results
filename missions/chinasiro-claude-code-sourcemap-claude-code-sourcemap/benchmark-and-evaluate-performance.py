@@ -3,18 +3,15 @@
 # Task:    Benchmark and evaluate performance
 # Mission: ChinaSiro/claude-code-sourcemap: claude-code-sourcemap
 # Agent:   @aria
-# Date:    2026-03-31T09:59:37.221Z
+# Date:    2026-04-01T18:07:31.987Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Benchmark and evaluate performance
-MISSION: ChinaSiro/claude-code-sourcemap
-AGENT: @aria (SwarmPulse AI)
-DATE: 2025-01-01
-
-Measure accuracy, latency, and cost tradeoffs for source map generation and code analysis.
-Implements comprehensive benchmarking with metrics collection, statistical analysis, and reporting.
+TASK: Benchmark and evaluate performance (Measure accuracy, latency, and cost tradeoffs)
+MISSION: ChinaSiro/claude-code-sourcemap: Benchmark and evaluate performance
+AGENT: @aria
+DATE: 2024
 """
 
 import argparse
@@ -22,367 +19,433 @@ import json
 import time
 import random
 import statistics
-import sys
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Tuple
-from datetime import datetime
-from pathlib import Path
-import hashlib
+from enum import Enum
+import sys
+
+
+class ModelProvider(Enum):
+    """Supported model providers"""
+    CLAUDE_OPUS = "claude-opus"
+    CLAUDE_SONNET = "claude-sonnet"
+    CLAUDE_HAIKU = "claude-haiku"
+    GPT4 = "gpt-4"
+    GPT35_TURBO = "gpt-3.5-turbo"
+
+
+@dataclass
+class ModelConfig:
+    """Configuration for a model"""
+    name: str
+    provider: ModelProvider
+    input_cost_per_1k: float
+    output_cost_per_1k: float
+    avg_latency_ms: float
+    throughput_tokens_per_sec: int
+
+
+# Realistic model configurations
+MODEL_CONFIGS = {
+    ModelProvider.CLAUDE_OPUS: ModelConfig(
+        name="Claude Opus",
+        provider=ModelProvider.CLAUDE_OPUS,
+        input_cost_per_1k=0.015,
+        output_cost_per_1k=0.075,
+        avg_latency_ms=450,
+        throughput_tokens_per_sec=150
+    ),
+    ModelProvider.CLAUDE_SONNET: ModelConfig(
+        name="Claude Sonnet",
+        provider=ModelProvider.CLAUDE_SONNET,
+        input_cost_per_1k=0.003,
+        output_cost_per_1k=0.015,
+        avg_latency_ms=250,
+        throughput_tokens_per_sec=300
+    ),
+    ModelProvider.CLAUDE_HAIKU: ModelConfig(
+        name="Claude Haiku",
+        provider=ModelProvider.CLAUDE_HAIKU,
+        input_cost_per_1k=0.00025,
+        output_cost_per_1k=0.00125,
+        avg_latency_ms=150,
+        throughput_tokens_per_sec=500
+    ),
+    ModelProvider.GPT4: ModelConfig(
+        name="GPT-4",
+        provider=ModelProvider.GPT4,
+        input_cost_per_1k=0.03,
+        output_cost_per_1k=0.06,
+        avg_latency_ms=800,
+        throughput_tokens_per_sec=100
+    ),
+    ModelProvider.GPT35_TURBO: ModelConfig(
+        name="GPT-3.5 Turbo",
+        provider=ModelProvider.GPT35_TURBO,
+        input_cost_per_1k=0.0005,
+        output_cost_per_1k=0.0015,
+        avg_latency_ms=200,
+        throughput_tokens_per_sec=400
+    ),
+}
 
 
 @dataclass
 class BenchmarkResult:
-    """Single benchmark measurement"""
-    iteration: int
-    test_name: str
+    """Single benchmark result"""
+    model: str
+    task_id: int
+    input_tokens: int
+    output_tokens: int
     latency_ms: float
-    accuracy_percentage: float
-    cost_units: float
-    memory_mb: float
-    timestamp: str
+    cost_usd: float
+    accuracy_score: float
+    timestamp: float
 
 
 @dataclass
-class AggregatedMetrics:
-    """Aggregated statistics for a benchmark run"""
-    test_name: str
-    num_runs: int
-    latency_mean_ms: float
-    latency_median_ms: float
-    latency_p95_ms: float
-    latency_p99_ms: float
-    latency_stdev_ms: float
-    accuracy_mean: float
-    accuracy_min: float
-    accuracy_max: float
-    cost_total: float
-    cost_per_operation: float
-    memory_mean_mb: float
-    memory_peak_mb: float
-    throughput_ops_per_sec: float
+class BenchmarkSummary:
+    """Summary statistics for benchmark results"""
+    model: str
+    total_tasks: int
+    avg_latency_ms: float
+    p50_latency_ms: float
+    p95_latency_ms: float
+    p99_latency_ms: float
+    min_latency_ms: float
+    max_latency_ms: float
+    avg_accuracy: float
+    min_accuracy: float
+    max_accuracy: float
+    total_cost_usd: float
+    avg_cost_per_task: float
+    total_tokens_processed: int
+    throughput_tokens_per_sec: float
 
 
-class SourceMapBenchmark:
-    """Benchmark harness for source map generation and evaluation"""
+class BenchmarkSimulator:
+    """Simulates sourcemap code generation benchmarks"""
     
     def __init__(self, seed: int = 42):
         random.seed(seed)
-        self.results: List[BenchmarkResult] = []
+        self.task_counter = 0
     
-    def simulate_sourcemap_generation(
-        self, 
-        code_size: int,
-        complexity: str = "medium"
-    ) -> Tuple[float, float, float]:
-        """
-        Simulate source map generation with latency, accuracy, and cost.
-        Returns: (latency_ms, accuracy_percentage, cost_units)
-        """
-        complexity_factors = {
-            "low": {"latency_mul": 1.0, "accuracy_base": 98.0, "cost_mul": 1.0},
-            "medium": {"latency_mul": 1.5, "accuracy_base": 95.0, "cost_mul": 1.5},
-            "high": {"latency_mul": 2.5, "accuracy_base": 92.0, "cost_mul": 2.5},
+    def generate_task(self, complexity: str = "medium") -> Tuple[int, int]:
+        """Generate a task with simulated token counts"""
+        complexity_params = {
+            "simple": (50, 100, 100, 200),
+            "medium": (200, 500, 300, 800),
+            "complex": (1000, 3000, 1000, 3000),
         }
         
-        factor = complexity_factors.get(complexity, complexity_factors["medium"])
+        in_min, in_max, out_min, out_max = complexity_params.get(complexity, complexity_params["medium"])
+        input_tokens = random.randint(in_min, in_max)
+        output_tokens = random.randint(out_min, out_max)
         
-        # Latency: base + size-dependent + variance
-        base_latency = 10.0 * factor["latency_mul"]
-        size_latency = (code_size / 10000) * factor["latency_mul"]
-        variance_latency = random.gauss(0, base_latency * 0.15)
-        latency = max(0.5, base_latency + size_latency + variance_latency)
-        
-        # Accuracy: base + random variation
-        accuracy_variance = random.gauss(0, 2.0)
-        accuracy = max(80.0, min(99.9, factor["accuracy_base"] + accuracy_variance))
-        
-        # Cost: size-dependent with base cost
-        base_cost = 0.001 * factor["cost_mul"]
-        size_cost = (code_size / 1000000) * factor["cost_mul"]
-        cost = base_cost + size_cost
-        
-        return latency, accuracy, cost
+        return input_tokens, output_tokens
     
-    def get_memory_usage(self) -> float:
-        """Simulate memory usage measurement in MB"""
-        base_memory = 50.0
-        variance = random.gauss(0, 10.0)
-        return max(30.0, base_memory + variance)
+    def simulate_model_performance(
+        self,
+        config: ModelConfig,
+        input_tokens: int,
+        output_tokens: int
+    ) -> Tuple[float, float, float]:
+        """Simulate model performance with realistic variance"""
+        latency_variance = random.gauss(0, config.avg_latency_ms * 0.15)
+        latency_ms = max(50, config.avg_latency_ms + latency_variance)
+        
+        cost_usd = (
+            (input_tokens / 1000) * config.input_cost_per_1k +
+            (output_tokens / 1000) * config.output_cost_per_1k
+        )
+        
+        base_accuracy = {
+            ModelProvider.CLAUDE_OPUS: 0.94,
+            ModelProvider.CLAUDE_SONNET: 0.91,
+            ModelProvider.CLAUDE_HAIKU: 0.87,
+            ModelProvider.GPT4: 0.93,
+            ModelProvider.GPT35_TURBO: 0.85,
+        }.get(config.provider, 0.85)
+        
+        accuracy_variance = random.gauss(0, 0.05)
+        accuracy = max(0.5, min(1.0, base_accuracy + accuracy_variance))
+        
+        return latency_ms, cost_usd, accuracy
     
     def run_benchmark(
         self,
-        test_name: str,
-        num_iterations: int,
-        code_size: int,
+        models: List[ModelProvider],
+        num_tasks: int = 100,
         complexity: str = "medium"
-    ) -> List[BenchmarkResult]:
-        """Run benchmark iterations and collect results"""
-        results = []
+    ) -> Dict[str, List[BenchmarkResult]]:
+        """Run benchmark across multiple models"""
+        results = {model.value: [] for model in models}
         
-        for iteration in range(1, num_iterations + 1):
-            latency, accuracy, cost = self.simulate_sourcemap_generation(
-                code_size, 
-                complexity
-            )
-            memory = self.get_memory_usage()
+        for task_id in range(num_tasks):
+            input_tokens, output_tokens = self.generate_task(complexity)
             
-            result = BenchmarkResult(
-                iteration=iteration,
-                test_name=test_name,
-                latency_ms=latency,
-                accuracy_percentage=accuracy,
-                cost_units=cost,
-                memory_mb=memory,
-                timestamp=datetime.now().isoformat()
-            )
-            results.append(result)
-            self.results.append(result)
+            for model in models:
+                config = MODEL_CONFIGS[model]
+                latency_ms, cost_usd, accuracy = self.simulate_model_performance(
+                    config, input_tokens, output_tokens
+                )
+                
+                result = BenchmarkResult(
+                    model=config.name,
+                    task_id=task_id,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    latency_ms=latency_ms,
+                    cost_usd=cost_usd,
+                    accuracy_score=accuracy,
+                    timestamp=time.time()
+                )
+                results[model.value].append(result)
         
         return results
     
-    def aggregate_metrics(self, results: List[BenchmarkResult]) -> AggregatedMetrics:
-        """Calculate aggregated statistics from benchmark results"""
+    @staticmethod
+    def compute_summary(results: List[BenchmarkResult]) -> BenchmarkSummary:
+        """Compute summary statistics from results"""
         if not results:
-            raise ValueError("No results to aggregate")
+            raise ValueError("No results to summarize")
         
         latencies = [r.latency_ms for r in results]
-        accuracies = [r.accuracy_percentage for r in results]
-        costs = [r.cost_units for r in results]
-        memories = [r.memory_mb for r in results]
+        accuracies = [r.accuracy_score for r in results]
+        costs = [r.cost_usd for r in results]
         
-        latencies_sorted = sorted(latencies)
+        sorted_latencies = sorted(latencies)
+        p50_idx = len(sorted_latencies) // 2
+        p95_idx = int(len(sorted_latencies) * 0.95)
+        p99_idx = int(len(sorted_latencies) * 0.99)
         
-        def percentile(data, p):
-            idx = int(len(data) * p / 100)
-            return data[min(idx, len(data) - 1)]
+        total_tokens = sum(r.input_tokens + r.output_tokens for r in results)
+        total_time_sec = max(latencies) / 1000.0
+        throughput = total_tokens / total_time_sec if total_time_sec > 0 else 0
         
-        total_time = sum(latencies) / 1000.0  # Convert ms to seconds
-        throughput = len(results) / total_time if total_time > 0 else 0
-        
-        return AggregatedMetrics(
-            test_name=results[0].test_name,
-            num_runs=len(results),
-            latency_mean_ms=statistics.mean(latencies),
-            latency_median_ms=statistics.median(latencies),
-            latency_p95_ms=percentile(latencies_sorted, 95),
-            latency_p99_ms=percentile(latencies_sorted, 99),
-            latency_stdev_ms=statistics.stdev(latencies) if len(latencies) > 1 else 0.0,
-            accuracy_mean=statistics.mean(accuracies),
-            accuracy_min=min(accuracies),
-            accuracy_max=max(accuracies),
-            cost_total=sum(costs),
-            cost_per_operation=statistics.mean(costs),
-            memory_mean_mb=statistics.mean(memories),
-            memory_peak_mb=max(memories),
-            throughput_ops_per_sec=throughput
+        return BenchmarkSummary(
+            model=results[0].model,
+            total_tasks=len(results),
+            avg_latency_ms=statistics.mean(latencies),
+            p50_latency_ms=sorted_latencies[p50_idx],
+            p95_latency_ms=sorted_latencies[p95_idx],
+            p99_latency_ms=sorted_latencies[p99_idx],
+            min_latency_ms=min(latencies),
+            max_latency_ms=max(latencies),
+            avg_accuracy=statistics.mean(accuracies),
+            min_accuracy=min(accuracies),
+            max_accuracy=max(accuracies),
+            total_cost_usd=sum(costs),
+            avg_cost_per_task=statistics.mean(costs),
+            total_tokens_processed=total_tokens,
+            throughput_tokens_per_sec=throughput
         )
+
+
+class BenchmarkAnalyzer:
+    """Analyzes and generates reports from benchmark results"""
     
-    def calculate_tradeoffs(self, metrics_list: List[AggregatedMetrics]) -> Dict[str, Any]:
-        """Analyze tradeoffs between accuracy, latency, and cost"""
-        if not metrics_list:
-            return {}
-        
-        tradeoffs = {
-            "latency_vs_accuracy": [],
-            "cost_vs_accuracy": [],
-            "latency_vs_cost": [],
-        }
-        
-        for i, metrics in enumerate(metrics_list):
-            for j in range(i + 1, len(metrics_list)):
-                other = metrics_list[j]
-                
-                latency_diff = other.latency_mean_ms - metrics.latency_mean_ms
-                accuracy_diff = other.accuracy_mean - metrics.accuracy_mean
-                cost_diff = other.cost_per_operation - metrics.cost_per_operation
-                
-                tradeoffs["latency_vs_accuracy"].append({
-                    "from": metrics.test_name,
-                    "to": other.test_name,
-                    "latency_change_ms": round(latency_diff, 3),
-                    "accuracy_change": round(accuracy_diff, 2),
-                    "latency_gain_per_accuracy": round(abs(latency_diff) / max(0.01, abs(accuracy_diff)), 3)
-                })
-                
-                tradeoffs["cost_vs_accuracy"].append({
-                    "from": metrics.test_name,
-                    "to": other.test_name,
-                    "cost_change": round(cost_diff, 6),
-                    "accuracy_change": round(accuracy_diff, 2),
-                    "cost_per_accuracy": round(abs(cost_diff) / max(0.01, abs(accuracy_diff)), 6)
-                })
-                
-                tradeoffs["latency_vs_cost"].append({
-                    "from": metrics.test_name,
-                    "to": other.test_name,
-                    "latency_change_ms": round(latency_diff, 3),
-                    "cost_change": round(cost_diff, 6),
-                    "latency_per_cost": round(abs(latency_diff) / max(0.000001, abs(cost_diff)), 2)
-                })
-        
-        return tradeoffs
-    
-    def generate_report(self, metrics_list: List[AggregatedMetrics], tradeoffs: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate comprehensive benchmark report"""
+    @staticmethod
+    def generate_comparison_report(
+        summaries: Dict[str, BenchmarkSummary]
+    ) -> Dict[str, Any]:
+        """Generate a comprehensive comparison report"""
         report = {
-            "timestamp": datetime.now().isoformat(),
-            "num_test_scenarios": len(metrics_list),
-            "total_operations": sum(m.num_runs for m in metrics_list),
-            "metrics": [asdict(m) for m in metrics_list],
-            "tradeoffs": tradeoffs,
-            "recommendations": generate_recommendations(metrics_list)
+            "timestamp": time.time(),
+            "total_models_tested": len(summaries),
+            "summaries": {model: asdict(summary) for model, summary in summaries.items()},
+            "rankings": BenchmarkAnalyzer._compute_rankings(summaries),
+            "recommendations": BenchmarkAnalyzer._generate_recommendations(summaries)
         }
         return report
-
-
-def generate_recommendations(metrics_list: List[AggregatedMetrics]) -> List[str]:
-    """Generate recommendations based on benchmark results"""
-    recommendations = []
     
-    if not metrics_list:
+    @staticmethod
+    def _compute_rankings(summaries: Dict[str, BenchmarkSummary]) -> Dict[str, List[Tuple[str, float]]]:
+        """Compute rankings across different metrics"""
+        rankings = {
+            "latency": sorted(
+                [(m, s.avg_latency_ms) for m, s in summaries.items()],
+                key=lambda x: x[1]
+            ),
+            "accuracy": sorted(
+                [(m, s.avg_accuracy) for m, s in summaries.items()],
+                key=lambda x: x[1],
+                reverse=True
+            ),
+            "cost": sorted(
+                [(m, s.avg_cost_per_task) for m, s in summaries.items()],
+                key=lambda x: x[1]
+            ),
+            "throughput": sorted(
+                [(m, s.throughput_tokens_per_sec) for m, s in summaries.items()],
+                key=lambda x: x[1],
+                reverse=True
+            ),
+        }
+        return rankings
+    
+    @staticmethod
+    def _generate_recommendations(summaries: Dict[str, BenchmarkSummary]) -> Dict[str, str]:
+        """Generate recommendations based on metrics"""
+        recommendations = {}
+        
+        best_latency = min(summaries.items(), key=lambda x: x[1].avg_latency_ms)
+        recommendations["lowest_latency"] = f"{best_latency[0]} ({best_latency[1].avg_latency_ms:.1f}ms)"
+        
+        best_accuracy = max(summaries.items(), key=lambda x: x[1].avg_accuracy)
+        recommendations["highest_accuracy"] = f"{best_accuracy[0]} ({best_accuracy[1].avg_accuracy:.3f})"
+        
+        best_cost = min(summaries.items(), key=lambda x: x[1].avg_cost_per_task)
+        recommendations["lowest_cost"] = f"{best_cost[0]} (${best_cost[1].avg_cost_per_task:.6f}/task)"
+        
+        best_throughput = max(summaries.items(), key=lambda x: x[1].throughput_tokens_per_sec)
+        recommendations["highest_throughput"] = f"{best_throughput[0]} ({best_throughput[1].throughput_tokens_per_sec:.0f} tokens/sec)"
+        
+        cost_accuracy_ratio = {
+            model: s.avg_accuracy / max(s.avg_cost_per_task, 0.000001)
+            for model, s in summaries.items()
+        }
+        best_value = max(cost_accuracy_ratio.items(), key=lambda x: x[1])
+        recommendations["best_value"] = f"{best_value[0]} ({best_value[1]:.0f} accuracy/$)"
+        
         return recommendations
     
-    # Latency recommendations
-    fastest = min(metrics_list, key=lambda m: m.latency_mean_ms)
-    slowest = max(metrics_list, key=lambda m: m.latency_mean_ms)
-    if slowest.latency_mean_ms > fastest.latency_mean_ms * 1.5:
-        recommendations.append(
-            f"Use {fastest.test_name} for latency-sensitive operations "
-            f"({fastest.latency_mean_ms:.1f}ms vs {slowest.latency_mean_ms:.1f}ms)"
-        )
+    @staticmethod
+    def export_json(report: Dict[str, Any], filepath: str) -> None:
+        """Export report to JSON file"""
+        with open(filepath, 'w') as f:
+            json.dump(report, f, indent=2, default=str)
     
-    # Accuracy recommendations
-    most_accurate = max(metrics_list, key=lambda m: m.accuracy_mean)
-    least_accurate = min(metrics_list, key=lambda m: m.accuracy_mean)
-    if most_accurate.accuracy_mean > least_accurate.accuracy_mean + 2.0:
-        recommendations.append(
-            f"Use {most_accurate.test_name} for accuracy-critical operations "
-            f"({most_accurate.accuracy_mean:.1f}% vs {least_accurate.accuracy_mean:.1f}%)"
-        )
-    
-    # Cost recommendations
-    cheapest = min(metrics_list, key=lambda m: m.cost_per_operation)
-    most_expensive = max(metrics_list, key=lambda m: m.cost_per_operation)
-    if most_expensive.cost_per_operation > cheapest.cost_per_operation * 1.5:
-        recommendations.append(
-            f"Use {cheapest.test_name} for cost-optimized operations "
-            f"(${cheapest.cost_per_operation:.6f} vs ${most_expensive.cost_per_operation:.6f})"
-        )
-    
-    # Throughput recommendations
-    highest_throughput = max(metrics_list, key=lambda m: m.throughput_ops_per_sec)
-    recommendations.append(
-        f"Maximum throughput: {highest_throughput.test_name} "
-        f"({highest_throughput.throughput_ops_per_sec:.1f} ops/sec)"
-    )
-    
-    # Memory recommendations
-    lowest_memory = min(metrics_list, key=lambda m: m.memory_mean_mb)
-    recommendations.append(
-        f"Most memory-efficient: {lowest_memory.test_name} "
-        f"({lowest_memory.memory_mean_mb:.1f} MB avg, {lowest_memory.memory_peak_mb:.1f} MB peak)"
-    )
-    
-    return recommendations
+    @staticmethod
+    def export_csv(summaries: Dict[str, BenchmarkSummary], filepath: str) -> None:
+        """Export summaries to CSV"""
+        import csv
+        
+        if not summaries:
+            return
+        
+        with open(filepath, 'w', newline='') as f:
+            summary_dict = asdict(list(summaries.values())[0])
+            fieldnames = list(summary_dict.keys())
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            
+            writer.writeheader()
+            for summary in summaries.values():
+                writer.writerow(asdict(summary))
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Benchmark source map generation performance",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python script.py --iterations 100 --code-size 50000
-  python script.py --all-complexities --iterations 50
-  python script.py --output results.json --verbose
-        """
+        description="Benchmark and evaluate AI model performance for sourcemap code generation"
     )
     
     parser.add_argument(
-        "--iterations",
-        type=int,
-        default=50,
-        help="Number of iterations per benchmark (default: 50)"
+        "--models",
+        nargs="+",
+        default=["claude-sonnet", "claude-haiku", "gpt-3.5-turbo"],
+        help="Models to benchmark (space-separated)"
     )
+    
     parser.add_argument(
-        "--code-size",
+        "--num-tasks",
         type=int,
-        default=100000,
-        help="Simulated code size in bytes (default: 100000)"
+        default=100,
+        help="Number of tasks to run per model"
     )
+    
     parser.add_argument(
         "--complexity",
-        choices=["low", "medium", "high"],
+        choices=["simple", "medium", "complex"],
         default="medium",
-        help="Complexity level for source map generation (default: medium)"
+        help="Task complexity level"
     )
+    
     parser.add_argument(
-        "--all-complexities",
-        action="store_true",
-        help="Run benchmarks for all complexity levels"
-    )
-    parser.add_argument(
-        "--output",
+        "--output-json",
         type=str,
-        default=None,
-        help="Output file for JSON report (default: stdout)"
+        default="benchmark_report.json",
+        help="Output JSON report file"
     )
+    
     parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Print detailed progress information"
+        "--output-csv",
+        type=str,
+        default="benchmark_summary.csv",
+        help="Output CSV summary file"
     )
+    
     parser.add_argument(
         "--seed",
         type=int,
         default=42,
-        help="Random seed for reproducibility (default: 42)"
+        help="Random seed for reproducibility"
     )
     
     args = parser.parse_args()
     
-    benchmark = SourceMapBenchmark(seed=args.seed)
-    metrics_list = []
+    model_providers = []
+    for model_str in args.models:
+        try:
+            provider = ModelProvider(model_str)
+            model_providers.append(provider)
+        except ValueError:
+            print(f"Error: Unknown model '{model_str}'", file=sys.stderr)
+            print(f"Available models: {', '.join([m.value for m in ModelProvider])}", file=sys.stderr)
+            sys.exit(1)
     
-    complexities = ["low", "medium", "high"] if args.all_complexities else [args.complexity]
+    print(f"Starting benchmark with {len(model_providers)} models...")
+    print(f"Tasks per model: {args.num_tasks}")
+    print(f"Complexity: {args.complexity}")
+    print()
     
-    for complexity in complexities:
-        test_name = f"sourcemap_gen_{complexity}"
+    simulator = BenchmarkSimulator(seed=args.seed)
+    start_time = time.time()
+    
+    all_results = simulator.run_benchmark(
+        models=model_providers,
+        num_tasks=args.num_tasks,
+        complexity=args.complexity
+    )
+    
+    elapsed = time.time() - start_time
+    print(f"Benchmark completed in {elapsed:.2f} seconds\n")
+    
+    summaries = {}
+    for model_key, results in all_results.items():
+        summary = BenchmarkSimulator.compute_summary(results)
+        summaries[summary.model] = summary
         
-        if args.verbose:
-            print(f"Running benchmark: {test_name}", file=sys.stderr)
-            print(f"  Iterations: {args.iterations}", file=sys.stderr)
-            print(f"  Code size: {args.code_size} bytes", file=sys.stderr)
-            print(f"  Complexity: {complexity}", file=sys.stderr)
-        
-        results = benchmark.run_benchmark(
-            test_name=test_name,
-            num_iterations=args.iterations,
-            code_size=args.code_size,
-            complexity=complexity
-        )
-        
-        metrics = benchmark.aggregate_metrics(results)
-        metrics_list.append(metrics)
-        
-        if args.verbose:
-            print(f"  Latency: {metrics.latency_mean_ms:.2f}ms (±{metrics.latency_stdev_ms:.2f}ms)", file=sys.stderr)
-            print(f"  Accuracy: {metrics.accuracy_mean:.2f}%", file=sys.stderr)
-            print(f"  Cost: ${metrics.cost_per_operation:.6f}/op", file=sys.stderr)
-            print(f"  Throughput: {metrics.throughput_ops_per_sec:.1f} ops/sec", file=sys.stderr)
-            print()
+        print(f"=== {summary.model} ===")
+        print(f"Tasks: {summary.total_tasks}")
+        print(f"Latency: {summary.avg_latency_ms:.1f}ms (p50: {summary.p50_latency_ms:.1f}ms, p95: {summary.p95_latency_ms:.1f}ms)")
+        print(f"Accuracy: {summary.avg_accuracy:.3f} (range: {summary.min_accuracy:.3f}-{summary.max_accuracy:.3f})")
+        print(f"Cost: ${summary.avg_cost_per_task:.6f}/task (total: ${summary.total_cost_usd:.2f})")
+        print(f"Throughput: {summary.throughput_tokens_per_sec:.0f} tokens/sec")
+        print()
     
-    tradeoffs = benchmark.calculate_tradeoffs(metrics_list)
-    report = benchmark.generate_report(metrics_list, tradeoffs)
+    analyzer = BenchmarkAnalyzer()
+    report = analyzer.generate_comparison_report(summaries)
     
-    output_text = json.dumps(report, indent=2)
+    print("\n=== Rankings ===")
+    for metric, rankings in report["rankings"].items():
+        print(f"\n{metric.upper()}:")
+        for i, (model, value) in enumerate(rankings, 1):
+            if metric == "cost":
+                print(f"  {i}. {model}: ${value:.6f}")
+            elif metric == "accuracy" or metric == "throughput":
+                print(f"  {i}. {model}: {value:.2f}")
+            else:
+                print(f"  {i}. {model}: {value:.1f}ms")
     
-    if args.output:
-        Path(args.output).write_text(output_text)
-        if args.verbose:
-            print(f"Report written to {args.output}", file=sys.stderr)
-    else:
-        print(output_text)
+    print("\n=== Recommendations ===")
+    for recommendation, value in report["recommendations"].items():
+        print(f"{recommendation}: {value}")
+    
+    analyzer.export_json(report, args.output_json)
+    print(f"\nJSON report saved to: {args.output_json}")
+    
+    analyzer.export_csv(summaries, args.output_csv)
+    print(f"CSV summary saved to: {args.output_csv}")
 
 
 if __name__ == "__main__":
