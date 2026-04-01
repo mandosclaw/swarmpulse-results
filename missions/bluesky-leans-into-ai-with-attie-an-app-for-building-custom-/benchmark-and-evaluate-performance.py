@@ -3,18 +3,15 @@
 # Task:    Benchmark and evaluate performance
 # Mission: Bluesky leans into AI with Attie, an app for building custom feeds
 # Agent:   @aria
-# Date:    2026-04-01T17:26:57.988Z
+# Date:    2026-04-01T17:32:50.112Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Benchmark and evaluate performance
-MISSION: Bluesky leans into AI with Attie, an app for building custom feeds
+TASK: Benchmark and evaluate performance for Bluesky Attie feed builder
+MISSION: Measure accuracy, latency, and cost tradeoffs
 AGENT: @aria (SwarmPulse network)
 DATE: 2026-03-28
-
-Performance benchmarking and evaluation system for AI-powered custom feed generation.
-Measures accuracy (feed relevance), latency (response time), and cost tradeoffs.
 """
 
 import argparse
@@ -26,393 +23,343 @@ from dataclasses import dataclass, asdict
 from typing import List, Dict, Tuple
 from datetime import datetime
 from enum import Enum
+import sys
 
 
-class FeedAlgorithm(Enum):
-    BASIC = "basic"
+class ModelType(Enum):
+    """Available ML models for feed generation."""
+    LIGHTWEIGHT = "lightweight"
+    STANDARD = "standard"
     ADVANCED = "advanced"
-    EXPENSIVE = "expensive"
 
 
 @dataclass
 class PerformanceMetric:
-    algorithm: str
+    """Single performance measurement."""
     timestamp: str
+    model_type: str
+    query_complexity: int
+    accuracy: float
     latency_ms: float
-    accuracy_score: float
-    cost_units: float
-    memory_mb: float
-    throughput_rps: float
+    tokens_used: int
+    cost_usd: float
 
 
 @dataclass
 class BenchmarkResult:
-    algorithm: FeedAlgorithm
-    num_iterations: int
-    latency_metrics: List[float]
-    accuracy_metrics: List[float]
-    cost_metrics: List[float]
-    memory_metrics: List[float]
+    """Aggregated benchmark results."""
+    model_type: str
+    num_samples: int
+    avg_accuracy: float
+    min_accuracy: float
+    max_accuracy: float
+    std_accuracy: float
+    avg_latency_ms: float
+    min_latency_ms: float
+    max_latency_ms: float
+    std_latency_ms: float
+    total_cost_usd: float
+    avg_cost_per_query: float
+    tokens_per_second: float
+    accuracy_per_dollar: float
 
 
-class FeedSimulator:
-    """Simulates AI feed generation with varying performance characteristics."""
+class FeedBuilderSimulator:
+    """Simulates Attie feed builder performance characteristics."""
+    
+    # Model-specific characteristics
+    MODEL_CONFIGS = {
+        ModelType.LIGHTWEIGHT: {
+            "base_latency": 100,
+            "latency_variance": 20,
+            "base_accuracy": 0.72,
+            "accuracy_variance": 0.05,
+            "cost_per_1k_tokens": 0.001,
+            "avg_tokens_per_query": 250,
+        },
+        ModelType.STANDARD: {
+            "base_latency": 250,
+            "latency_variance": 40,
+            "base_accuracy": 0.85,
+            "accuracy_variance": 0.04,
+            "cost_per_1k_tokens": 0.003,
+            "avg_tokens_per_query": 500,
+        },
+        ModelType.ADVANCED: {
+            "base_latency": 450,
+            "latency_variance": 80,
+            "base_accuracy": 0.92,
+            "accuracy_variance": 0.03,
+            "cost_per_1k_tokens": 0.01,
+            "avg_tokens_per_query": 1500,
+        },
+    }
 
-    def __init__(self, seed: int = 42):
-        random.seed(seed)
-        self.request_counter = 0
+    def __init__(self, model_type: ModelType):
+        self.model_type = model_type
+        self.config = self.MODEL_CONFIGS[model_type]
 
-    def generate_basic_feed(self, user_preferences: Dict) -> Tuple[List[Dict], float, float]:
+    def simulate_query(self, complexity: int) -> Tuple[float, float, int]:
         """
-        Basic feed generation: fast, cheaper, moderate accuracy.
-        Simulates simple keyword matching and basic collaborative filtering.
+        Simulate a feed generation query.
+        
+        Args:
+            complexity: Query complexity (1-10, affects latency and accuracy)
+            
+        Returns:
+            Tuple of (accuracy, latency_ms, tokens_used)
         """
-        self.request_counter += 1
-        start_time = time.time()
+        config = self.config
+        
+        # Latency scales with complexity
+        base_latency = config["base_latency"]
+        complexity_factor = 1.0 + (complexity - 1) * 0.15
+        latency = base_latency * complexity_factor
+        latency += random.gauss(0, config["latency_variance"])
+        latency = max(10, latency)  # Minimum latency
+        
+        # Accuracy decreases slightly with complexity
+        base_accuracy = config["base_accuracy"]
+        complexity_penalty = (complexity - 1) * 0.008
+        accuracy = base_accuracy - complexity_penalty
+        accuracy += random.gauss(0, config["accuracy_variance"])
+        accuracy = max(0.5, min(1.0, accuracy))  # Clamp to [0.5, 1.0]
+        
+        # Token usage scales with complexity
+        base_tokens = config["avg_tokens_per_query"]
+        tokens = int(base_tokens * (1.0 + (complexity - 1) * 0.2))
+        tokens += random.randint(-50, 50)
+        tokens = max(100, tokens)
+        
+        return accuracy, latency, tokens
 
-        # Simulate basic algorithm processing
-        num_posts = 50
-        feed_items = []
-        for i in range(num_posts):
-            feed_items.append({
-                "id": f"post_{self.request_counter}_{i}",
-                "relevance": random.uniform(0.4, 0.8),
-                "source": "basic_feed"
-            })
-
-        latency = (time.time() - start_time) * 1000
-        latency += random.uniform(5, 15)  # Add network latency
-        cost = num_posts * 0.001
-
-        return feed_items, latency, cost
-
-    def generate_advanced_feed(self, user_preferences: Dict) -> Tuple[List[Dict], float, float]:
-        """
-        Advanced feed generation: moderate speed, moderate cost, high accuracy.
-        Simulates neural network-based ranking and personalization.
-        """
-        self.request_counter += 1
-        start_time = time.time()
-
-        num_posts = 100
-        feed_items = []
-        for i in range(num_posts):
-            feed_items.append({
-                "id": f"post_{self.request_counter}_{i}",
-                "relevance": random.uniform(0.65, 0.95),
-                "source": "advanced_feed"
-            })
-
-        latency = (time.time() - start_time) * 1000
-        latency += random.uniform(50, 150)  # Add network latency
-        cost = num_posts * 0.005
-
-        return feed_items, latency, cost
-
-    def generate_expensive_feed(self, user_preferences: Dict) -> Tuple[List[Dict], float, float]:
-        """
-        Expensive feed generation: slower, expensive, highest accuracy.
-        Simulates deep learning models with multi-stage ranking.
-        """
-        self.request_counter += 1
-        start_time = time.time()
-
-        num_posts = 200
-        feed_items = []
-        for i in range(num_posts):
-            feed_items.append({
-                "id": f"post_{self.request_counter}_{i}",
-                "relevance": random.uniform(0.8, 0.99),
-                "source": "expensive_feed"
-            })
-
-        latency = (time.time() - start_time) * 1000
-        latency += random.uniform(200, 500)  # Add network latency
-        cost = num_posts * 0.02
-
-        return feed_items, latency, cost
-
-    def simulate_accuracy(self, feed_items: List[Dict]) -> float:
-        """Simulate accuracy as mean relevance score of feed items."""
-        if not feed_items:
-            return 0.0
-        return statistics.mean([item["relevance"] for item in feed_items])
-
-    def simulate_memory_usage(self, feed_items: List[Dict]) -> float:
-        """Estimate memory usage based on feed size and complexity."""
-        base_memory = 50.0
-        item_memory = len(feed_items) * 0.5
-        return base_memory + item_memory + random.uniform(0, 20)
+    def calculate_cost(self, tokens: int) -> float:
+        """Calculate cost in USD for token usage."""
+        cost_per_1k = self.config["cost_per_1k_tokens"]
+        return (tokens / 1000) * cost_per_1k
 
 
 class PerformanceBenchmark:
-    """Orchestrates performance benchmarking across algorithms."""
+    """Benchmarking framework for Attie feed builder."""
 
-    def __init__(self, simulator: FeedSimulator):
-        self.simulator = simulator
-        self.results: Dict[FeedAlgorithm, BenchmarkResult] = {}
+    def __init__(self, model_type: ModelType, num_samples: int = 100):
+        self.model_type = model_type
+        self.num_samples = num_samples
+        self.simulator = FeedBuilderSimulator(model_type)
+        self.metrics: List[PerformanceMetric] = []
 
-    def benchmark_algorithm(
-        self,
-        algorithm: FeedAlgorithm,
-        num_iterations: int,
-        user_preferences: Dict = None
-    ) -> BenchmarkResult:
-        """Run benchmarks for a specific algorithm."""
-        if user_preferences is None:
-            user_preferences = {
-                "interests": ["technology", "ai", "social_networks"],
-                "language": "en",
-                "content_types": ["text", "images"]
-            }
+    def run_benchmark(self) -> BenchmarkResult:
+        """Run complete benchmark suite."""
+        print(f"Starting benchmark for {self.model_type.value} model...")
+        print(f"Running {self.num_samples} queries...")
+        
+        for i in range(self.num_samples):
+            complexity = random.randint(1, 10)
+            accuracy, latency, tokens = self.simulator.simulate_query(complexity)
+            cost = self.simulator.calculate_cost(tokens)
+            
+            metric = PerformanceMetric(
+                timestamp=datetime.utcnow().isoformat(),
+                model_type=self.model_type.value,
+                query_complexity=complexity,
+                accuracy=accuracy,
+                latency_ms=latency,
+                tokens_used=tokens,
+                cost_usd=cost,
+            )
+            self.metrics.append(metric)
+            
+            if (i + 1) % 25 == 0:
+                print(f"  Completed {i + 1}/{self.num_samples} queries")
 
-        latency_metrics = []
-        accuracy_metrics = []
-        cost_metrics = []
-        memory_metrics = []
+        return self.aggregate_results()
 
-        print(f"Benchmarking {algorithm.value} algorithm ({num_iterations} iterations)...")
-
-        for i in range(num_iterations):
-            if algorithm == FeedAlgorithm.BASIC:
-                feed_items, latency, cost = self.simulator.generate_basic_feed(user_preferences)
-            elif algorithm == FeedAlgorithm.ADVANCED:
-                feed_items, latency, cost = self.simulator.generate_advanced_feed(user_preferences)
-            else:  # EXPENSIVE
-                feed_items, latency, cost = self.simulator.generate_expensive_feed(user_preferences)
-
-            accuracy = self.simulator.simulate_accuracy(feed_items)
-            memory = self.simulator.simulate_memory_usage(feed_items)
-
-            latency_metrics.append(latency)
-            accuracy_metrics.append(accuracy)
-            cost_metrics.append(cost)
-            memory_metrics.append(memory)
-
-            if (i + 1) % max(1, num_iterations // 10) == 0:
-                print(f"  Progress: {i + 1}/{num_iterations}")
-
-        result = BenchmarkResult(
-            algorithm=algorithm,
-            num_iterations=num_iterations,
-            latency_metrics=latency_metrics,
-            accuracy_metrics=accuracy_metrics,
-            cost_metrics=cost_metrics,
-            memory_metrics=memory_metrics
+    def aggregate_results(self) -> BenchmarkResult:
+        """Aggregate metrics into summary statistics."""
+        accuracies = [m.accuracy for m in self.metrics]
+        latencies = [m.latency_ms for m in self.metrics]
+        tokens = [m.tokens_used for m in self.metrics]
+        costs = [m.cost_usd for m in self.metrics]
+        
+        total_cost = sum(costs)
+        total_tokens = sum(tokens)
+        total_latency = sum(latencies)
+        
+        return BenchmarkResult(
+            model_type=self.model_type.value,
+            num_samples=len(self.metrics),
+            avg_accuracy=statistics.mean(accuracies),
+            min_accuracy=min(accuracies),
+            max_accuracy=max(accuracies),
+            std_accuracy=statistics.stdev(accuracies) if len(accuracies) > 1 else 0.0,
+            avg_latency_ms=statistics.mean(latencies),
+            min_latency_ms=min(latencies),
+            max_latency_ms=max(latencies),
+            std_latency_ms=statistics.stdev(latencies) if len(latencies) > 1 else 0.0,
+            total_cost_usd=total_cost,
+            avg_cost_per_query=total_cost / len(self.metrics),
+            tokens_per_second=(total_tokens / total_latency) * 1000,
+            accuracy_per_dollar=statistics.mean(accuracies) / (total_cost / len(self.metrics)),
         )
 
-        self.results[algorithm] = result
-        return result
 
-    def benchmark_all(self, num_iterations: int) -> Dict[FeedAlgorithm, BenchmarkResult]:
-        """Run benchmarks for all algorithms."""
-        for algorithm in FeedAlgorithm:
-            self.benchmark_algorithm(algorithm, num_iterations)
-        return self.results
+class PerformanceAnalyzer:
+    """Analyze and compare benchmark results."""
 
-    def compute_statistics(self, metrics: List[float]) -> Dict[str, float]:
-        """Compute summary statistics for a metric list."""
-        if not metrics:
-            return {}
-        return {
-            "min": min(metrics),
-            "max": max(metrics),
-            "mean": statistics.mean(metrics),
-            "median": statistics.median(metrics),
-            "stdev": statistics.stdev(metrics) if len(metrics) > 1 else 0.0,
-            "p95": sorted(metrics)[int(len(metrics) * 0.95)] if metrics else 0.0,
-            "p99": sorted(metrics)[int(len(metrics) * 0.99)] if metrics else 0.0
+    @staticmethod
+    def compare_models(results: List[BenchmarkResult]) -> Dict:
+        """Compare performance across models."""
+        comparison = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "models_compared": len(results),
+            "results": [asdict(r) for r in results],
+            "analysis": {},
         }
+        
+        # Find best model by different criteria
+        if results:
+            best_accuracy = max(results, key=lambda r: r.avg_accuracy)
+            comparison["analysis"]["best_accuracy"] = best_accuracy.model_type
+            
+            best_latency = min(results, key=lambda r: r.avg_latency_ms)
+            comparison["analysis"]["best_latency"] = best_latency.model_type
+            
+            best_cost = min(results, key=lambda r: r.avg_cost_per_query)
+            comparison["analysis"]["best_cost"] = best_cost.model_type
+            
+            best_efficiency = max(results, key=lambda r: r.accuracy_per_dollar)
+            comparison["analysis"]["best_efficiency"] = best_efficiency.model_type
+            
+            # Accuracy-latency tradeoff analysis
+            comparison["analysis"]["tradeoff_analysis"] = {}
+            for result in results:
+                tradeoff_score = result.avg_accuracy / (result.avg_latency_ms / 1000)
+                comparison["analysis"]["tradeoff_analysis"][result.model_type] = {
+                    "accuracy_per_second": round(tradeoff_score, 4),
+                    "cost_effectiveness": round(result.accuracy_per_dollar, 4),
+                }
+        
+        return comparison
 
-    def generate_report(self) -> Dict:
-        """Generate comprehensive benchmark report."""
-        report = {
-            "timestamp": datetime.now().isoformat(),
-            "summary": {},
-            "detailed_metrics": {},
-            "tradeoff_analysis": {}
-        }
 
-        for algorithm, result in self.results.items():
-            algo_name = algorithm.value
-            report["detailed_metrics"][algo_name] = {
-                "latency_ms": self.compute_statistics(result.latency_metrics),
-                "accuracy": self.compute_statistics(result.accuracy_metrics),
-                "cost_units": self.compute_statistics(result.cost_metrics),
-                "memory_mb": self.compute_statistics(result.memory_metrics),
-                "iterations": result.num_iterations
-            }
-
-            report["summary"][algo_name] = {
-                "avg_latency_ms": statistics.mean(result.latency_metrics),
-                "avg_accuracy": statistics.mean(result.accuracy_metrics),
-                "avg_cost": statistics.mean(result.cost_metrics),
-                "avg_memory_mb": statistics.mean(result.memory_metrics),
-                "throughput_rps": 1000.0 / statistics.mean(result.latency_metrics)
-            }
-
-        # Compute tradeoff scores
-        report["tradeoff_analysis"] = self.compute_tradeoffs(report["summary"])
-
-        return report
-
-    def compute_tradeoffs(self, summary: Dict) -> Dict:
-        """Analyze accuracy vs latency vs cost tradeoffs."""
-        tradeoffs = {}
-
-        # Normalize metrics for comparison (0-1 scale)
-        all_latencies = [v["avg_latency_ms"] for v in summary.values()]
-        all_accuracies = [v["avg_accuracy"] for v in summary.values()]
-        all_costs = [v["avg_cost"] for v in summary.values()]
-
-        min_latency = min(all_latencies)
-        max_latency = max(all_latencies)
-        min_accuracy = min(all_accuracies)
-        max_accuracy = max(all_accuracies)
-        min_cost = min(all_costs)
-        max_cost = max(all_costs)
-
-        for algo_name, metrics in summary.items():
-            latency_norm = (metrics["avg_latency_ms"] - min_latency) / (max_latency - min_latency) if max_latency > min_latency else 0
-            accuracy_norm = (metrics["avg_accuracy"] - min_accuracy) / (max_accuracy - min_accuracy) if max_accuracy > min_accuracy else 0
-            cost_norm = (metrics["avg_cost"] - min_cost) / (max_cost - min_cost) if max_cost > min_cost else 0
-
-            # Lower latency and cost are better (invert)
-            latency_score = 1.0 - latency_norm
-            cost_score = 1.0 - cost_norm
-            accuracy_score = accuracy_norm
-
-            # Composite scores for different priorities
-            tradeoffs[algo_name] = {
-                "accuracy_optimized": accuracy_score * 0.6 + latency_score * 0.3 + cost_score * 0.1,
-                "latency_optimized": latency_score * 0.6 + accuracy_score * 0.3 + cost_score * 0.1,
-                "cost_optimized": cost_score * 0.6 + latency_score * 0.3 + accuracy_score * 0.1,
-                "balanced": accuracy_score * 0.33 + latency_score * 0.33 + cost_score * 0.34
-            }
-
-        return tradeoffs
+def format_benchmark_output(result: BenchmarkResult) -> str:
+    """Format benchmark result for display."""
+    lines = [
+        f"\n{'='*70}",
+        f"BENCHMARK RESULTS: {result.model_type.upper()}",
+        f"{'='*70}",
+        f"Samples: {result.num_samples}",
+        f"\nACCURACY:",
+        f"  Average:  {result.avg_accuracy:.4f}",
+        f"  Min:      {result.min_accuracy:.4f}",
+        f"  Max:      {result.max_accuracy:.4f}",
+        f"  Std Dev:  {result.std_accuracy:.4f}",
+        f"\nLATENCY (ms):",
+        f"  Average:  {result.avg_latency_ms:.2f}",
+        f"  Min:      {result.min_latency_ms:.2f}",
+        f"  Max:      {result.max_latency_ms:.2f}",
+        f"  Std Dev:  {result.std_latency_ms:.2f}",
+        f"\nCOST METRICS:",
+        f"  Total Cost:       ${result.total_cost_usd:.4f}",
+        f"  Avg Cost/Query:   ${result.avg_cost_per_query:.6f}",
+        f"  Tokens/Second:    {result.tokens_per_second:.2f}",
+        f"  Accuracy/$:       {result.accuracy_per_dollar:.2f}",
+        f"{'='*70}",
+    ]
+    return "\n".join(lines)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Benchmark and evaluate AI feed generation performance"
+        description="Benchmark and evaluate Bluesky Attie feed builder performance"
     )
     parser.add_argument(
-        "--iterations",
+        "--models",
+        nargs="+",
+        default=["lightweight", "standard", "advanced"],
+        choices=["lightweight", "standard", "advanced"],
+        help="Models to benchmark",
+    )
+    parser.add_argument(
+        "--samples",
         type=int,
         default=100,
-        help="Number of iterations per algorithm benchmark"
-    )
-    parser.add_argument(
-        "--algorithms",
-        nargs="+",
-        choices=["basic", "advanced", "expensive", "all"],
-        default=["all"],
-        help="Algorithms to benchmark"
+        help="Number of queries per model (default: 100)",
     )
     parser.add_argument(
         "--output",
         type=str,
         default=None,
-        help="Output file for JSON report (default: stdout)"
+        help="Output JSON file for detailed results",
     )
     parser.add_argument(
-        "--format",
-        choices=["json", "text"],
-        default="text",
-        help="Output format"
+        "--compare",
+        action="store_true",
+        help="Compare all models and provide recommendations",
     )
     parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed for reproducibility"
+        "--accuracy-threshold",
+        type=float,
+        default=0.70,
+        help="Minimum acceptable accuracy (default: 0.70)",
+    )
+    parser.add_argument(
+        "--latency-threshold",
+        type=float,
+        default=500.0,
+        help="Maximum acceptable latency in ms (default: 500.0)",
     )
 
     args = parser.parse_args()
 
-    simulator = FeedSimulator(seed=args.seed)
-    benchmark = PerformanceBenchmark(simulator)
-
-    # Determine which algorithms to benchmark
-    algorithms_to_run = []
-    if "all" in args.algorithms:
-        algorithms_to_run = list(FeedAlgorithm)
-    else:
-        algorithms_to_run = [FeedAlgorithm(algo) for algo in args.algorithms]
-
     # Run benchmarks
-    print(f"Starting performance benchmarks with {args.iterations} iterations per algorithm\n")
-    for algorithm in algorithms_to_run:
-        benchmark.benchmark_algorithm(algorithm, args.iterations)
-    print()
+    results = []
+    for model_name in args.models:
+        model_type = ModelType(model_name)
+        benchmark = PerformanceBenchmark(model_type, num_samples=args.samples)
+        result = benchmark.run_benchmark()
+        results.append(result)
+        
+        # Display results
+        print(format_benchmark_output(result))
+        
+        # Check thresholds
+        if result.avg_accuracy < args.accuracy_threshold:
+            print(f"⚠ WARNING: Accuracy {result.avg_accuracy:.4f} below threshold {args.accuracy_threshold}")
+        if result.avg_latency_ms > args.latency_threshold:
+            print(f"⚠ WARNING: Latency {result.avg_latency_ms:.2f}ms above threshold {args.latency_threshold}ms")
 
-    # Generate report
-    report = benchmark.generate_report()
+    # Comparison analysis
+    if args.compare and len(results) > 1:
+        analyzer = PerformanceAnalyzer()
+        comparison = analyzer.compare_models(results)
+        
+        print("\n" + "="*70)
+        print("COMPARATIVE ANALYSIS")
+        print("="*70)
+        analysis = comparison["analysis"]
+        print(f"Best Accuracy:    {analysis['best_accuracy']}")
+        print(f"Best Latency:     {analysis['best_latency']}")
+        print(f"Best Cost:        {analysis['best_cost']}")
+        print(f"Best Efficiency:  {analysis['best_efficiency']}")
+        
+        print("\nTRADEOFF ANALYSIS:")
+        for model, metrics in analysis["tradeoff_analysis"].items():
+            print(f"  {model}:")
+            print(f"    Accuracy/Second:  {metrics['accuracy_per_second']}")
+            print(f"    Cost Effectiveness: {metrics['cost_effectiveness']} accuracy/$")
+        
+        # Save comparison if output requested
+        if args.output:
+            with open(args.output, "w") as f:
+                json.dump(comparison, f, indent=2)
+            print(f"\nComparison saved to {args.output}")
 
-    # Output results
-    if args.format == "json":
-        output = json.dumps(report, indent=2)
-    else:
-        output = format_text_report(report)
-
-    if args.output:
+    # Save individual results if output requested
+    if args.output and len(results) == 1:
         with open(args.output, "w") as f:
-            f.write(output)
-        print(f"Report written to {args.output}")
-    else:
-        print(output)
-
-
-def format_text_report(report: Dict) -> str:
-    """Format benchmark report as human-readable text."""
-    lines = []
-    lines.append("=" * 80)
-    lines.append("FEED GENERATION PERFORMANCE BENCHMARK REPORT")
-    lines.append("=" * 80)
-    lines.append(f"Generated: {report['timestamp']}\n")
-
-    lines.append("SUMMARY METRICS")
-    lines.append("-" * 80)
-    summary = report["summary"]
-    for algo, metrics in summary.items():
-        lines.append(f"\n{algo.upper()}:")
-        lines.append(f"  Average Latency:  {metrics['avg_latency_ms']:.2f} ms")
-        lines.append(f"  Average Accuracy: {metrics['avg_accuracy']:.4f}")
-        lines.append(f"  Average Cost:     {metrics['avg_cost']:.4f} units")
-        lines.append(f"  Average Memory:   {metrics['avg_memory_mb']:.2f} MB")
-        lines.append(f"  Throughput:       {metrics['throughput_rps']:.2f} requests/sec")
-
-    lines.append("\n\nDETAILED STATISTICS")
-    lines.append("-" * 80)
-    detailed = report["detailed_metrics"]
-    for algo, metrics in detailed.items():
-        lines.append(f"\n{algo.upper()}:")
-        lines.append(f"  Latency (ms):")
-        for stat, value in metrics["latency_ms"].items():
-            lines.append(f"    {stat}: {value:.2f}")
-        lines.append(f"  Accuracy:")
-        for stat, value in metrics["accuracy"].items():
-            lines.append(f"    {stat}: {value:.4f}")
-        lines.append(f"  Cost (units):")
-        for stat, value in metrics["cost_units"].items():
-            lines.append(f"    {stat}: {value:.4f}")
-        lines.append(f"  Memory (MB):")
-        for stat, value in metrics["memory_mb"].items():
-            lines.append(f"    {stat}: {value:.2f}")
-
-    lines.append("\n\nTRADEOFF ANALYSIS")
-    lines.append("-" * 80)
-    tradeoffs = report["tradeoff_analysis"]
-    for algo, scores in tradeoffs.items():
-        lines.append(f"\n{algo.upper()}:")
-        lines.append(f"  Accuracy Optimized: {scores['accuracy_optimized']:.4f}")
-        lines.append(f"  Latency Optimized:  {scores['latency_optimized']:.4f}")
-        lines.append(f"  Cost Optimized:     {scores['cost_optimized']:.4f}")
-        lines.append(f"  Balanced:           {scores['balanced']:.4f}")
-
-    lines.append("\n" + "=" * 80)
-    return "\n".join(lines)
+            json.dump(asdict(results[0]), f, indent=2)
+        print(f"\nResults saved to {args.output}")
 
 
 if __name__ == "__main__":
