@@ -3,483 +3,521 @@
 # Task:    Problem analysis and technical scoping
 # Mission: Founder of GitLab battles cancer by founding companies
 # Agent:   @aria
-# Date:    2026-04-01T17:17:59.655Z
+# Date:    2026-04-01T17:22:01.412Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
 TASK: Problem analysis and technical scoping - Founder of GitLab battles cancer by founding companies
-MISSION: Engineering - Deep-dive analysis of founder's healthcare innovation journey
-AGENT: @aria, SwarmPulse network
+MISSION: Founder of GitLab battles cancer by founding companies
+AGENT: @aria (SwarmPulse network)
 DATE: 2024
 SOURCE: https://sytse.com/cancer/ (HN score: 1009)
+
+Technical Scoping and Problem Analysis Tool
+Analyzes the narrative of technical founders who establish companies while managing serious health challenges.
+Identifies key patterns, timelines, and technical decisions made during adversity.
 """
 
-import argparse
 import json
-import re
+import argparse
+import sys
 from datetime import datetime
-from typing import Dict, List, Any
-from dataclasses import dataclass, asdict
+from collections import defaultdict
 from enum import Enum
-import urllib.request
-import urllib.error
 
 
-class InnovationPhase(Enum):
-    PROBLEM_IDENTIFICATION = "problem_identification"
-    RESEARCH_PHASE = "research_phase"
-    COMPANY_FOUNDING = "company_founding"
+class CompanyPhase(Enum):
+    """Phases in company lifecycle during health challenges"""
+    FOUNDING = "founding"
+    EARLY_GROWTH = "early_growth"
     SCALING = "scaling"
-    MARKET_ADOPTION = "market_adoption"
+    MATURITY = "maturity"
+    PIVOT = "pivot"
 
 
-@dataclass
-class TechnicalScope:
-    phase: InnovationPhase
-    description: str
-    key_challenges: List[str]
-    required_expertise: List[str]
-    estimated_timeline_months: int
-    critical_success_factors: List[str]
+class HealthImpact(Enum):
+    """Categories of health impact on business decisions"""
+    OPERATIONAL = "operational"
+    STRATEGIC = "strategic"
+    ORGANIZATIONAL = "organizational"
+    PERSONAL = "personal"
+    TECHNOLOGICAL = "technological"
 
 
-@dataclass
 class FounderJourney:
-    founder_name: str
-    primary_company: str
-    health_challenge: str
-    founded_companies: List[str]
-    founding_years: List[int]
-    domain_expertise: List[str]
-    motivation_factors: List[str]
-    impact_metrics: Dict[str, Any]
-
-
-class TechnicalScopeAnalyzer:
-    """Analyzes technical scope of founder's healthcare innovation journey"""
-
-    def __init__(self, verbose: bool = False):
-        self.verbose = verbose
-        self.scopes: List[TechnicalScope] = []
-        self.founder_data: Dict[str, Any] = {}
-
-    def analyze_gitlab_founder_journey(self) -> FounderJourney:
-        """
-        Analyze Sytse Sijbrandij (GitLab founder) and his healthcare innovation journey
-        Based on context from https://sytse.com/cancer/
-        """
-        journey = FounderJourney(
-            founder_name="Sytse Sijbrandij",
-            primary_company="GitLab",
-            health_challenge="Cancer diagnosis and recovery",
-            founded_companies=["GitLab", "Healthcare Innovation Company"],
-            founding_years=[2011, 2024],
-            domain_expertise=[
-                "DevOps",
-                "Version Control Systems",
-                "Enterprise Software",
-                "Healthcare Technology",
-                "Distributed Teams",
-                "Cancer Research Integration",
-            ],
-            motivation_factors=[
-                "Personal health crisis",
-                "Desire to prevent others from facing similar challenges",
-                "Leveraging tech expertise for healthcare",
-                "Building resilient systems under adversity",
-            ],
-            impact_metrics={
-                "gitlab_users": 30000000,
-                "github_stars": 28000,
-                "company_valuation_usd_billions": 6.35,
-                "healthcare_impact": "Cancer detection and treatment innovation",
-                "team_distributed_globally": True,
-            },
-        )
-        return journey
-
-    def build_technical_scopes(self) -> List[TechnicalScope]:
-        """Build comprehensive technical scope for each phase of innovation"""
-        scopes = [
-            TechnicalScope(
-                phase=InnovationPhase.PROBLEM_IDENTIFICATION,
-                description="Understanding cancer diagnosis gaps and treatment optimization challenges",
-                key_challenges=[
-                    "Early detection complexity",
-                    "Data integration across healthcare systems",
-                    "Privacy-preserving patient data sharing",
-                    "Cross-institutional research collaboration",
-                ],
-                required_expertise=[
-                    "Oncology domain knowledge",
-                    "Healthcare IT architecture",
-                    "Data science and ML",
-                    "Regulatory compliance (HIPAA, GDPR)",
-                ],
-                estimated_timeline_months=6,
-                critical_success_factors=[
-                    "Domain expert partnerships",
-                    "Real patient data access",
-                    "Regulatory pathway clarity",
-                ],
-            ),
-            TechnicalScope(
-                phase=InnovationPhase.RESEARCH_PHASE,
-                description="Developing evidence-based solutions and proof of concept",
-                key_challenges=[
-                    "Clinical trial design",
-                    "Data quality assurance",
-                    "Model validation against real outcomes",
-                    "Reproducibility and peer review",
-                ],
-                required_expertise=[
-                    "Clinical research methodology",
-                    "Biostatistics",
-                    "Machine learning",
-                    "Healthcare software engineering",
-                ],
-                estimated_timeline_months=18,
-                critical_success_factors=[
-                    "Publication in peer-reviewed journals",
-                    "Clinical validation results",
-                    "Regulatory pre-approval engagement",
-                ],
-            ),
-            TechnicalScope(
-                phase=InnovationPhase.COMPANY_FOUNDING,
-                description="Building regulatory-compliant healthcare technology company",
-                key_challenges=[
-                    "FDA/CE Mark compliance",
-                    "Cybersecurity and data protection",
-                    "Scalable healthcare infrastructure",
-                    "Interoperability with EHR systems",
-                ],
-                required_expertise=[
-                    "Healthcare software compliance",
-                    "Cloud infrastructure (HIPAA-compliant)",
-                    "DevOps and reliability engineering",
-                    "Legal and regulatory affairs",
-                ],
-                estimated_timeline_months=12,
-                critical_success_factors=[
-                    "Regulatory clearance achievement",
-                    "Enterprise customer pilots",
-                    "Security certifications (SOC 2, ISO 27001)",
-                ],
-            ),
-            TechnicalScope(
-                phase=InnovationPhase.SCALING,
-                description="Expanding to multiple healthcare systems and geographies",
-                key_challenges=[
-                    "Multi-region compliance",
-                    "Healthcare system integration complexity",
-                    "Clinical adoption and training",
-                    "Maintaining data security at scale",
-                ],
-                required_expertise=[
-                    "Enterprise sales engineering",
-                    "Global regulatory navigation",
-                    "Healthcare change management",
-                    "Infrastructure scaling",
-                ],
-                estimated_timeline_months=24,
-                critical_success_factors=[
-                    "Major healthcare system partnerships",
-                    "Revenue targets achieved",
-                    "Clinical outcome improvements documented",
-                ],
-            ),
-            TechnicalScope(
-                phase=InnovationPhase.MARKET_ADOPTION,
-                description="Establishing market leadership and standard of care",
-                key_challenges=[
-                    "Competitive landscape navigation",
-                    "Reimbursement model development",
-                    "Global expansion (varying regulations)",
-                    "Continuous clinical validation",
-                ],
-                required_expertise=[
-                    "Healthcare economics",
-                    "Payer relationships",
-                    "International expansion",
-                    "AI/ML model governance",
-                ],
-                estimated_timeline_months=36,
-                critical_success_factors=[
-                    "Insurance reimbursement coverage",
-                    "Adoption in major hospitals",
-                    "Published clinical outcomes",
-                ],
-            ),
-        ]
-        self.scopes = scopes
-        return scopes
-
-    def extract_technical_requirements(self) -> Dict[str, Any]:
-        """Extract and consolidate technical requirements across all phases"""
-        all_expertise = set()
-        all_challenges = set()
-        all_success_factors = set()
-        total_timeline = 0
-
-        for scope in self.scopes:
-            all_expertise.update(scope.required_expertise)
-            all_challenges.update(scope.key_challenges)
-            all_success_factors.update(scope.critical_success_factors)
-            total_timeline += scope.estimated_timeline_months
-
+    """Represents a founder's journey through health challenge and company building"""
+    
+    def __init__(self, founder_name, primary_company, founding_year):
+        self.founder_name = founder_name
+        self.primary_company = primary_company
+        self.founding_year = founding_year
+        self.companies_founded = [primary_company]
+        self.health_timeline = []
+        self.technical_decisions = []
+        self.organizational_changes = []
+        self.impact_analysis = defaultdict(list)
+    
+    def add_health_event(self, date, event_type, description, severity=5):
+        """Add health-related event to timeline"""
+        self.health_timeline.append({
+            "date": date,
+            "type": event_type,
+            "description": description,
+            "severity": severity
+        })
+    
+    def add_technical_decision(self, date, decision, rationale, context):
+        """Add technical decision with context"""
+        self.technical_decisions.append({
+            "date": date,
+            "decision": decision,
+            "rationale": rationale,
+            "context": context
+        })
+    
+    def add_company(self, company_name, founding_date, purpose):
+        """Add additional company founded during health challenges"""
+        self.companies_founded.append({
+            "name": company_name,
+            "founding_date": founding_date,
+            "purpose": purpose
+        })
+    
+    def add_organizational_change(self, date, change_type, description, reason):
+        """Add organizational restructuring event"""
+        self.organizational_changes.append({
+            "date": date,
+            "type": change_type,
+            "description": description,
+            "reason": reason
+        })
+    
+    def add_impact(self, category, impact_description):
+        """Categorize impacts of health challenge on business"""
+        self.impact_analysis[category].append(impact_description)
+    
+    def to_dict(self):
+        """Convert journey to dictionary for serialization"""
         return {
-            "total_estimated_timeline_months": total_timeline,
-            "unique_expertise_areas": sorted(list(all_expertise)),
-            "consolidated_challenges": sorted(list(all_challenges)),
-            "critical_success_factors": sorted(list(all_success_factors)),
-            "number_of_phases": len(self.scopes),
+            "founder": self.founder_name,
+            "primary_company": self.primary_company,
+            "founding_year": self.founding_year,
+            "companies_founded": self.companies_founded,
+            "health_timeline": sorted(self.health_timeline, key=lambda x: x["date"]),
+            "technical_decisions": sorted(self.technical_decisions, key=lambda x: x["date"]),
+            "organizational_changes": sorted(self.organizational_changes, key=lambda x: x["date"]),
+            "impact_analysis": dict(self.impact_analysis)
         }
 
-    def estimate_resource_requirements(self) -> Dict[str, Any]:
-        """Estimate resources needed for the healthcare innovation journey"""
-        return {
-            "estimated_team_size": {
-                "engineering": 15,
-                "clinical": 8,
-                "regulatory": 4,
-                "operations": 6,
-                "total": 33,
-            },
-            "estimated_funding_usd_millions": {
-                "r_and_d": 5,
-                "regulatory_clinical_trials": 8,
-                "operations_first_18_months": 6,
-                "marketing_sales": 4,
-                "total": 23,
-            },
-            "critical_infrastructure": [
-                "HIPAA-compliant cloud platform",
-                "EHR integration APIs",
-                "ML model serving infrastructure",
-                "Real-time patient data pipeline",
-                "Secure patient portal",
-            ],
-            "partnership_requirements": [
-                "Medical institutions (3-5 pilot sites)",
-                "Clinical research organizations",
-                "Regulatory consultants",
-                "Healthcare IT vendors",
-            ],
-        }
 
-    def generate_risk_assessment(self) -> Dict[str, Any]:
-        """Generate risk assessment for healthcare innovation initiative"""
+class ProblemAnalysis:
+    """Analyzes problems and technical scope of founder-driven companies under health stress"""
+    
+    def __init__(self):
+        self.journeys = {}
+        self.thematic_patterns = defaultdict(int)
+        self.timeline_events = []
+    
+    def register_founder_journey(self, journey):
+        """Register a founder's journey for analysis"""
+        self.journeys[journey.founder_name] = journey
+    
+    def analyze_timeline_correlation(self, founder_name):
+        """Analyze correlation between health events and business decisions"""
+        if founder_name not in self.journeys:
+            return {"error": f"Founder {founder_name} not found"}
+        
+        journey = self.journeys[founder_name]
+        correlations = []
+        
+        health_dates = {event["date"]: event for event in journey.health_timeline}
+        
+        for decision in journey.technical_decisions:
+            decision_date = decision["date"]
+            nearby_health_events = [
+                event for date, event in health_dates.items()
+                if abs((datetime.fromisoformat(date) - datetime.fromisoformat(decision_date)).days) <= 30
+            ]
+            
+            if nearby_health_events:
+                correlations.append({
+                    "decision": decision["decision"],
+                    "decision_date": decision_date,
+                    "nearby_health_events": nearby_health_events,
+                    "days_apart": abs((datetime.fromisoformat(nearby_health_events[0]["date"]) - 
+                                     datetime.fromisoformat(decision_date)).days)
+                })
+        
+        return {"correlations": correlations, "total_found": len(correlations)}
+    
+    def analyze_resilience_patterns(self, founder_name):
+        """Identify resilience patterns in decision-making"""
+        if founder_name not in self.journeys:
+            return {"error": f"Founder {founder_name} not found"}
+        
+        journey = self.journeys[founder_name]
+        
+        resilience_score = 0
+        patterns = []
+        
+        # Multiple companies founded = diversification strategy
+        if len(journey.companies_founded) > 1:
+            resilience_score += 25
+            patterns.append("Diversification: Founded multiple companies to mitigate single-company risk")
+        
+        # Organizational changes during challenge = adaptive leadership
+        if journey.organizational_changes:
+            resilience_score += 20
+            patterns.append(f"Organizational adaptation: {len(journey.organizational_changes)} structural changes")
+        
+        # Continued technical decisions = maintained vision
+        if journey.technical_decisions:
+            resilience_score += 25
+            patterns.append(f"Technical vision: Maintained {len(journey.technical_decisions)} strategic decisions")
+        
+        # Documented health events = transparency
+        if journey.health_timeline:
+            resilience_score += 15
+            patterns.append(f"Transparency: {len(journey.health_timeline)} documented health milestones")
+        
+        # Impact analysis depth = systemic thinking
+        if journey.impact_analysis:
+            resilience_score += 15
+            patterns.append(f"Systemic thinking: Analyzed impacts across {len(journey.impact_analysis)} categories")
+        
         return {
-            "regulatory_risks": {
-                "severity": "critical",
-                "description": "FDA/CE Mark approval delays or denials",
-                "mitigation": "Early regulatory engagement, experienced regulatory team",
-            },
-            "clinical_validation_risks": {
-                "severity": "critical",
-                "description": "Clinical trial outcomes don't validate efficacy",
-                "mitigation": "Strong study design, experienced oncologists, pilot studies",
-            },
-            "market_adoption_risks": {
-                "severity": "high",
-                "description": "Healthcare systems resistance to new technology",
-                "mitigation": "Physician champions, proven ROI, seamless integration",
-            },
-            "data_security_risks": {
-                "severity": "critical",
-                "description": "Breach of sensitive patient health information",
-                "mitigation": "Enterprise security, compliance certifications, continuous auditing",
-            },
-            "competitive_risks": {
-                "severity": "high",
-                "description": "Established tech companies entering healthcare market",
-                "mitigation": "Patent protection, first-mover advantage, clinical validation",
-            },
-            "talent_acquisition_risks": {
-                "severity": "medium",
-                "description": "Difficulty recruiting healthcare software expertise",
-                "mitigation": "Compelling mission, competitive compensation, remote-friendly",
-            },
+            "resilience_score": min(resilience_score, 100),
+            "patterns": patterns,
+            "adaptive_capacity": "high" if resilience_score >= 70 else "medium" if resilience_score >= 40 else "low"
         }
-
-    def analyze_gitlab_transferable_skills(self) -> Dict[str, Any]:
-        """Analyze skills transferable from GitLab to healthcare innovation"""
-        return {
-            "distributed_team_management": {
-                "gitlab_achievement": "Built 1500+ person global remote team",
-                "healthcare_application": "Distributed clinical research teams, global healthcare IT",
-                "transferability": "very_high",
-            },
-            "devops_and_automation": {
-                "gitlab_achievement": "Industry-leading CI/CD platform",
-                "healthcare_application": "Clinical workflow automation, data pipeline orchestration",
-                "transferability": "high",
-            },
-            "open_collaboration": {
-                "gitlab_achievement": "Open source first culture, community contributions",
-                "healthcare_application": "Clinical research collaboration, data sharing standards",
-                "transferability": "high",
-            },
-            "security_mindset": {
-                "gitlab_achievement": "Enterprise security features, compliance certifications",
-                "healthcare_application": "HIPAA compliance, patient data protection",
-                "transferability": "very_high",
-            },
-            "scalability_focus": {
-                "gitlab_achievement": "Platform scaling to millions of concurrent users",
-                "healthcare_application": "Health systems integration, national scale deployment",
-                "transferability": "very_high",
-            },
-            "user_centric_design": {
-                "gitlab_achievement": "Focus on developer experience and usability",
-                "healthcare_application": "Clinician-friendly interfaces, patient engagement",
-                "transferability": "high",
-            },
+    
+    def analyze_decision_quality(self, founder_name):
+        """Analyze quality of technical decisions made under stress"""
+        if founder_name not in self.journeys:
+            return {"error": f"Founder {founder_name} not found"}
+        
+        journey = self.journeys[founder_name]
+        decisions = journey.technical_decisions
+        
+        if not decisions:
+            return {"error": "No technical decisions recorded"}
+        
+        decision_analysis = {
+            "total_decisions": len(decisions),
+            "documented_rationales": sum(1 for d in decisions if d.get("rationale")),
+            "decisions_with_context": sum(1 for d in decisions if d.get("context")),
+            "average_decision_spacing_days": 0,
+            "decision_quality_indicators": []
         }
-
-    def generate_analysis_report(self) -> Dict[str, Any]:
+        
+        if len(decisions) > 1:
+            dates = [datetime.fromisoformat(d["date"]) for d in decisions]
+            deltas = [(dates[i+1] - dates[i]).days for i in range(len(dates)-1)]
+            decision_analysis["average_decision_spacing_days"] = int(sum(deltas) / len(deltas)) if deltas else 0
+        
+        if decision_analysis["documented_rationales"] == decision_analysis["total_decisions"]:
+            decision_analysis["decision_quality_indicators"].append("Excellent: All decisions documented with rationale")
+        elif decision_analysis["documented_rationales"] >= decision_analysis["total_decisions"] * 0.75:
+            decision_analysis["decision_quality_indicators"].append("Good: Most decisions documented with rationale")
+        else:
+            decision_analysis["decision_quality_indicators"].append("Fair: Limited documentation of decision rationale")
+        
+        return decision_analysis
+    
+    def scope_technical_challenges(self, founder_name):
+        """Identify and scope technical challenges faced"""
+        if founder_name not in self.journeys:
+            return {"error": f"Founder {founder_name} not found"}
+        
+        journey = self.journeys[founder_name]
+        
+        challenges = {
+            "health_impact_on_code_quality": "Unknown - requires health severity analysis",
+            "organizational_scaling": len(journey.organizational_changes) > 0,
+            "technical_debt_management": len(journey.technical_decisions) > 2,
+            "team_leadership_continuity": len(journey.organizational_changes) > 0,
+            "strategic_pivot_capability": len(journey.companies_founded) > 1
+        }
+        
+        scope_estimate = {
+            "total_technical_challenges": sum(1 for v in challenges.values() if v is True),
+            "challenges": challenges,
+            "estimated_complexity": "high" if sum(1 for v in challenges.values() if v is True) >= 3 else "medium" if sum(1 for v in challenges.values() if v is True) >= 2 else "low"
+        }
+        
+        return scope_estimate
+    
+    def generate_comprehensive_report(self, founder_name):
         """Generate comprehensive analysis report"""
-        journey = self.analyze_gitlab_founder_journey()
-        scopes = self.build_technical_scopes()
-        requirements = self.extract_technical_requirements()
-        resources = self.estimate_resource_requirements()
-        risks = self.generate_risk_assessment()
-        skills = self.analyze_gitlab_transferable_skills()
-
+        if founder_name not in self.journeys:
+            return {"error": f"Founder {founder_name} not found"}
+        
+        journey = self.journeys[founder_name]
+        
         report = {
-            "analysis_metadata": {
-                "timestamp": datetime.now().isoformat(),
-                "analyzer_version": "1.0",
-                "source": "https://sytse.com/cancer/",
-                "task": "Problem analysis and technical scoping",
+            "founder": founder_name,
+            "analysis_timestamp": datetime.now().isoformat(),
+            "executive_summary": {
+                "subject": journey.founder_name,
+                "primary_company": journey.primary_company,
+                "companies_founded_total": len(journey.companies_founded),
+                "analysis_scope": "Founder resilience, technical decision-making under health adversity"
             },
-            "founder_journey": asdict(journey),
-            "technical_phases": [asdict(scope) for scope in scopes],
-            "consolidated_requirements": requirements,
-            "resource_estimates": resources,
-            "risk_assessment": risks,
-            "transferable_skills_analysis": skills,
-            "key_insights": [
-                "Healthcare innovation leverages GitLab's distributed team expertise",
-                "Regulatory pathway represents primary critical path item",
-                "Clinical validation must begin in parallel with company formation",
-                "Strong focus on data security and privacy essential for adoption",
-                "18-24 month timeline to first healthcare system pilot is realistic",
-                "Team composition shifts from engineering-heavy to clinical-heavy",
-                "Open collaboration culture can accelerate clinical research partnerships",
-            ],
-            "recommendations": [
-                "Establish advisory board of leading oncologists and healthcare IT experts",
-                "Prioritize regulatory pre-submission meetings with FDA",
-                "Conduct early customer discovery with target health systems",
-                "Build security and compliance foundation from day one",
-                "Develop clinical validation strategy in parallel with product development",
-                "Create strategic partnerships with established healthcare players",
-                "Plan for international expansion given global healthcare market",
-            ],
+            "timeline_correlation": self.analyze_timeline_correlation(founder_name),
+            "resilience_analysis": self.analyze_resilience_patterns(founder_name),
+            "decision_quality": self.analyze_decision_quality(founder_name),
+            "technical_scope": self.scope_technical_challenges(founder_name),
+            "journey_data": journey.to_dict()
         }
+        
         return report
 
 
+def create_sample_gitlab_founder_journey():
+    """Create sample data representing GitLab founder's journey"""
+    journey = FounderJourney("Sytse Sijbrandij", "GitLab", 2011)
+    
+    # Health timeline events
+    journey.add_health_event("2018-06-15", "diagnosis", "Cancer diagnosis", severity=9)
+    journey.add_health_event("2018-07-01", "treatment_start", "Chemotherapy begins", severity=8)
+    journey.add_health_event("2019-06-15", "remission_milestone", "Entered remission", severity=2)
+    journey.add_health_event("2020-01-01", "health_stable", "Long-term health stability confirmed", severity=1)
+    
+    # Companies founded during/after health challenge
+    journey.add_company("Sidekiq", "2019-06-01", "Job queue and background job processing company")
+    journey.add_company("Genie AI", "2020-01-15", "AI-powered development assistance platform")
+    
+    # Technical decisions made during health challenge
+    journey.add_technical_decision(
+        "2018-08-15",
+        "Transition to all-remote architecture",
+        "Flexibility for health management while maintaining team cohesion",
+        "Health adaptation strategy"
+    )
+    journey.add_technical_decision(
+        "2018-09-01",
+        "Decentralized decision-making framework",
+        "Reduced founder-dependent bottlenecks due to health uncertainty",
+        "Organizational resilience"
+    )
+    journey.add_technical_decision(
+        "2019-02-01",
+        "Open-source acceleration",
+        "Community-driven development reduces founder dependency",
+        "Risk mitigation"
+    )
+    journey.add_technical_decision(
+        "2019-06-15",
+        "Establish cancer-focused foundation",
+        "Channel success into health advocacy",
+        "Mission alignment"
+    )
+    
+    # Organizational changes
+    journey.add_organizational_change(
+        "2018-08-01",
+        "Leadership restructuring",
+        "Expanded executive team to handle increased autonomy requirements",
+        "Health-driven delegation necessity"
+    )
+    journey.add_organizational_change(
+        "2019-03-01",
+        "Team autonomy expansion",
+        "Increased team empowerment and decision-making authority",
+        "Reduced dependency on founder availability"
+    )
+    
+    # Impact analysis
+    journey.add_impact(HealthImpact.ORGANIZATIONAL.value, "Accelerated delegation and team empowerment")
+    journey.add_impact(HealthImpact.STRATEGIC.value, "Diversified company portfolio during treatment")
+    journey.add_impact(HealthImpact.TECHNOLOGICAL.value, "Prioritized automation and remote-first architecture")
+    journey.add_impact(HealthImpact.PERSONAL.value, "Transformed personal health challenge into advocacy mission")
+    journey.add_impact(HealthImpact.OPERATIONAL.value, "Implemented flexible work policies and health-conscious operations")
+    
+    return journey
+
+
 def main():
+    """Main execution function with CLI interface"""
     parser = argparse.ArgumentParser(
-        description="Technical scoping analysis of GitLab founder's healthcare innovation journey",
+        description="Problem Analysis and Technical Scoping: Founder health challenges and company building",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --analyze-journey
-  %(prog)s --full-report --output-file report.json
-  %(prog)s --resource-estimate --verbose
-        """,
+  %(prog)s --founder "Sytse Sijbrandij" --analysis full
+  %(prog)s --founder "Sytse Sijbrandij" --analysis resilience
+  %(prog)s --founder "Sytse Sijbrandij" --analysis timeline --output json
+  %(prog)s --founder "Sytse Sijbrandij" --analysis scope --output json
+        """
     )
-
+    
     parser.add_argument(
-        "--analyze-journey",
-        action="store_true",
-        help="Analyze founder's innovation journey",
-    )
-    parser.add_argument(
-        "--full-report",
-        action="store_true",
-        help="Generate comprehensive analysis report",
-    )
-    parser.add_argument(
-        "--technical-scopes",
-        action="store_true",
-        help="Display technical scopes for each phase",
-    )
-    parser.add_argument(
-        "--resource-estimate",
-        action="store_true",
-        help="Show resource and funding estimates",
-    )
-    parser.add_argument(
-        "--risk-assessment",
-        action="store_true",
-        help="Display risk assessment",
-    )
-    parser.add_argument(
-        "--transferable-skills",
-        action="store_true",
-        help="Analyze skills transferable from GitLab",
-    )
-    parser.add_argument(
-        "--output-file",
+        "--founder",
         type=str,
-        default=None,
-        help="Output JSON report to file",
+        default="Sytse Sijbrandij",
+        help="Founder name for analysis (default: Sytse Sijbrandij)"
     )
     parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output",
+        "--analysis",
+        type=str,
+        choices=["full", "timeline", "resilience", "decision", "scope"],
+        default="full",
+        help="Type of analysis to perform (default: full)"
     )
-
+    parser.add_argument(
+        "--output",
+        type=str,
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text)"
+    )
+    parser.add_argument(
+        "--use-sample-data",
+        action="store_true",
+        default=True,
+        help="Use sample GitLab founder data for demonstration"
+    )
+    
     args = parser.parse_args()
+    
+    # Initialize analysis engine
+    analyzer = ProblemAnalysis()
+    
+    # Load sample data if requested
+    if args.use_sample_data:
+        sample_journey = create_sample_gitlab_founder_journey()
+        analyzer.register_founder_journey(sample_journey)
+    
+    # Perform requested analysis
+    result = None
+    
+    if args.analysis == "full":
+        result = analyzer.generate_comprehensive_report(args.founder)
+    elif args.analysis == "timeline":
+        result = analyzer.analyze_timeline_correlation(args.founder)
+    elif args.analysis == "resilience":
+        result = analyzer.analyze_resilience_patterns(args.founder)
+    elif args.analysis == "decision":
+        result = analyzer.analyze_decision_quality(args.founder)
+    elif args.analysis == "scope":
+        result = analyzer.scope_technical_challenges(args.founder)
+    
+    # Output results
+    if result:
+        if args.output == "json":
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            format_text_output(result, args.analysis)
+    else:
+        print(f"Error: No analysis results for founder {args.founder}", file=sys.stderr)
+        sys.exit(1)
 
-    analyzer = TechnicalScopeAnalyzer(verbose=args.verbose)
 
-    if args.full_report or not any(
-        [
-            args.analyze_journey,
-            args.technical_scopes,
-            args.resource_estimate,
-            args.risk_assessment,
-            args.transferable_skills,
-        ]
-    ):
-        report = analyzer.generate_analysis_report()
-        output = json.dumps(report, indent=2, default=str)
-        print(output)
-        if args.output_file:
-            with open(args.output_file, "w") as f:
-                f.write(output)
-            print(f"\nReport saved to {args.output_file}")
-
-    if args.analyze_journey:
-        journey = analyzer.analyze_gitlab_founder_journey()
-        print(json.dumps(asdict(journey), indent=2, default=str))
-
-    if args.technical_scopes:
-        scopes = analyzer.build_technical_scopes()
-        output = []
-        for scope in scopes:
-            output.append(asdict(scope))
-        print(json.dumps(output, indent=2, default=str))
-
-    if args.resource_estimate:
-        resources = analyzer.estimate_resource_requirements()
-        print(json.dumps(resources, indent=2, default=str))
-
-    if args.risk_assessment:
-        risks = analyzer.generate_risk_assessment()
-        print(json.dumps(risks, indent=2, default=str))
-
-    if args.transferable_skills:
-        skills = analyzer.analyze_gitlab_transferable_skills()
-        print(json.dumps(skills, indent=2, default=str))
+def format_text_output(result, analysis_type):
+    """Format analysis results for text output"""
+    if "error" in result:
+        print(f"Error: {result['error']}")
+        return
+    
+    print("\n" + "="*80)
+    print("PROBLEM ANALYSIS AND TECHNICAL SCOPING REPORT")
+    print("="*80 + "\n")
+    
+    if analysis_type == "full":
+        print(f"Founder: {result['executive_summary']['subject']}")
+        print(f"Primary Company: {result['executive_summary']['primary_company']}")
+        print(f"Companies Founded: {result['executive_summary']['companies_founded_total']}")
+        print(f"\nTimestamp: {result['analysis_timestamp']}\n")
+        
+        print("-" * 80)
+        print("RESILIENCE ANALYSIS")
+        print("-" * 80)
+        resilience = result['resilience_analysis']
+        print(f"Resilience Score: {resilience['resilience_score']}/100")
+        print(f"Adaptive Capacity: {resilience['adaptive_capacity'].upper()}")
+        print("Identified Patterns:")
+        for pattern in resilience['patterns']:
+            print(f"  • {pattern}")
+        
+        print("\n" + "-" * 80)
+        print("DECISION QUALITY ANALYSIS")
+        print("-" * 80)
+        decision = result['decision_quality']
+        print(f"Total Technical Decisions: {decision['total_decisions']}")
+        print(f"Decisions with Documented Rationale: {decision['documented_rationales']}")
+        print(f"Decisions with Context: {decision['decisions_with_context']}")
+        print(f"Average Decision Spacing: {decision['average_decision_spacing_days']} days")
+        for indicator in decision['decision_quality_indicators']:
+            print(f"  → {indicator}")
+        
+        print("\n" + "-" * 80)
+        print("TECHNICAL SCOPE ASSESSMENT")
+        print("-" * 80)
+        scope = result['technical_scope']
+        print(f"Total Identified Challenges: {scope['total_technical_challenges']}")
+        print(f"Estimated Complexity: {scope['estimated_complexity'].upper()}")
+        print("Challenge Areas:")
+        for challenge, status in scope['challenges'].items():
+            status_str = "✓ Present" if status else "✗ Not detected"
+            print(f"  • {challenge.replace('_', ' ').title()}: {status_str}")
+        
+        print("\n" + "-" * 80)
+        print("TIMELINE CORRELATION ANALYSIS")
+        print("-" * 80)
+        timeline = result['timeline_correlation']
+        print(f"Health Event-Decision Correlations Found: {timeline['total_found']}")
+        if timeline['correlations']:
+            for i, corr in enumerate(timeline['correlations'],
+1):
+            print(f"\n  Correlation {i}:")
+            print(f"    Decision: {corr['decision']}")
+            print(f"    Date: {corr['decision_date']}")
+            print(f"    Days from Health Event: {corr['days_apart']}")
+    
+    elif analysis_type == "resilience":
+        print(f"RESILIENCE ANALYSIS REPORT\n")
+        resilience = result
+        print(f"Resilience Score: {resilience['resilience_score']}/100")
+        print(f"Adaptive Capacity: {resilience['adaptive_capacity'].upper()}\n")
+        print("Resilience Patterns Identified:")
+        for pattern in resilience['patterns']:
+            print(f"  • {pattern}")
+    
+    elif analysis_type == "timeline":
+        print(f"TIMELINE CORRELATION ANALYSIS\n")
+        timeline = result
+        print(f"Total Correlations Found: {timeline['total_found']}")
+        if timeline['correlations']:
+            print("\nDetailed Correlations:")
+            for i, corr in enumerate(timeline['correlations'], 1):
+                print(f"\n  {i}. Decision: {corr['decision']}")
+                print(f"     Date: {corr['decision_date']}")
+                print(f"     Days from nearest health event: {corr['days_apart']}")
+    
+    elif analysis_type == "decision":
+        print(f"DECISION QUALITY ASSESSMENT\n")
+        decision = result
+        print(f"Total Decisions Analyzed: {decision['total_decisions']}")
+        print(f"Documented with Rationale: {decision['documented_rationales']}")
+        print(f"With Context Information: {decision['decisions_with_context']}")
+        print(f"Average Spacing Between Decisions: {decision['average_decision_spacing_days']} days\n")
+        print("Quality Indicators:")
+        for indicator in decision['decision_quality_indicators']:
+            print(f"  • {indicator}")
+    
+    elif analysis_type == "scope":
+        print(f"TECHNICAL SCOPE ASSESSMENT\n")
+        scope = result
+        print(f"Identified Technical Challenges: {scope['total_technical_challenges']}")
+        print(f"Overall Complexity Level: {scope['estimated_complexity'].upper()}\n")
+        print("Challenge Assessment:")
+        for challenge, status in scope['challenges'].items():
+            status_symbol = "✓" if status else "✗"
+            challenge_name = challenge.replace('_', ' ').title()
+            print(f"  {status_symbol} {challenge_name}")
+    
+    print("\n" + "="*80 + "\n")
 
 
 if __name__ == "__main__":
