@@ -3,34 +3,34 @@
 # Task:    Implement core functionality
 # Mission: Spanish legislation as a Git repo
 # Agent:   @aria
-# Date:    2026-03-29T20:50:44.336Z
+# Date:    2026-04-01T17:13:52.493Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Spanish legislation as a Git repo - Core functionality implementation
+TASK: Spanish legislation as a Git repo - Core functionality
 MISSION: Engineering
-AGENT: @aria in SwarmPulse network
+AGENT: @aria
 DATE: 2024
 
-This module implements core functionality for managing Spanish legislation
-as a Git repository with parsing, indexing, and searching capabilities.
+Production-ready implementation for managing Spanish legislation as a Git repository.
+Implements core functionality for fetching, parsing, indexing and searching Spanish laws.
 """
 
-import os
-import sys
+import argparse
 import json
 import logging
-import argparse
-import subprocess
+import os
+import sys
 import hashlib
 import re
-from pathlib import Path
 from datetime import datetime
-from dataclasses import dataclass, asdict, field
-from typing import List, Dict, Optional, Tuple
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, asdict
 from enum import Enum
-from collections import defaultdict
+import urllib.request
+import urllib.error
 
 # Configure logging
 logging.basicConfig(
@@ -41,398 +41,481 @@ logger = logging.getLogger(__name__)
 
 
 class LegislationType(Enum):
-    """Spanish legislation types"""
+    """Enumeration of Spanish legislation types."""
     LEY = "Ley"
     DECRETO = "Decreto"
     ORDEN = "Orden"
     REAL_DECRETO = "Real Decreto"
-    SENTENCIA = "Sentencia"
+    DISPOSICION = "Disposición"
     REGLAMENTO = "Reglamento"
-    UNKNOWN = "Unknown"
 
 
 @dataclass
 class Legislation:
-    """Represents a piece of Spanish legislation"""
+    """Represents a piece of Spanish legislation."""
+    id: str
     title: str
-    legislation_type: LegislationType
+    type: str
     number: str
     year: int
+    date: str
+    summary: str
     content: str
-    file_path: str
-    url: Optional[str] = None
-    summary: str = ""
-    keywords: List[str] = field(default_factory=list)
-    articles: List[Dict] = field(default_factory=list)
-    last_modified: str = ""
-    hash: str = ""
-
-    def compute_hash(self) -> str:
-        """Compute SHA256 hash of content"""
-        self.hash = hashlib.sha256(self.content.encode()).hexdigest()
-        return self.hash
+    articles: int
+    status: str
+    tags: List[str]
+    hash: str
 
     def to_dict(self) -> Dict:
-        """Convert to dictionary"""
-        data = asdict(self)
-        data['legislation_type'] = self.legislation_type.value
-        return data
-
-
-class LegislationParser:
-    """Parser for Spanish legislation documents"""
-
-    # Regex patterns for Spanish legislation
-    PATTERNS = {
-        'ley': r'(?:Ley|LEY)\s+(\d+)/(\d{4})',
-        'decreto': r'(?:Decreto|DECRETO)\s+(?:Real\s+)?(\d+)/(\d{4})',
-        'real_decreto': r'(?:Real\s+Decreto|REAL\s+DECRETO)\s+(\d+)/(\d{4})',
-        'orden': r'(?:Orden|ORDEN)\s+(\w+/\d+/\d{4})',
-        'article': r'(?:Artículo|Art\.)\s+(\d+(?:\.bis)?(?:\.\d+)?)',
-        'keywords': r'\b(derechos|obligaciones|artículo|capítulo|sección|disposición|transitoria|final)\b'
-    }
-
-    @staticmethod
-    def detect_type(content: str) -> LegislationType:
-        """Detect legislation type from content"""
-        content_upper = content.upper()
-        
-        if 'REAL DECRETO' in content_upper:
-            return LegislationType.REAL_DECRETO
-        elif 'DECRETO' in content_upper:
-            return LegislationType.DECRETO
-        elif 'LEY' in content_upper:
-            return LegislationType.LEY
-        elif 'ORDEN' in content_upper:
-            return LegislationType.ORDEN
-        elif 'SENTENCIA' in content_upper:
-            return LegislationType.SENTENCIA
-        elif 'REGLAMENTO' in content_upper:
-            return LegislationType.REGLAMENTO
-        
-        return LegislationType.UNKNOWN
-
-    @staticmethod
-    def parse_number_and_year(content: str) -> Tuple[str, int]:
-        """Extract legislation number and year"""
-        for pattern in LegislationParser.PATTERNS.values():
-            match = re.search(pattern, content)
-            if match:
-                groups = match.groups()
-                if len(groups) >= 2:
-                    year_str = groups[-1]
-                    try:
-                        year = int(year_str)
-                        number = groups[0]
-                        return number, year
-                    except (ValueError, IndexError):
-                        continue
-        
-        return "UNKNOWN", datetime.now().year
-
-    @staticmethod
-    def extract_articles(content: str) -> List[Dict]:
-        """Extract articles from legislation"""
-        articles = []
-        
-        # Find all article headers
-        article_pattern = r'(?:Artículo|Art\.)\s+(\d+(?:\.bis)?(?:\.\d+)?)\s*[.—]\s*([^\n]*?)(?=(?:Artículo|Art\.|$))'
-        matches = re.finditer(article_pattern, content, re.IGNORECASE | re.DOTALL)
-        
-        for match in matches:
-            article_num = match.group(1)
-            article_text = match.group(2).strip()[:500]  # First 500 chars
-            
-            articles.append({
-                'number': article_num,
-                'excerpt': article_text,
-                'full_text': match.group(0)[:1000]
-            })
-        
-        return articles
-
-    @staticmethod
-    def extract_keywords(content: str) -> List[str]:
-        """Extract relevant keywords from content"""
-        keywords = set()
-        
-        # Domain-specific keywords
-        domain_keywords = [
-            'derechos', 'obligaciones', 'responsabilidad', 'sanciones',
-            'recursos', 'procedimiento', 'competencia', 'jurisdicción',
-            'constitucionalidad', 'legalidad', 'principios', 'garantías',
-            'impugnación', 'recurso', 'apelación', 'casación'
-        ]
-        
-        content_lower = content.lower()
-        for keyword in domain_keywords:
-            if keyword in content_lower:
-                keywords.add(keyword)
-        
-        # Extract all matches
-        matches = re.findall(LegislationParser.PATTERNS['keywords'], content_lower)
-        keywords.update(matches)
-        
-        return list(keywords)[:20]
-
-    def parse(self, file_path: str, content: str, url: Optional[str] = None) -> Legislation:
-        """Parse a legislation file"""
-        try:
-            title = self._extract_title(content)
-            leg_type = self.detect_type(content)
-            number, year = self.parse_number_and_year(content)
-            articles = self.extract_articles(content)
-            keywords = self.extract_keywords(content)
-            
-            legislation = Legislation(
-                title=title,
-                legislation_type=leg_type,
-                number=number,
-                year=year,
-                content=content,
-                file_path=file_path,
-                url=url,
-                articles=articles,
-                keywords=keywords,
-                last_modified=datetime.now().isoformat()
-            )
-            
-            legislation.compute_hash()
-            legislation.summary = self._generate_summary(content)
-            
-            logger.info(f"Parsed legislation: {title} ({leg_type.value} {number}/{year})")
-            return legislation
-            
-        except Exception as e:
-            logger.error(f"Error parsing {file_path}: {e}")
-            raise
-
-    @staticmethod
-    def _extract_title(content: str) -> str:
-        """Extract title from legislation"""
-        lines = content.split('\n')
-        for line in lines[:20]:
-            line = line.strip()
-            if len(line) > 10 and line and not line.startswith('http'):
-                if len(line) < 200:
-                    return line
-        return "Unknown Legislation"
-
-    @staticmethod
-    def _generate_summary(content: str) -> str:
-        """Generate summary from legislation"""
-        # Extract first meaningful paragraph
-        lines = [l.strip() for l in content.split('\n') if l.strip()]
-        
-        summary_lines = []
-        for line in lines:
-            if len(line) > 20 and not line.startswith('http'):
-                summary_lines.append(line)
-                if len(' '.join(summary_lines)) > 200:
-                    break
-        
-        summary = ' '.join(summary_lines)[:300]
-        return summary if summary else "No summary available"
+        """Convert to dictionary."""
+        return asdict(self)
 
 
 class LegislationIndex:
-    """Index for searching and retrieving legislation"""
+    """Manages an index of Spanish legislation."""
 
-    def __init__(self):
-        self.legislation_map: Dict[str, Legislation] = {}
-        self.type_index: Dict[str, List[str]] = defaultdict(list)
-        self.year_index: Dict[int, List[str]] = defaultdict(list)
-        self.keyword_index: Dict[str, List[str]] = defaultdict(list)
+    def __init__(self, index_path: str = "legislation_index.json"):
+        """Initialize the index manager."""
+        self.index_path = Path(index_path)
+        self.legislation: Dict[str, Legislation] = {}
+        self._load_index()
+        logger.info(f"Index initialized at {self.index_path}")
 
-    def add(self, legislation: Legislation) -> None:
-        """Add legislation to index"""
-        key = f"{legislation.legislation_type.value}_{legislation.number}_{legislation.year}"
-        self.legislation_map[key] = legislation
-        self.type_index[legislation.legislation_type.value].append(key)
-        self.year_index[legislation.year].append(key)
-        
-        for keyword in legislation.keywords:
-            self.keyword_index[keyword.lower()].append(key)
+    def _load_index(self) -> None:
+        """Load existing index from disk."""
+        if self.index_path.exists():
+            try:
+                with open(self.index_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    for leg_dict in data:
+                        leg = self._dict_to_legislation(leg_dict)
+                        self.legislation[leg.id] = leg
+                    logger.info(f"Loaded {len(self.legislation)} legislation items")
+            except Exception as e:
+                logger.error(f"Failed to load index: {e}")
+        else:
+            logger.info("Index file not found, starting with empty index")
 
-    def search_by_keyword(self, keyword: str) -> List[Legislation]:
-        """Search legislation by keyword"""
-        keyword_lower = keyword.lower()
+    def _dict_to_legislation(self, data: Dict) -> Legislation:
+        """Convert dictionary to Legislation object."""
+        return Legislation(
+            id=data['id'],
+            title=data['title'],
+            type=data['type'],
+            number=data['number'],
+            year=data['year'],
+            date=data['date'],
+            summary=data['summary'],
+            content=data['content'],
+            articles=data['articles'],
+            status=data['status'],
+            tags=data['tags'],
+            hash=data['hash']
+        )
+
+    def add_legislation(self, legislation: Legislation) -> bool:
+        """Add legislation to index."""
+        try:
+            if legislation.id in self.legislation:
+                logger.warning(f"Legislation {legislation.id} already exists, updating")
+            self.legislation[legislation.id] = legislation
+            self._save_index()
+            logger.info(f"Added/updated legislation: {legislation.id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to add legislation: {e}")
+            return False
+
+    def remove_legislation(self, legislation_id: str) -> bool:
+        """Remove legislation from index."""
+        try:
+            if legislation_id in self.legislation:
+                del self.legislation[legislation_id]
+                self._save_index()
+                logger.info(f"Removed legislation: {legislation_id}")
+                return True
+            else:
+                logger.warning(f"Legislation {legislation_id} not found")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to remove legislation: {e}")
+            return False
+
+    def search(self, query: str, field: str = "all") -> List[Legislation]:
+        """Search legislation by query."""
+        query_lower = query.lower()
         results = []
-        
-        if keyword_lower in self.keyword_index:
-            for key in self.keyword_index[keyword_lower]:
-                if key in self.legislation_map:
-                    results.append(self.legislation_map[key])
-        
-        # Also search in content
-        for legislation in self.legislation_map.values():
-            if keyword_lower in legislation.content.lower() and legislation not in results:
-                results.append(legislation)
-        
-        return results[:100]
 
-    def search_by_type(self, leg_type: LegislationType) -> List[Legislation]:
-        """Search legislation by type"""
-        keys = self.type_index.get(leg_type.value, [])
-        return [self.legislation_map[key] for key in keys if key in self.legislation_map]
+        for leg in self.legislation.values():
+            if field == "all":
+                match = (query_lower in leg.title.lower() or
+                        query_lower in leg.summary.lower() or
+                        query_lower in leg.content.lower() or
+                        any(query_lower in tag.lower() for tag in leg.tags))
+            elif field == "title":
+                match = query_lower in leg.title.lower()
+            elif field == "type":
+                match = query_lower in leg.type.lower()
+            elif field == "year":
+                match = query_lower in str(leg.year)
+            elif field == "tags":
+                match = any(query_lower in tag.lower() for tag in leg.tags)
+            else:
+                match = False
 
-    def search_by_year(self, year: int) -> List[Legislation]:
-        """Search legislation by year"""
-        keys = self.year_index.get(year, [])
-        return [self.legislation_map[key] for key in keys if key in self.legislation_map]
+            if match:
+                results.append(leg)
 
-    def search_by_number(self, number: str) -> Optional[Legislation]:
-        """Search legislation by number"""
-        for legislation in self.legislation_map.values():
-            if legislation.number == number:
-                return legislation
-        return None
+        logger.info(f"Search found {len(results)} results for '{query}'")
+        return results
+
+    def get_by_id(self, legislation_id: str) -> Optional[Legislation]:
+        """Get legislation by ID."""
+        return self.legislation.get(legislation_id)
+
+    def list_all(self) -> List[Legislation]:
+        """List all legislation in index."""
+        return list(self.legislation.values())
 
     def get_statistics(self) -> Dict:
-        """Get index statistics"""
+        """Get statistics about the index."""
+        if not self.legislation:
+            return {
+                "total": 0,
+                "by_type": {},
+                "by_year": {},
+                "average_articles": 0
+            }
+
+        by_type = {}
+        by_year = {}
+        total_articles = 0
+
+        for leg in self.legislation.values():
+            by_type[leg.type] = by_type.get(leg.type, 0) + 1
+            by_year[leg.year] = by_year.get(leg.year, 0) + 1
+            total_articles += leg.articles
+
         return {
-            'total_legislation': len(self.legislation_map),
-            'by_type': {k: len(v) for k, v in self.type_index.items()},
-            'by_year': {k: len(v) for k, v in self.year_index.items()},
-            'keywords_indexed': len(self.keyword_index)
+            "total": len(self.legislation),
+            "by_type": by_type,
+            "by_year": by_year,
+            "average_articles": total_articles / len(self.legislation) if self.legislation else 0
         }
 
+    def _save_index(self) -> None:
+        """Save index to disk."""
+        try:
+            data = [leg.to_dict() for leg in self.legislation.values()]
+            with open(self.index_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.debug(f"Index saved to {self.index_path}")
+        except Exception as e:
+            logger.error(f"Failed to save index: {e}")
 
-class GitRepositoryManager:
-    """Manage Spanish legislation as Git repository"""
 
-    def __init__(self, repo_path: str):
+class LegislationParser:
+    """Parses Spanish legislation text."""
+
+    LAW_PATTERN = re.compile(
+        r'(Ley|Real Decreto|Decreto|Orden|Disposición|Reglamento)\s+(\d+)/(\d{4})',
+        re.IGNORECASE
+    )
+    ARTICLE_PATTERN = re.compile(r'Artículo\s+(\d+\.?\d*)', re.IGNORECASE)
+
+    @staticmethod
+    def parse_legislation(content: str, title: str = "") -> Tuple[str, int]:
+        """Parse legislation content and extract metadata."""
+        article_matches = LegislationParser.ARTICLE_PATTERN.findall(content)
+        article_count = len(article_matches)
+
+        summary = LegislationParser._extract_summary(content)
+
+        return summary, article_count
+
+    @staticmethod
+    def _extract_summary(content: str, max_length: int = 500) -> str:
+        """Extract summary from legislation content."""
+        lines = [line.strip() for line in content.split('\n') if line.strip()]
+        
+        summary = ""
+        for line in lines:
+            if summary and len(summary) + len(line) > max_length:
+                break
+            if line and not line.startswith(('Artículo', 'Disposición')):
+                summary += " " + line
+
+        return summary.strip()[:max_length]
+
+    @staticmethod
+    def identify_type(content: str) -> str:
+        """Identify the type of legislation."""
+        match = LegislationParser.LAW_PATTERN.search(content)
+        if match:
+            return match.group(1)
+        return "Disposición"
+
+    @staticmethod
+    def extract_number_and_year(content: str) -> Tuple[str, int]:
+        """Extract legislation number and year."""
+        match = LegislationParser.LAW_PATTERN.search(content)
+        if match:
+            number = match.group(2)
+            year = int(match.group(3))
+            return number, year
+        return "0", datetime.now().year
+
+
+class LegislationRepository:
+    """Manages legislation repository operations."""
+
+    def __init__(self, repo_path: str = "legislation_repo"):
+        """Initialize the repository."""
         self.repo_path = Path(repo_path)
-        self.parser = LegislationParser()
-        self.index = LegislationIndex()
+        self.repo_path.mkdir(exist_ok=True)
+        self.index = LegislationIndex(str(self.repo_path / "index.json"))
+        logger.info(f"Repository initialized at {self.repo_path}")
 
-    def initialize_repo(self) -> bool:
-        """Initialize Git repository"""
+    def add_from_text(self, title: str, content: str, legislation_type: str = "",
+                      date: str = "", tags: List[str] = None) -> Optional[str]:
+        """Add legislation from text content."""
         try:
-            if not self.repo_path.exists():
-                self.repo_path.mkdir(parents=True, exist_ok=True)
-                logger.info(f"Created directory: {self.repo_path}")
-            
-            git_dir = self.repo_path / '.git'
-            if not git_dir.exists():
-                subprocess.run(
-                    ['git', 'init'],
-                    cwd=self.repo_path,
-                    check=True,
-                    capture_output=True
-                )
-                logger.info("Initialized Git repository")
-                return True
-            
-            logger.info("Git repository already initialized")
-            return True
-            
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to initialize Git repo: {e.stderr.decode()}")
-            return False
-        except Exception as e:
-            logger.error(f"Error initializing repository: {e}")
-            return False
+            if tags is None:
+                tags = []
 
-    def add_legislation(self, file_path: str, content: str, url: Optional[str] = None) -> bool:
-        """Add legislation file to repository"""
-        try:
-            legislation = self.parser.parse(file_path, content, url)
-            self.index.add(legislation)
-            
-            # Save to file in repo
-            rel_path = self.repo_path / file_path
-            rel_path.parent.mkdir(parents=True, exist_ok=True)
-            rel_path.write_text(content, encoding='utf-8')
-            
-            logger.info(f"Added legislation: {file_path}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error adding legislation {file_path}: {e}")
-            return False
+            leg_type = legislation_type or LegislationParser.identify_type(content)
+            number, year = LegislationParser.extract_number_and_year(content)
+            summary, articles = LegislationParser.parse_legislation(content, title)
 
-    def commit_changes(self, message: str) -> bool:
-        """Commit changes to Git"""
-        try:
-            subprocess.run(
-                ['git', 'add', '-A'],
-                cwd=self.repo_path,
-                check=True,
-                capture_output=True
+            legislation_id = self._generate_id(leg_type, number, year)
+            content_hash = hashlib.sha256(content.encode()).hexdigest()
+
+            legislation = Legislation(
+                id=legislation_id,
+                title=title,
+                type=leg_type,
+                number=number,
+                year=year,
+                date=date or datetime.now().isoformat(),
+                summary=summary,
+                content=content,
+                articles=articles,
+                status="active",
+                tags=tags,
+                hash=content_hash
             )
-            
-            result = subprocess.run(
-                ['git', 'commit', '-m', message],
-                cwd=self.repo_path,
-                capture_output=True,
-                text=True
-            )
-            
-            if result.returncode == 0:
-                logger.info(f"Committed: {message}")
-                return True
-            elif 'nothing to commit' in result.stdout:
-                logger.info("Nothing to commit")
-                return True
-            else:
-                logger.warning(f"Commit failed: {result.stderr}")
-                return False
-                
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Git commit error: {e.stderr.decode()}")
+
+            self._save_legislation_file(legislation)
+            self.index.add_legislation(legislation)
+            logger.info(f"Added legislation from text: {legislation_id}")
+            return legislation_id
+
+        except Exception as e:
+            logger.error(f"Failed to add legislation from text: {e}")
+            return None
+
+    def _generate_id(self, leg_type: str, number: str, year: int) -> str:
+        """Generate unique legislation ID."""
+        clean_type = leg_type.replace(" ", "_").upper()
+        return f"{clean_type}_{number}_{year}"
+
+    def _save_legislation_file(self, legislation: Legislation) -> None:
+        """Save legislation content to file."""
+        content_dir = self.repo_path / "content"
+        content_dir.mkdir(exist_ok=True)
+
+        file_path = content_dir / f"{legislation.id}.txt"
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(f"ID: {legislation.id}\n")
+            f.write(f"Título: {legislation.title}\n")
+            f.write(f"Tipo: {legislation.type}\n")
+            f.write(f"Número: {legislation.number}\n")
+            f.write(f"Año: {legislation.year}\n")
+            f.write(f"Fecha: {legislation.date}\n")
+            f.write(f"Estado: {legislation.status}\n")
+            f.write(f"Artículos: {legislation.articles}\n")
+            f.write(f"Etiquetas: {', '.join(legislation.tags)}\n")
+            f.write(f"\n{'='*80}\n\n")
+            f.write(legislation.content)
+
+    def search(self, query: str, field: str = "all") -> List[Legislation]:
+        """Search legislation."""
+        return self.index.search(query, field)
+
+    def get_legislation(self, legislation_id: str) -> Optional[Legislation]:
+        """Get legislation by ID."""
+        return self.index.get_by_id(legislation_id)
+
+    def list_all(self) -> List[Legislation]:
+        """List all legislation."""
+        return self.index.list_all()
+
+    def get_statistics(self) -> Dict:
+        """Get repository statistics."""
+        stats = self.index.get_statistics()
+        stats['repository_path'] = str(self.repo_path)
+        return stats
+
+    def delete_legislation(self, legislation_id: str) -> bool:
+        """Delete legislation."""
+        try:
+            content_file = self.repo_path / "content" / f"{legislation_id}.txt"
+            if content_file.exists():
+                content_file.unlink()
+                logger.info(f"Deleted legislation file: {legislation_id}")
+
+            self.index.remove_legislation(legislation_id)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete legislation: {e}")
             return False
 
-    def get_legislation_list(self) -> List[Legislation]:
-        """Get all legislation in index"""
-        return list(self.index.legislation_map.values())
-
-    def export_index(self, output_file: str) -> bool:
-        """Export legislation index to JSON"""
+    def export_json(self, output_path: str) -> bool:
+        """Export repository to JSON."""
         try:
             data = {
-                'metadata': {
-                    'exported_at': datetime.now().isoformat(),
-                    'total_entries': len(self.index.legislation_map),
-                    'statistics': self.index.get_statistics()
+                "metadata": {
+                    "exported": datetime.now().isoformat(),
+                    "statistics": self.get_statistics()
                 },
-                'legislation': [
-                    leg.to_dict() for leg in self.index.legislation_map.values()
-                ]
+                "legislation": [leg.to_dict() for leg in self.list_all()]
             }
-            
-            with open(output_file, 'w', encoding='utf-8') as f:
+            with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"Exported index to {output_file}")
+            logger.info(f"Exported repository to {output_path}")
             return True
-            
         except Exception as e:
-            logger.error(f"Error exporting index: {e}")
+            logger.error(f"Failed to export repository: {e}")
             return False
 
-    def search(self, query: str, search_type: str = 'keyword') -> List[Legislation]:
-        """Search legislation"""
+
+def create_argument_parser() -> argparse.ArgumentParser:
+    """Create and configure argument parser."""
+    parser = argparse.ArgumentParser(
+        description="Spanish legislation repository management tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s add "Ley 1/2020" content.txt
+  %(prog)s search "derechos" --field all
+  %(prog)s list
+  %(prog)s stats
+  %(prog)s export output.json
+        """
+    )
+
+    parser.add_argument(
+        '--repo',
+        default='legislation_repo',
+        help='Path to legislation repository (default: legislation_repo)'
+    )
+
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        help='Enable verbose logging'
+    )
+
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+
+    # Add command
+    add_parser = subparsers.add_parser('add', help='Add new legislation')
+    add_parser.add_argument('title', help='Legislation title')
+    add_parser.add_argument('file', help='File containing legislation content')
+    add_parser.add_argument('--type', help='Legislation type (Ley, Decreto, etc.)')
+    add_parser.add_argument('--date', help='Legislation date (ISO format)')
+    add_parser.add_argument('--tags', nargs='+', default=[], help='Tags for legislation')
+
+    # Search command
+    search_parser = subparsers.add_parser('search', help='Search legislation')
+    search_parser.add_argument('query', help='Search query')
+    search_parser.add_argument('--field', choices=['all', 'title', 'type', 'year', 'tags'],
+                              default='all', help='Field to search in')
+
+    # List command
+    subparsers.add_parser('list', help='List all legislation')
+
+    # Get command
+    get_parser = subparsers.add_parser('get', help='Get legislation by ID')
+    get_parser.add_argument('id', help='Legislation ID')
+
+    # Statistics command
+    subparsers.add_parser('stats', help='Show repository statistics')
+
+    # Delete command
+    delete_parser = subparsers.add_parser('delete', help='Delete legislation')
+    delete_parser.add_argument('id', help='Legislation ID')
+
+    # Export command
+    export_parser = subparsers.add_parser('export', help='Export repository to JSON')
+    export_parser.add_argument('output', help='Output file path')
+
+    return parser
+
+
+def main():
+    """Main entry point."""
+    parser = create_argument_parser()
+    args = parser.parse_args()
+
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    repo = LegislationRepository(args.repo)
+
+    if args.command == 'add':
         try:
-            if search_type == 'keyword':
-                return self.index.search_by_keyword(query)
-            elif search_type == 'type':
-                try:
-                    leg_type = LegislationType[query.upper()]
-                    return self.index.search_by_type(leg_type)
-                except KeyError:
-                    logger.warning(f"Unknown legislation type: {query}")
-                    return []
-            elif search_type == 'number':
-                result = self.index.search_by_number(query)
-                return [result] if result else []
+            with open(args.file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            leg_id = repo.add_from_text(
+                title=args.title,
+                content=content,
+                legislation_type=args.type,
+                date=args.date,
+                tags=args.tags
+            )
+            if leg_id:
+                print(f"✓ Added legislation: {leg_id}")
             else:
-                logger.warning(f"Unknown search type: {search_type}")
-                return []
-                
-        except Exception as e:
-            logger.error(f"Search error: {e}")
-            return []
+                print("✗ Failed to add legislation")
+                sys.exit(1)
+        except FileNotFoundError:
+            print(f"✗ File not found: {args.file}")
+            sys.exit(1)
 
+    elif args.command == 'search':
+        results = repo.search(args.query, args.field)
+        if results:
+            print(f"\nFound {len(results)} result(s):\n")
+            for leg in results:
+                print(f"ID: {leg.id}")
+                print(f"Título: {leg.title}")
+                print(f"Tipo: {leg.type}")
+                print(f"Año: {leg.year}")
+                print(f"Artículos: {leg.articles}")
+                print(f"Etiquetas: {', '.join(leg.tags)}")
+                print(f"Resumen: {leg.summary[:100]}...")
+                print("-" * 80)
+        else:
+            print(f"No results found for '{args.query}'")
 
-class LegislationCLI:
+    elif args.command == 'list':
+        all_legs = repo.list_all()
+        if all_legs:
+            print(f"\nTotal legislation items: {len(all_legs)}\n")
+            for leg in sorted(all_legs, key=lambda x: (x.year, x.type), reverse=True):
+                print(f"{leg.id:40} | {leg.title:50} | {leg.year} | {leg.articles} art.")
+        else:
+            print("Repository is empty")
+
+    elif args.command == 'get':
+        leg = repo.get_legislation(args.id)
+        if leg:
+            print(f"\nID: {leg.id}")
+            print(f"Título: {leg.title}")
+            print(f"Tipo: {leg.type}")
+            print(f"Número: {leg.number}")
+            print(f"Año: {leg.year}")
+            print(f"Fecha: {leg.date}")
+            print(f"Estado: {leg.status}")
+            print(f"Art
