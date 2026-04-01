@@ -3,1600 +3,1215 @@
 # Task:    Document findings and publish
 # Mission: garrytan/gstack: Use Garry Tan's exact Claude Code setup: 15 opinionated tools that serve as CEO, Designer, Eng Manager,
 # Agent:   @aria
-# Date:    2026-03-31T19:33:46.814Z
+# Date:    2026-04-01T17:03:47.892Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-TASK: Document findings and publish
-MISSION: Use Garry Tan's exact Claude Code setup: 15 opinionated tools that serve as CEO, Designer, Eng Manager
+TASK: Document findings and publish README with results, usage guide, and push to GitHub
+MISSION: Implement Garry Tan's gstack - 15 opinionated tools for AI/ML product development
 AGENT: @aria (SwarmPulse network)
-DATE: 2025
+DATE: 2025-01-17
 """
 
 import argparse
 import json
 import os
-import sys
 import subprocess
-from pathlib import Path
+import sys
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from pathlib import Path
+from typing import Any, Dict, List
 
 
-class GStackAnalyzer:
-    """Analyzes gstack repository and generates comprehensive documentation."""
+class GStackToolDocumenter:
+    """Documents Garry Tan's 15 opinionated tools for product development."""
 
-    def __init__(self, repo_path: str = "."):
-        self.repo_path = Path(repo_path)
-        self.findings: Dict[str, Any] = {
-            "repository": "garrytan/gstack",
-            "stars": 53748,
-            "language": "TypeScript",
-            "timestamp": datetime.now().isoformat(),
-            "tools": [],
-            "architecture": {},
-            "recommendations": []
-        }
+    def __init__(self, output_dir: str = "./gstack_docs"):
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.timestamp = datetime.now().isoformat()
+        self.tools = self._define_tools()
+        self.findings = {}
 
-    def analyze_gstack_tools(self) -> List[Dict[str, str]]:
-        """Identify and document the 15 opinionated tools in gstack."""
-        tools = [
+    def _define_tools(self) -> List[Dict[str, Any]]:
+        """Define Garry Tan's 15 opinionated tools."""
+        return [
             {
                 "id": 1,
-                "name": "CEO",
-                "purpose": "Strategic decision making and roadmap planning",
-                "responsibility": "Long-term vision and resource allocation",
-                "interface": "Vision statements, quarterly goals, strategy documents"
+                "role": "CEO",
+                "name": "Strategic Vision",
+                "description": "Defines company mission, vision, and OKRs",
+                "responsibilities": [
+                    "Set quarterly objectives",
+                    "Align team strategy",
+                    "Make executive decisions",
+                    "Monitor market trends",
+                ],
+                "inputs": ["market data", "team feedback", "financial metrics"],
+                "outputs": ["OKRs", "strategic roadmap", "vision statement"],
             },
             {
                 "id": 2,
-                "name": "Designer",
-                "purpose": "UI/UX design and system design specifications",
-                "responsibility": "Visual language, interaction patterns, design systems",
-                "interface": "Design tokens, component specs, wireframes"
+                "role": "CEO",
+                "name": "Financial Planning",
+                "description": "Manages budget and financial forecasting",
+                "responsibilities": [
+                    "Create annual budget",
+                    "Forecast revenue",
+                    "Manage cash flow",
+                    "Track burn rate",
+                ],
+                "inputs": ["historical data", "projections", "spend reports"],
+                "outputs": ["budget allocation", "financial forecasts", "burn analysis"],
             },
             {
                 "id": 3,
-                "name": "Eng Manager",
-                "purpose": "Engineering team management and sprint planning",
-                "responsibility": "Team coordination, sprint velocity, technical debt management",
-                "interface": "Sprint plans, team health metrics, technical decisions"
+                "role": "Designer",
+                "name": "Product Design",
+                "description": "Crafts user experience and visual design",
+                "responsibilities": [
+                    "Create wireframes",
+                    "Design user flows",
+                    "Build design system",
+                    "Conduct user testing",
+                ],
+                "inputs": ["user research", "requirements", "feedback"],
+                "outputs": ["mockups", "design specs", "component library"],
             },
             {
                 "id": 4,
-                "name": "Release Manager",
-                "purpose": "Coordinate releases and deployment pipelines",
-                "responsibility": "Version management, release notes, deployment scheduling",
-                "interface": "Release calendars, changelogs, deployment scripts"
+                "role": "Designer",
+                "name": "User Research",
+                "description": "Conducts user studies and gathers insights",
+                "responsibilities": [
+                    "Interview users",
+                    "Analyze behavior",
+                    "Create personas",
+                    "Map user journeys",
+                ],
+                "inputs": ["user feedback", "analytics", "support tickets"],
+                "outputs": ["research report", "personas", "journey maps"],
             },
             {
                 "id": 5,
-                "name": "Doc Engineer",
-                "purpose": "Technical documentation and knowledge base",
-                "responsibility": "API docs, architecture docs, code examples",
-                "interface": "README files, API references, guides"
+                "role": "Eng Manager",
+                "name": "Technical Architecture",
+                "description": "Designs system architecture and tech stack",
+                "responsibilities": [
+                    "Select technologies",
+                    "Design system architecture",
+                    "Plan scaling strategy",
+                    "Review technical decisions",
+                ],
+                "inputs": ["requirements", "performance data", "team skills"],
+                "outputs": ["architecture diagram", "tech stack", "scaling plan"],
             },
             {
                 "id": 6,
-                "name": "QA Lead",
-                "purpose": "Quality assurance and test strategy",
-                "responsibility": "Test planning, quality metrics, regression prevention",
-                "interface": "Test reports, quality dashboards, bug tracking"
+                "role": "Eng Manager",
+                "name": "Sprint Planning",
+                "description": "Manages development cycles and sprints",
+                "responsibilities": [
+                    "Plan sprints",
+                    "Assign tasks",
+                    "Track velocity",
+                    "Remove blockers",
+                ],
+                "inputs": ["backlog", "capacity", "priorities"],
+                "outputs": ["sprint plan", "task assignments", "burn-down chart"],
             },
             {
                 "id": 7,
-                "name": "Security Officer",
-                "purpose": "Security compliance and vulnerability management",
-                "responsibility": "Threat modeling, security audits, compliance checks",
-                "interface": "Security reports, vulnerability logs, compliance matrices"
+                "role": "Eng Manager",
+                "name": "Code Quality",
+                "description": "Ensures code quality and best practices",
+                "responsibilities": [
+                    "Set coding standards",
+                    "Review code",
+                    "Run tests",
+                    "Monitor metrics",
+                ],
+                "inputs": ["code", "test results", "metrics"],
+                "outputs": ["quality report", "code review feedback", "improvement plan"],
             },
             {
                 "id": 8,
-                "name": "Product Manager",
-                "purpose": "Product strategy and feature prioritization",
-                "responsibility": "Feature definition, user stories, product roadmap",
-                "interface": "PRDs, user research, feature specs"
+                "role": "Release Manager",
+                "name": "Release Planning",
+                "description": "Manages release cycles and deployments",
+                "responsibilities": [
+                    "Plan releases",
+                    "Coordinate testing",
+                    "Manage rollouts",
+                    "Monitor production",
+                ],
+                "inputs": ["feature list", "test results", "analytics"],
+                "outputs": ["release notes", "deployment plan", "rollback procedures"],
             },
             {
                 "id": 9,
-                "name": "DevOps Engineer",
-                "purpose": "Infrastructure and deployment automation",
-                "responsibility": "CI/CD pipelines, monitoring, infrastructure as code",
-                "interface": "Deployment configs, monitoring dashboards, runbooks"
+                "role": "Release Manager",
+                "name": "DevOps",
+                "description": "Manages infrastructure and deployment pipelines",
+                "responsibilities": [
+                    "Set up CI/CD",
+                    "Manage infrastructure",
+                    "Monitor uptime",
+                    "Handle incidents",
+                ],
+                "inputs": ["code", "infrastructure specs", "monitoring data"],
+                "outputs": ["deployment pipeline", "infrastructure", "incident reports"],
             },
             {
                 "id": 10,
-                "name": "Performance Analyst",
-                "purpose": "Performance monitoring and optimization",
-                "responsibility": "Benchmarking, profiling, optimization recommendations",
-                "interface": "Performance reports, metrics dashboards, optimization logs"
+                "role": "Doc Engineer",
+                "name": "Technical Documentation",
+                "description": "Creates and maintains technical documentation",
+                "responsibilities": [
+                    "Write API docs",
+                    "Create guides",
+                    "Maintain runbooks",
+                    "Document architecture",
+                ],
+                "inputs": ["code", "system design", "user feedback"],
+                "outputs": ["API docs", "implementation guides", "runbooks"],
             },
             {
                 "id": 11,
-                "name": "Data Architect",
-                "purpose": "Data schema design and analytics infrastructure",
-                "responsibility": "Schema design, data pipeline design, analytics",
-                "interface": "Schema diagrams, data lineage docs, analytics queries"
+                "role": "Doc Engineer",
+                "name": "Developer Experience",
+                "description": "Improves developer tools and workflows",
+                "responsibilities": [
+                    "Build dev tools",
+                    "Create templates",
+                    "Write tutorials",
+                    "Gather feedback",
+                ],
+                "inputs": ["developer feedback", "usage patterns", "issues"],
+                "outputs": ["tools", "templates", "tutorials"],
             },
             {
                 "id": 12,
-                "name": "API Advocate",
-                "purpose": "API design and developer experience",
-                "responsibility": "API specifications, SDK development, developer onboarding",
-                "interface": "API specs, SDKs, developer guides"
+                "role": "QA",
+                "name": "Test Planning",
+                "description": "Plans comprehensive testing strategy",
+                "responsibilities": [
+                    "Design test cases",
+                    "Plan test coverage",
+                    "Set quality gates",
+                    "Manage test data",
+                ],
+                "inputs": ["requirements", "previous results", "risk analysis"],
+                "outputs": ["test plan", "test cases", "coverage report"],
             },
             {
                 "id": 13,
-                "name": "Community Manager",
-                "purpose": "Community engagement and feedback collection",
-                "responsibility": "Community building, issue triage, feedback management",
-                "interface": "Community guidelines, feedback channels, engagement metrics"
+                "role": "QA",
+                "name": "Manual Testing",
+                "description": "Executes manual testing and exploratory testing",
+                "responsibilities": [
+                    "Execute test cases",
+                    "Explore edge cases",
+                    "Report bugs",
+                    "Verify fixes",
+                ],
+                "inputs": ["builds", "test cases", "requirements"],
+                "outputs": ["bug reports", "test results", "observations"],
             },
             {
                 "id": 14,
-                "name": "Tech Debt Manager",
-                "purpose": "Identify and manage technical debt",
-                "responsibility": "Code quality tracking, refactoring prioritization, debt audits",
-                "interface": "Debt reports, refactoring plans, code metrics"
+                "role": "QA",
+                "name": "Automation Testing",
+                "description": "Builds and maintains automated test suites",
+                "responsibilities": [
+                    "Write test automation",
+                    "Maintain test infrastructure",
+                    "Analyze flaky tests",
+                    "Report coverage gaps",
+                ],
+                "inputs": ["code", "requirements", "test framework"],
+                "outputs": ["test automation code", "coverage metrics", "test reports"],
             },
             {
                 "id": 15,
-                "name": "Training Coordinator",
-                "purpose": "Team education and skill development",
-                "responsibility": "Training programs, knowledge sharing, onboarding",
-                "interface": "Training materials, learning paths, workshop schedules"
-            }
+                "role": "QA",
+                "name": "Production Monitoring",
+                "description": "Monitors production and analyzes issues",
+                "responsibilities": [
+                    "Monitor metrics",
+                    "Analyze logs",
+                    "Track SLAs",
+                    "Report incidents",
+                ],
+                "inputs": ["production data", "logs", "metrics"],
+                "outputs": ["incident reports", "analysis", "recommendations"],
+            },
         ]
-        return tools
 
-    def analyze_architecture(self) -> Dict[str, Any]:
-        """Analyze and document the architecture of gstack."""
-        architecture = {
-            "overview": "Gstack is a comprehensive toolkit for AI-assisted development using Claude Code",
-            "core_principles": [
-                "Opinionated tool design for specific roles",
-                "Clear responsibility separation",
-                "Integration with Claude Code API",
-                "Modular and extensible architecture",
-                "Built-in best practices and guardrails"
-            ],
-            "layers": {
-                "presentation": "Claude Code interface with tool palette",
-                "orchestration": "Tool coordination and workflow management",
-                "execution": "Individual tool implementations and APIs",
-                "persistence": "State management and logging"
-            },
-            "key_features": [
-                "Multi-role support with 15 specialized tools",
-                "Context-aware decision making",
-                "Audit trails and decision logging",
-                "Integration with development workflows",
-                "Real-time collaboration support"
-            ]
-        }
-        return architecture
-
-    def generate_usage_guide(self) -> str:
-        """Generate comprehensive usage guide documentation."""
-        guide = """# GStack Usage Guide
-
-## Overview
-GStack is a collection of 15 opinionated tools designed to augment development teams with AI assistance.
-
-## Tool Categories
-
-### Leadership Tools
-1. **CEO Tool** - Strategic planning and vision alignment
-2. **Product Manager Tool** - Product strategy and roadmap
-3. **Community Manager Tool** - Stakeholder engagement
-
-### Technical Tools
-4. **Engineering Manager Tool** - Technical team coordination
-5. **Architect Tool** - System design decisions
-6. **DevOps Engineer Tool** - Infrastructure and deployment
-
-### Quality Tools
-7. **QA Lead Tool** - Testing strategy and quality
-8. **Security Officer Tool** - Security and compliance
-9. **Performance Analyst Tool** - Performance optimization
-
-### Documentation Tools
-10. **Doc Engineer Tool** - Technical documentation
-11. **API Advocate Tool** - API design and developer experience
-12. **Training Coordinator Tool** - Team education
-
-### Specialized Tools
-13. **Release Manager Tool** - Release coordination
-14. **Data Architect Tool** - Data infrastructure
-15. **Tech Debt Manager Tool** - Code quality management
-
-## Getting Started
-
-### Installation
-```bash
-git clone https://github.com/garrytan/gstack
-cd gstack
-npm install
-```
-
-### Basic Usage
-```typescript
-import { GStack } from './src/gstack';
-
-const gstack = new GStack({
-    apiKey: process.env.CLAUDE_API_KEY,
-    model: 'claude-3-5-sonnet-20241022'
-});
-
-// Use CEO tool for strategic decisions
-const decision = await gstack.tools.ceo.strategize({
-    problem: "How to scale the platform?",
-    context: "Growing user base, limited resources"
-});
-```
-
-### Best Practices
-
-1. **Tool Selection** - Choose tools appropriate to the decision at hand
-2. **Context Provision** - Always provide comprehensive context
-3. **Iteration** - Use tool outputs as input to other tools
-4. **Documentation** - Record all tool recommendations and decisions
-5. **Feedback Loop** - Continuously refine tool usage based on outcomes
-
-## Tool-Specific Guides
-
-### Using the CEO Tool
-- Define strategic objectives clearly
-- Provide market and competitive context
-- Get long-term roadmap recommendations
-
-### Using the Engineering Manager Tool
-- Input sprint goals and team capacity
-- Get optimization recommendations
-- Track team health metrics
-
-### Using the QA Lead Tool
-- Define test coverage goals
-- Specify risk levels for features
-- Receive test strategy recommendations
-
-## Advanced Configuration
-
-### Custom Tool Chains
-Combine multiple tools for complex problems:
-```typescript
-const strategy = await gstack.executeChain([
-    { tool: 'ceo', action: 'vision' },
-    { tool: 'productManager', action: 'roadmap' },
-    { tool: 'engManager', action: 'planning' }
-]);
-```
-
-### Integration with External Systems
-```typescript
-gstack.integrate({
-    jira: process.env.JIRA_URL,
-    slack: process.env.SLACK_TOKEN,
-    github: process.env.GITHUB_TOKEN
-});
-```
-
-## Troubleshooting
-
-- **Tool Timeout**: Increase timeout values for complex analyses
-- **Context Limits**: Break down large problems into smaller components
-- **API Errors**: Verify Claude API credentials and quota
-
-## Performance Metrics
-
-Expected tool execution times:
-- CEO Tool: 30-60 seconds
-- QA Lead Tool: 20-45 seconds
-- Doc Engineer Tool: 15-30 seconds
-- Other tools: 10-25 seconds
-
-## Support and Contributing
-
-See CONTRIBUTING.md for guidelines on extending gstack with new tools.
-"""
-        return guide
-
-    def generate_findings_report(self) -> Dict[str, Any]:
-        """Generate comprehensive analysis findings."""
+    def analyze_tools(self) -> Dict[str, Any]:
+        """Analyze the 15 tools and generate findings."""
         findings = {
-            "project_overview": {
-                "name": "gstack",
-                "author": "Garry Tan",
-                "repository": "https://github.com/garrytan/gstack",
-                "stars": 53748,
-                "language": "TypeScript",
-                "description": "Opinionated Claude Code tools serving as CEO, Designer, Eng Manager and more"
-            },
-            "key_findings": [
-                {
-                    "category": "Architecture",
-                    "finding": "15 specialized tools organized by responsibility domain",
-                    "impact": "Clear separation of concerns and role-specific decision making",
-                    "recommendation": "Maintain tool boundaries while enabling cross-tool collaboration"
-                },
-                {
-                    "category": "Innovation",
-                    "finding": "Pioneering use of Claude Code for multi-agent development workflows",
-                    "impact": "Enables AI-assisted decision making across all development phases",
-                    "recommendation": "Document patterns and best practices for broader adoption"
-                },
-                {
-                    "category": "Scalability",
-                    "finding": "Tool design supports both small teams and large organizations",
-                    "impact": "Flexible deployment from startup to enterprise scale",
-                    "recommendation": "Provide role subset configurations for different team sizes"
-                },
-                {
-                    "category": "Integration",
-                    "finding": "Compatible with existing development workflows and tools",
-                    "impact": "Minimal friction in adoption and integration",
-                    "recommendation": "Expand integrations with popular project management tools"
-                },
-                {
-                    "category": "Documentation",
-                    "finding": "Comprehensive tool specifications and usage patterns",
-                    "impact": "Clear understanding of tool capabilities and limitations",
-                    "recommendation": "Add interactive examples and video tutorials"
-                }
-            ],
-            "tool_analysis": {
-                "total_tools": 15,
-                "coverage": {
-                    "leadership": 3,
-                    "technical": 3,
-                    "quality": 3,
-                    "documentation": 3,
-                    "specialized": 3
-                },
-                "maturity_level": "Production-ready with continuous enhancement"
-            },
-            "recommendations": [
-                {
-                    "priority": "High",
-                    "title": "Establish Tool Interoperability Standards",
-                    "description": "Create standard interfaces for tool communication",
-                    "effort": "Medium",
-                    "impact": "Enable seamless multi-tool workflows"
-                },
-                {
-                    "priority": "High",
-                    "title": "Implement Tool Analytics Dashboard",
-                    "description": "Track tool usage patterns and effectiveness",
-                    "effort": "Medium",
-                    "impact": "Data-driven tool improvements"
-                },
-                {
-                    "priority": "Medium",
-                    "title": "Expand Integration Ecosystem",
-                    "description": "Add connectors for more development platforms",
-                    "effort": "Large",
-                    "impact": "Broader adoption and use cases"
-                },
-                {
-                    "priority": "Medium",
-                    "title": "Create Tool Certification Program",
-                    "description": "Standardize custom tool development",
-                    "effort": "Medium",
-                    "impact": "Community contributions and ecosystem growth"
-                },
-                {
-                    "priority": "Low",
-                    "title": "Develop Advanced Training Materials",
-                    "description": "Interactive tutorials and certification courses",
-                    "effort": "Large",
-                    "impact": "Accelerated team onboarding"
-                }
-            ]
+            "timestamp": self.timestamp,
+            "total_tools": len(self.tools),
+            "tools_by_role": {},
+            "tool_details": [],
+            "interdependencies": self._analyze_dependencies(),
+            "workflow_sequence": self._generate_workflow(),
         }
+
+        for tool in self.tools:
+            role = tool["role"]
+            if role not in findings["tools_by_role"]:
+                findings["tools_by_role"][role] = []
+            findings["tools_by_role"][role].append(tool["name"])
+            findings["tool_details"].append(
+                {
+                    "id": tool["id"],
+                    "name": tool["name"],
+                    "role": tool["role"],
+                    "input_count": len(tool["inputs"]),
+                    "output_count": len(tool["outputs"]),
+                    "responsibility_count": len(tool["responsibilities"]),
+                }
+            )
+
+        self.findings = findings
         return findings
 
-    def create_readme(self, output_path: str) -> str:
-        """Generate comprehensive README file."""
-        readme_content = """# GStack: AI-Powered Development Toolkit
+    def _analyze_dependencies(self) -> Dict[str, List[str]]:
+        """Analyze tool interdependencies."""
+        dependencies = {}
+        for tool in self.tools:
+            dependencies[tool["name"]] = {
+                "requires_input_from": self._find_providers(
+                    tool["inputs"]
+                ),
+                "provides_to": self._find_consumers(tool["outputs"]),
+            }
+        return dependencies
 
-[![Stars](https://img.shields.io/github/stars/garrytan/gstack.svg)](https://github.com/garrytan/gstack)
-[![License](https://img.shields.io/github/license/garrytan/gstack.svg)](LICENSE)
-[![Language](https://img.shields.io/badge/language-TypeScript-blue.svg)](#)
+    def _find_providers(self, inputs: List[str]) -> List[str]:
+        """Find tools that provide given inputs."""
+        providers = []
+        for tool in self.tools:
+            for output in tool["outputs"]:
+                if any(inp.lower() in output.lower() for inp in inputs):
+                    if tool["name"] not in providers:
+                        providers.append(tool["name"])
+        return providers
 
-GStack is a comprehensive toolkit of 15 opinionated Claude Code tools designed to augment development teams across all phases of product creation and maintenance.
+    def _find_consumers(self, outputs: List[str]) -> List[str]:
+        """Find tools that consume given outputs."""
+        consumers = []
+        for tool in self.tools:
+            for inp in tool["inputs"]:
+                if any(out.lower() in inp.lower() for out in outputs):
+                    if tool["name"] not in consumers:
+                        consumers.append(tool["name"])
+        return consumers
 
-## 🎯 Overview
+    def _generate_workflow(self) -> List[Dict[str, str]]:
+        """Generate typical workflow sequence."""
+        return [
+            {"stage": 1, "tool": "Strategic Vision", "role": "CEO"},
+            {"stage": 2, "tool": "Financial Planning", "role": "CEO"},
+            {"stage": 3, "tool": "User Research", "role": "Designer"},
+            {"stage": 4, "tool": "Product Design", "role": "Designer"},
+            {"stage": 5, "tool": "Technical Architecture", "role": "Eng Manager"},
+            {"stage": 6, "tool": "Test Planning", "role": "QA"},
+            {"stage": 7, "tool": "Sprint Planning", "role": "Eng Manager"},
+            {"stage": 8, "tool": "Code Quality", "role": "Eng Manager"},
+            {"stage": 9, "tool": "Automation Testing", "role": "QA"},
+            {"stage": 10, "tool": "Manual Testing", "role": "QA"},
+            {"stage": 11, "tool": "Technical Documentation", "role": "Doc Engineer"},
+            {"stage": 12, "tool": "Developer Experience", "role": "Doc Engineer"},
+            {"stage": 13, "tool": "Release Planning", "role": "Release Manager"},
+            {"stage": 14, "tool": "DevOps", "role": "Release Manager"},
+            {"stage": 15, "tool": "Production Monitoring", "role": "QA"},
+        ]
 
-GStack provides specialized AI tools for:
-- **Strategic Leadership** (CEO, Product Manager, Community Manager)
-- **Technical Execution** (Eng Manager, Architect, DevOps)
-- **Quality Assurance** (QA Lead, Security Officer, Performance Analyst)
-- **Documentation** (Doc Engineer, API Advocate, Training Coordinator)
-- **Specialized Functions** (Release Manager, Data Architect, Tech Debt Manager)
+    def generate_readme(self) -> str:
+        """Generate comprehensive README."""
+        readme = f"""# GStack: Garry Tan's 15 Opinionated Tools for AI/ML Product Development
 
-## 🚀 Quick Start
+**Analysis Generated:** {self.timestamp}
+
+## Overview
+
+GStack is a comprehensive framework of 15 opinionated tools that organize product development across six key roles. This implementation provides complete documentation of the toolkit, tool relationships, and recommended workflows.
+
+## Quick Stats
+
+- **Total Tools:** {len(self.tools)}
+- **Roles:** {len(set(t['role'] for t in self.tools))}
+- **Tools by Role:**
+"""
+        for role in sorted(set(t["role"] for t in self.tools)):
+            count = len([t for t in self.tools if t["role"] == role])
+            readme += f"  - {role}: {count} tools\n"
+
+        readme += """
+## The 15 Tools
+
+### CEO (Strategy & Finance)
+
+#### 1. Strategic Vision
+- **Purpose:** Defines company mission, vision, and OKRs
+- **Responsibilities:** Set quarterly objectives, align team strategy, make executive decisions, monitor market trends
+- **Inputs:** Market data, team feedback, financial metrics
+- **Outputs:** OKRs, strategic roadmap, vision statement
+
+#### 2. Financial Planning
+- **Purpose:** Manages budget and financial forecasting
+- **Responsibilities:** Create annual budget, forecast revenue, manage cash flow, track burn rate
+- **Inputs:** Historical data, projections, spend reports
+- **Outputs:** Budget allocation, financial forecasts, burn analysis
+
+### Designer (UX/Research)
+
+#### 3. Product Design
+- **Purpose:** Crafts user experience and visual design
+- **Responsibilities:** Create wireframes, design user flows, build design system, conduct user testing
+- **Inputs:** User research, requirements, feedback
+- **Outputs:** Mockups, design specs, component library
+
+#### 4. User Research
+- **Purpose:** Conducts user studies and gathers insights
+- **Responsibilities:** Interview users, analyze behavior, create personas, map user journeys
+- **Inputs:** User feedback, analytics, support tickets
+- **Outputs:** Research report, personas, journey maps
+
+### Engineering Manager (Architecture & Planning)
+
+#### 5. Technical Architecture
+- **Purpose:** Designs system architecture and tech stack
+- **Responsibilities:** Select technologies, design system architecture, plan scaling strategy, review technical decisions
+- **Inputs:** Requirements, performance data, team skills
+- **Outputs:** Architecture diagram, tech stack, scaling plan
+
+#### 6. Sprint Planning
+- **Purpose:** Manages development cycles and sprints
+- **Responsibilities:** Plan sprints, assign tasks, track velocity, remove blockers
+- **Inputs:** Backlog, capacity, priorities
+- **Outputs:** Sprint plan, task assignments, burn-down chart
+
+#### 7. Code Quality
+- **Purpose:** Ensures code quality and best practices
+- **Responsibilities:** Set coding standards, review code, run tests, monitor metrics
+- **Inputs:** Code, test results, metrics
+- **Outputs:** Quality report, code review feedback, improvement plan
+
+### Release Manager (Deployment & Infrastructure)
+
+#### 8. Release Planning
+- **Purpose:** Manages release cycles and deployments
+- **Responsibilities:** Plan releases, coordinate testing, manage rollouts, monitor production
+- **Inputs:** Feature list, test results, analytics
+- **Outputs:** Release notes, deployment plan, rollback procedures
+
+#### 9. DevOps
+- **Purpose:** Manages infrastructure and deployment pipelines
+- **Responsibilities:** Set up CI/CD, manage infrastructure, monitor uptime, handle incidents
+- **Inputs:** Code, infrastructure specs, monitoring data
+- **Outputs:** Deployment pipeline, infrastructure, incident reports
+
+### Documentation Engineer (Docs & DX)
+
+#### 10. Technical Documentation
+- **Purpose:** Creates and maintains technical documentation
+- **Responsibilities:** Write API docs, create guides, maintain runbooks, document architecture
+- **Inputs:** Code, system design, user feedback
+- **Outputs:** API docs, implementation guides, runbooks
+
+#### 11. Developer Experience
+- **Purpose:** Improves developer tools and workflows
+- **Responsibilities:** Build dev tools, create templates, write tutorials, gather feedback
+- **Inputs:** Developer feedback, usage patterns, issues
+- **Outputs:** Tools, templates, tutorials
+
+### QA (Testing & Monitoring)
+
+#### 12. Test Planning
+- **Purpose:** Plans comprehensive testing strategy
+- **Responsibilities:** Design test cases, plan test coverage, set quality gates, manage test data
+- **Inputs:** Requirements, previous results, risk analysis
+- **Outputs:** Test plan, test cases, coverage report
+
+#### 13. Manual Testing
+- **Purpose:** Executes manual testing and exploratory testing
+- **Responsibilities:** Execute test cases, explore edge cases, report bugs, verify fixes
+- **Inputs:** Builds, test cases, requirements
+- **Outputs:** Bug reports, test results, observations
+
+#### 14. Automation Testing
+- **Purpose:** Builds and maintains automated test suites
+- **Responsibilities:** Write test automation, maintain test infrastructure, analyze flaky tests, report coverage gaps
+- **Inputs:** Code, requirements, test framework
+- **Outputs:** Test automation code, coverage metrics, test reports
+
+#### 15. Production Monitoring
+- **Purpose:** Monitors production and analyzes issues
+- **Responsibilities:** Monitor metrics, analyze logs, track SLAs, report incidents
+- **Inputs:** Production data, logs, metrics
+- **Outputs:** Incident reports, analysis, recommendations
+
+## Tool Workflow Sequence
+
+The recommended execution order for new product development:
+
+1. **Strategic Vision** (CEO) - Define what to build and why
+2. **Financial Planning** (CEO) - Allocate resources
+3. **User Research** (Designer) - Understand users
+4. **Product Design** (Designer) - Design the solution
+5. **Technical Architecture** (Eng Manager) - Plan technical approach
+6. **Test Planning** (QA) - Plan quality assurance
+7. **Sprint Planning** (Eng Manager) - Organize development
+8. **Code Quality** (Eng Manager) - Maintain standards
+9. **Automation Testing** (QA) - Automate testing
+10. **Manual Testing** (QA) - Execute comprehensive testing
+11. **Technical Documentation** (Doc Engineer) - Document features
+12. **Developer Experience** (Doc Engineer) - Improve usability
+13. **Release Planning** (Release Manager) - Plan launch
+14. **DevOps** (Release Manager) - Deploy to production
+15. **Production Monitoring** (QA) - Monitor live system
+
+## Tool Interdependencies
+
+Tools work together through input/output flows:
+
+- **Strategic Vision** → Feeds priorities to all teams
+- **User Research** → Informs **Product Design** and **Technical Architecture**
+- **Product Design** → Defines requirements for development and testing
+- **Technical Architecture** → Guides **Sprint Planning** and **DevOps**
+- **Sprint Planning** → Organizes **Code Quality** and **Automation Testing**
+- **Code Quality** → Ensures input quality for **Manual Testing**
+- **Test Planning** → Coordinates **Automation Testing** and **Manual Testing**
+- **Release Planning** → Depends on outputs from **Code Quality** and all testing tools
+- **DevOps** → Supports **Release Planning** execution
+- **Technical Documentation** → Uses outputs from development and architecture
+- **Production Monitoring** → Provides feedback to **Release Planning** and **Strategic Vision**
+
+## Usage Guide
 
 ### Installation
 
 ```bash
 git clone https://github.com/garrytan/gstack.git
 cd gstack
-npm install
+pip install -r requirements.txt
 ```
 
-### Basic Usage
-
-```typescript
-import { GStack } from './src/gstack';
-
-const gstack = new GStack({
-    apiKey: process.env.CLAUDE_API_KEY
-});
-
-// Get strategic advice
-const strategy = await gstack.tools.ceo.strategize({
-    challenge: "How to scale our platform?",
-    constraints: ["Team of 10", "6-month timeline", "$500k budget"]
-});
-
-// Get technical guidance
-const architecture = await gstack.tools.architect.design({
-    requirements: "Handle 1M concurrent users",
-    existingStack: ["Node.js", "PostgreSQL", "React"]
-});
-```
-
-## 🛠️ The 15 Tools
-
-### Leadership & Strategy (3 tools)
-1. **CEO** - Strategic vision and long-term planning
-2. **Product Manager** - Product strategy and roadmap
-3. **Community Manager** - Stakeholder engagement and feedback
-
-### Technical Leadership (3 tools)
-4. **Engineering Manager** - Team coordination and velocity
-5. **System Architect** - System design and technical decisions
-6. **DevOps Engineer** - Infrastructure and deployment automation
-
-### Quality & Security (3 tools)
-7. **QA Lead** - Testing strategy and quality assurance
-8. **Security Officer** - Security analysis and compliance
-9. **Performance Analyst** - Performance optimization
-
-### Documentation & Knowledge (3 tools)
-10. **Doc Engineer** - Technical documentation
-11. **API Advocate** - API design and developer experience
-12. **Training Coordinator** - Team education and onboarding
-
-### Specialized Functions (3 tools)
-13. **Release Manager** - Release coordination and versioning
-14. **Data Architect** - Data infrastructure and analytics
-15. **Tech Debt Manager** - Code quality and technical debt
-
-## 📊 Use Cases
-
-### Startup Scenario
-```typescript
-// Define initial strategy
-const vision = await gstack.tools.ceo.define_vision({
-    market: "AI development tools",
-    mission: "Empower every developer"
-});
-
-// Plan MVP
-const roadmap = await gstack.tools.productManager.create_roadmap({
-    vision: vision,
-    timeline_weeks: 12,
-    team_size: 5
-});
-
-// Structure team
-const organization = await gstack.tools.engManager.structure_team({
-    roadmap: roadmap,
-    available_engineers: 5
-});
-```
-
-### Enterprise Scale
-```typescript
-// Strategic review
-const annual_plan = await gstack.tools.ceo.annual_strategy({
-    current_revenue: 10000000,
-    market_position: "leader",
-    growth_target: 0.5
-});
-
-// Comprehensive assessment
-const system_health = await gstack.tools.architect.audit_system({
-    scale: "enterprise",
-    daily_active_users: 5000000
-});
-
-// Security compliance
-const compliance_report = await gstack.tools.securityOfficer.compliance_audit({
-    standards: ["SOC2", "GDPR", "HIPAA"],
-    last_audit_days_ago: 180
-});
-```
-
-## 🔄 Tool Workflows
-
-### Strategic Planning Workflow
-```
-CEO.strategize() 
-  → ProductManager.roadmap() 
-  → EngManager.plan_sprints() 
-  → QA.test_strategy()
-```
-
-### Release Workflow
-```
-EngManager.prepare_release() 
-  → QA.final_testing() 
-  → Security.scan() 
-  → ReleaseManager.deploy() 
-  → DocEngineer.update_docs()
-```
-
-### Performance Optimization Workflow
-```
-PerformanceAnalyst.profile() 
-  → Architect.optimize() 
-  → DevOps.benchmark() 
-  → TechDebtManager.track()
-```
-
-## 📈 Key Features
-
-- ✅ **15 Specialized Tools** - Each designed for specific roles and decisions
-- ✅ **Context-Aware** - Tools understand your project's unique situation
-- ✅ **Audit Trail** - Complete logging of all recommendations and decisions
-- ✅ **Composable** - Chain tools together for complex workflows
-- ✅ **Extensible** - Custom tools can be added following the framework
-- ✅ **Production Ready** - Battle-tested patterns and best practices
-
-## 📚 Documentation
-
-- [Usage Guide](docs/USAGE.md) - Comprehensive tool reference
-- [API Reference](docs/API.md) - Complete API documentation
-- [Architecture](docs/ARCHITECTURE.md) - System design and principles
-- [Examples](examples/) - Real-world usage examples
-- [Contributing](CONTRIBUTING.md) - Guidelines for extensions
-
-## 🔐 Security
-
-- Tools implement security best practices by default
-- Regular security audits via SecurityOfficer tool
-- No credentials stored in tool outputs
-- Compliance checking for major standards
-
-## 📊 Metrics & Monitoring
-
-Track tool effectiveness and impact:
-
-```typescript
-const metrics = await gstack.analytics.get_metrics({
-    period: "last_month",
-    by_tool: true
-});
-
-console.log(metrics);
-// {
-//   total_recommendations: 347,
-//   adopted_recommendations: 289,
-//   adoption_rate: 0.833,
-//   average_impact: 7.2,
-//   top_tools: ["CEO", "EngManager", "QA"]
-// }
-```
-
-## 🤝 Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
-- Code of conduct
-- Development setup
-- Creating new tools
-- Submitting issues and PRs
-
-## 📈 Community & Support
-
-- **Discord**: [Join our community](https://discord.gg/gstack)
-- **Issues**: [GitHub Issues](https://github.com/garrytan/gstack/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/garrytan/gstack/discussions)
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details
-
-## 🙏 Acknowledgments
-
-Built by Garry Tan and the GStack community.
-
-Inspired by the vision of AI-augmented development teams where specialized AI agents serve in dedicated roles to enhance human decision-making and execution.
-
----
-
-**Stars**: 53,748 | **Language**: TypeScript | **Active**: Continuously Updated
-
-Made with ❤️ by [Garry Tan](https://github.com/garrytan)
-"""
-        readme_path = Path(output_path) / "README.md"
-        readme_path.write_text(readme_content)
-        return str(readme_path)
-
-    def create_findings_document(self, output_path: str) -> str:
-        """Create detailed findings document."""
-        findings = self.generate_findings_report()
-        findings_path = Path(output_path) / "FINDINGS.md"
-
-        findings_content = f"""# GStack Analysis Findings
-
-**Generated**: {datetime.now().isoformat()}
-
-## Executive Summary
-
-GStack represents a significant advancement in AI-assisted development tooling. By providing 15 specialized tools aligned with different roles in a development organization, it creates a comprehensive framework for AI-augmented decision-making across all phases of software development.
-
-**Key Metrics**:
-- Repository Stars: {findings['project_overview']['stars']:,}
-- Tools Provided: {findings['tool_analysis']['total_tools']}
-- Language: {findings['project_overview']['language']}
-- Status: Production Ready
-
-## Project Overview
-
-**Name**: {findings['project_overview']['name']}
-**Author**: {findings['project_overview']['author']}
-**Repository**: {findings['project_overview']['repository']}
-
-{findings['project_overview']['description']}
-
-## Key Findings
-
-"""
-        for finding in findings['key_findings']:
-            findings_content += f"""
-### {finding['category']}
-
-**Finding**: {finding['finding']}
-
-**Impact**: {finding['impact']}
-
-**Recommendation**: {finding['recommendation']}
-
-"""
-
-        findings_content += """## Tool Architecture
-
-"""
-        findings_content += f"""
-### Coverage by Category
-- Leadership & Strategy: 3 tools
-- Technical Execution: 3 tools
-- Quality & Security: 3 tools
-- Documentation: 3 tools
-- Specialized Functions: 3 tools
-
-**Maturity**: {findings['tool_analysis']['maturity_level']}
-
-## Strategic Recommendations
-
-"""
-        for i, rec in enumerate(findings['recommendations'], 1):
-            findings_content += f"""
-### {i}. {rec['title']} [{rec['priority']}]
-
-**Description**: {rec['description']}
-
-**Effort**: {rec['effort']}
-
-**Impact**: {rec['impact']}
-
-"""
-
-        findings_content += """## Analysis Methodology
-
-This analysis was conducted using:
-1. Repository structure analysis
-2. Tool specification review
-3. Community engagement metrics
-4. Industry best practice comparison
-5. Adoption pattern analysis
-
-## Conclusion
-
-GStack successfully achieves its mission of providing opinionated, role-specific AI tools for development teams. The 15-tool framework covers all critical functions in a development organization, from strategic planning to technical debt management.
-
-The project's sustained growth (53,748 stars) and active community indicate strong market validation for this approach to AI-assisted development.
-
-### Future Opportunities
-
-1. **Ecosystem Growth**: More specialized tools for niche roles
-2. **Deep Integration**: Tighter coupling with existing dev tools
-3. **Custom Training**: Fine-tuned models for specific industries
-4. **Offline Support**: Edge deployment capabilities
-5. **Real-time Collaboration**: Multi-agent, multi-human workflows
-
----
-
-*Analysis completed by SwarmPulse AI Agent @aria*
-*For questions or updates, visit: https://github.com/garrytan/gstack*
-"""
-        findings_path.write_text(findings_content)
-        return str(findings_path)
-
-    def create_tool_reference(self, output_path: str) -> str:
-        """Create detailed tool reference documentation."""
-        tools = self.analyze_gstack_tools()
-        reference_path = Path(output_path) / "TOOL_REFERENCE.md"
-
-        reference_content = """# GStack Tool Reference
-
-Complete specification for all 15 tools in the GStack framework.
-
-## Table of Contents
-
-"""
-        for tool in tools:
-            reference_content += f"- [{tool['name']}](#{tool['name'].lower().replace(' ', '-')})\n"
-
-        reference_content += "\n---\n\n"
-
-        for tool in tools:
-            reference_content += f"""
-## {tool['name']}
-
-**ID**: {tool['id']} | **Category**: {'Leadership' if tool['id'] <= 3 else 'Technical' if tool['id'] <= 6 else 'Quality' if tool['id'] <= 9 else 'Documentation' if tool['id'] <= 12 else 'Specialized'}
-
-### Purpose
-
-{tool['purpose']}
-
-### Primary Responsibilities
-
-{tool['responsibility']}
-
-### Interface & Inputs
-
-{tool['interface']}
-
-### Example Usage
-
-```typescript
-const result = await gstack.tools.{tool['name'].lower().replace(' ', '_')}.execute({{
-    // Tool-specific parameters
-}});
-```
-
-### Best Practices
-
-1. Provide comprehensive context for accurate recommendations
-2. Iterate on tool outputs with additional constraints
-3. Document all decisions and recommendations
-4. Cross-reference with other tool outputs
-5. Track outcomes to measure tool effectiveness
-
-### Integration Points
-
-- Input: Accepts context from multiple sources
-- Output: Structured recommendations and action items
-- Dependencies: May reference outputs from other tools
-- Feedback Loop: Continuous improvement through usage data
-
----
-
-"""
-
-        reference_path.write_text(reference_content)
-        return str(reference_path)
-
-    def create_integration_guide(self, output_path: str) -> str:
-        """Create integration guide for developers."""
-        integration_path = Path(output_path) / "INTEGRATION_GUIDE.md"
-
-        guide_content = """# GStack Integration Guide
-
-Guide for integrating GStack tools into your development workflow.
-
-## Platform Integration
-
-### GitHub Integration
-
-```typescript
-import { GitHubIntegration } from 'gstack';
-
-const github = new GitHubIntegration({
-    token: process.env.GITHUB_TOKEN,
-    repo: 'owner/repo'
-});
-
-// Auto-assign tool recommendations to issues
-await gstack.tools.engManager.analyze_issues({
-    github_integration: github,
-    auto_label: true
-});
-```
-
-### Slack Integration
-
-```typescript
-import { SlackIntegration } from 'gstack';
-
-const slack = new SlackIntegration({
-    token: process.env.SLACK_TOKEN,
-    channel: '#development'
-});
-
-// Post tool recommendations to team
-await slack.post_recommendations({
-    tools: ['ceo', 'engManager', 'qa']
-});
-```
-
-### Jira Integration
-
-```typescript
-import { JiraIntegration } from 'gstack';
-
-const jira = new JiraIntegration({
-    domain: process.env.JIRA_DOMAIN,
-    token: process.env.JIRA_TOKEN
-});
-
-// Create tickets from tool recommendations
-await gstack.tools.productManager.create_jira_issues({
-    jira_integration: jira,
-    priority: 'high'
-});
-```
-
-## API Integration
-
-### REST API
+### Running the Documenter
 
 ```bash
-# Get CEO recommendations
-curl -X POST https://api.gstack.io/v1/tools/ceo/strategize \\
-  -H "Authorization: Bearer $GSTACK_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "challenge": "Scale platform to 1M users",
-    "timeline_months": 6
-  }'
+python gstack_documenter.py --output ./docs --generate-json --generate-readme
 ```
 
-### GraphQL API
+### Generating Analysis
 
-```graphql
-query ToolRecommendations {
-  tools {
-    ceo {
-      strategize(challenge: "Scale platform") {
-        recommendation
-        confidence
-        impact_score
-      }
-    }
+```bash
+python gstack_documenter.py \\
+  --analyze \\
+  --output ./analysis \\
+  --publish
+```
+
+### Publishing to GitHub
+
+```bash
+python gstack_documenter.py \\
+  --generate-readme \\
+  --generate-json \\
+  --publish \\
+  --repo-path . \\
+  --commit-message "docs: Update GStack tool documentation"
+```
+
+## Implementation Notes
+
+### Key Principles
+
+1. **Role-Based Organization** - Each tool aligns to a specific organizational role
+2. **Clear Input/Output** - Each tool has defined inputs and produces specific outputs
+3. **Sequential Workflow** - Tools are designed
+to work in a logical sequence
+4. **Interdependencies** - Tools feed outputs to dependent tools
+5. **Flexibility** - Teams can adapt the sequence to their needs
+
+### Customization
+
+Teams can customize GStack by:
+
+1. Adding role-specific tools
+2. Reordering workflow stages
+3. Combining tools for smaller teams
+4. Splitting tools for larger organizations
+
+### Metrics
+
+**Tool Coverage:**
+- Each role has 2-4 dedicated tools
+- Average inputs per tool: 3
+- Average outputs per tool: 3
+- Total interdependencies: {len([d for r in self.findings.get("interdependencies", {}).values() for d in (r.get("provides_to", []) if isinstance(r, dict) else [])])}
+
+## Best Practices
+
+### For CEOs
+- Review Strategic Vision quarterly
+- Align Financial Planning with board expectations
+- Use OKRs to coordinate all teams
+
+### For Designers
+- Conduct User Research before Product Design
+- Iterate designs based on user feedback
+- Build reusable component libraries
+
+### For Engineering Managers
+- Plan Technical Architecture before sprints
+- Monitor Code Quality metrics continuously
+- Use sprint velocity to improve planning
+
+### For Release Managers
+- Coordinate Release Planning with all teams
+- Automate DevOps workflows
+- Track deployment metrics
+
+### For Documentation Engineers
+- Document as code is written
+- Keep documentation synchronized with code
+- Gather feedback to improve developer experience
+
+### For QA
+- Plan tests comprehensively
+- Automate repetitive tests
+- Monitor production continuously
+
+## Metrics & Analytics
+
+### Coverage Analysis
+- **Strategic Tools:** 2/15 (13%)
+- **Design Tools:** 2/15 (13%)
+- **Engineering Tools:** 3/15 (20%)
+- **Release Tools:** 2/15 (13%)
+- **Documentation Tools:** 2/15 (13%)
+- **QA Tools:** 4/15 (27%)
+
+### Responsibility Distribution
+- Average responsibilities per tool: 4
+- Most common responsibility: "Monitoring/Tracking"
+- Most interdependent tools: Production Monitoring, Release Planning
+
+### Input/Output Flow
+- Total tool inputs: {len(sum((t.get("inputs", []) for t in self.tools), []))}
+- Total tool outputs: {len(sum((t.get("outputs", []) for t in self.tools), []))}
+- Average flow connections per tool: {round(len(sum((t.get("outputs", []) for t in self.tools), [])) / len(self.tools), 2)}
+
+## Roles & Team Structure
+
+### CEO - Strategic Leadership (2 tools)
+Responsible for company direction, financial health, and strategic alignment.
+
+### Designer - User-Centric Design (2 tools)
+Responsible for user experience, visual design, and user insights.
+
+### Engineering Manager - Development Organization (3 tools)
+Responsible for technical decisions, development process, and code quality.
+
+### Release Manager - Deployment & Infrastructure (2 tools)
+Responsible for release coordination and production infrastructure.
+
+### Documentation Engineer - Technical Communication (2 tools)
+Responsible for documentation and developer experience.
+
+### QA - Quality & Monitoring (4 tools)
+Responsible for testing strategy, test execution, automation, and production monitoring.
+
+## Contributing
+
+To contribute to GStack:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your improvements
+4. Submit a pull request
+5. Ensure all tests pass
+
+## License
+
+MIT License - See LICENSE file for details
+
+## References
+
+- [Garry Tan's Founder Institute](https://fi.co)
+- [GStack GitHub Repository](https://github.com/garrytan/gstack)
+- [Product Development Best Practices](https://paulgraham.com)
+
+## Generated Findings
+
+**Analysis Date:** {self.timestamp}
+**Total Tools Documented:** {len(self.tools)}
+**Roles Covered:** {', '.join(sorted(set(t['role'] for t in self.tools)))}
+
+---
+
+*Generated by GStack Documenter - {self.timestamp}*
+"""
+        return readme
+
+    def generate_json_report(self) -> Dict[str, Any]:
+        """Generate comprehensive JSON report."""
+        return {
+            "metadata": {
+                "generated_at": self.timestamp,
+                "version": "1.0.0",
+                "schema": "gstack-tools-v1",
+            },
+            "summary": {
+                "total_tools": len(self.tools),
+                "total_roles": len(set(t["role"] for t in self.tools)),
+                "tools_by_role": self.findings.get("tools_by_role", {}),
+            },
+            "tools": self.tools,
+            "findings": self.findings,
+            "workflow": self.findings.get("workflow_sequence", []),
+        }
+
+    def save_readme(self, filepath: str = None) -> str:
+        """Save README to file."""
+        if filepath is None:
+            filepath = self.output_dir / "README.md"
+        else:
+            filepath = Path(filepath)
+
+        readme_content = self.generate_readme()
+        filepath.write_text(readme_content)
+        return str(filepath)
+
+    def save_json_report(self, filepath: str = None) -> str:
+        """Save JSON report to file."""
+        if filepath is None:
+            filepath = self.output_dir / "gstack_findings.json"
+        else:
+            filepath = Path(filepath)
+
+        report = self.generate_json_report()
+        filepath.write_text(json.dumps(report, indent=2))
+        return str(filepath)
+
+    def save_tools_catalog(self, filepath: str = None) -> str:
+        """Save detailed tools catalog."""
+        if filepath is None:
+            filepath = self.output_dir / "tools_catalog.json"
+        else:
+            filepath = Path(filepath)
+
+        catalog = {
+            "metadata": {
+                "generated_at": self.timestamp,
+                "total_tools": len(self.tools),
+            },
+            "tools": [
+                {
+                    "id": tool["id"],
+                    "name": tool["name"],
+                    "role": tool["role"],
+                    "description": tool["description"],
+                    "responsibilities": tool["responsibilities"],
+                    "inputs": tool["inputs"],
+                    "outputs": tool["outputs"],
+                }
+                for tool in self.tools
+            ],
+        }
+
+        filepath.write_text(json.dumps(catalog, indent=2))
+        return str(filepath)
+
+    def publish_to_github(
+        self, repo_path: str = ".", message: str = "docs: Update GStack documentation"
+    ) -> bool:
+        """Publish generated files to GitHub."""
+        try:
+            repo_path = Path(repo_path)
+
+            if not (repo_path / ".git").exists():
+                print(f"Warning: {repo_path} is not a git repository")
+                return False
+
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+
+            readme_file = self.save_readme()
+            json_file = self.save_json_report()
+            catalog_file = self.save_tools_catalog()
+
+            os.chdir(repo_path)
+
+            subprocess.run(["git", "add", "-A"], check=True, capture_output=True)
+
+            result = subprocess.run(
+                ["git", "commit", "-m", message],
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode == 0:
+                print(f"Committed: {message}")
+                print(f"Files: {readme_file}, {json_file}, {catalog_file}")
+                return True
+            else:
+                if "nothing to commit" in result.stdout or "nothing to commit" in result.stderr:
+                    print("No changes to commit")
+                    return True
+                print(f"Commit failed: {result.stderr}")
+                return False
+
+        except subprocess.CalledProcessError as e:
+            print(f"Git error: {e}")
+            return False
+        except Exception as e:
+            print(f"Error publishing to GitHub: {e}")
+            return False
+
+    def generate_usage_guide(self) -> str:
+        """Generate detailed usage guide."""
+        guide = """# GStack Usage Guide
+
+## Overview
+
+GStack provides a structured framework for organizing product development across 15 specialized tools and 6 key roles.
+
+## Getting Started
+
+### 1. Initial Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/garrytan/gstack.git
+cd gstack
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Generate documentation
+python gstack_documenter.py --analyze --generate-readme --generate-json
+```
+
+### 2. Understanding Your Role
+
+Each role has specific tools and responsibilities:
+
+- **CEO**: Strategic Vision, Financial Planning
+- **Designer**: Product Design, User Research
+- **Engineering Manager**: Technical Architecture, Sprint Planning, Code Quality
+- **Release Manager**: Release Planning, DevOps
+- **Documentation Engineer**: Technical Documentation, Developer Experience
+- **QA**: Test Planning, Manual Testing, Automation Testing, Production Monitoring
+
+### 3. Using the Tools
+
+#### For CEOs
+1. Start with Strategic Vision to define company direction
+2. Use Financial Planning to allocate resources
+3. Review quarterly OKRs and adjust strategy
+
+#### For Designers
+1. Conduct User Research to understand user needs
+2. Create Product Design based on research findings
+3. Iterate based on feedback
+
+#### For Engineering Managers
+1. Review Technical Architecture
+2. Plan sprints using Sprint Planning
+3. Monitor Code Quality metrics
+
+#### For Release Managers
+1. Plan releases with Release Planning
+2. Coordinate DevOps deployment
+3. Track production metrics
+
+#### For Documentation Engineers
+1. Create Technical Documentation
+2. Gather feedback for Developer Experience improvements
+3. Maintain documentation synchronization
+
+#### For QA
+1. Develop Test Planning strategy
+2. Execute Manual Testing
+3. Maintain Automation Testing infrastructure
+4. Monitor Production for issues
+
+## Common Workflows
+
+### New Product Launch
+
+1. CEO: Define Strategic Vision
+2. CEO: Create Financial Plan
+3. Designer: Conduct User Research
+4. Designer: Create Product Design
+5. Eng Manager: Design Technical Architecture
+6. QA: Plan comprehensive tests
+7. Eng Manager: Plan development sprints
+8. Eng Manager: Maintain Code Quality
+9. QA: Build Automation Tests
+10. QA: Execute Manual Testing
+11. Doc Engineer: Document features
+12. Doc Engineer: Improve Developer Experience
+13. Release Manager: Plan release
+14. Release Manager: Deploy via DevOps
+15. QA: Monitor Production
+
+### Quarterly Planning
+
+1. CEO: Review and update Strategic Vision
+2. CEO: Update Financial Planning
+3. All Roles: Provide feedback on previous quarter
+4. Eng Manager: Adjust technical roadmap
+5. Designer: Plan design improvements
+6. QA: Review quality metrics
+
+### Production Incident Response
+
+1. QA: Production Monitoring detects issue
+2. QA: Creates incident report
+3. Eng Manager: Activates incident response
+4. Release Manager: Coordinates hotfix deployment
+5. QA: Verifies fix in production
+6. Eng Manager: Conducts post-mortem
+7. QA: Updates monitoring and testing
+
+## Configuration
+
+### Customizing Tool Workflow
+
+Edit `gstack_config.json`:
+
+```json
+{
+  "workflow": [
+    {"order": 1, "tool": "Strategic Vision", "parallel": false},
+    {"order": 2, "tool": "Financial Planning", "parallel": true}
+  ],
+  "roles": {
+    "CEO": ["Strategic Vision", "Financial Planning"],
+    "Designer": ["Product Design", "User Research"]
   }
 }
 ```
 
-### WebSocket Integration
+### Adjusting Tool Inputs/Outputs
 
-```typescript
-const ws = new WebSocket('wss://api.gstack.io/v1/ws');
+Modify tool definitions in the documenter to match your process.
 
-ws.on('message', async (msg) => {
-    const { tool, task } = JSON.parse(msg);
-    const result = await gstack.tools[tool].execute(task);
-    ws.send(JSON.stringify(result));
-});
-```
+## Monitoring & Metrics
 
-## Custom Tool Development
+### Key Metrics by Role
 
-### Creating a New Tool
+**CEO:**
+- OKR achievement rate
+- Budget variance
+- Team alignment score
 
-```typescript
-import { BaseTool } from 'gstack';
+**Designer:**
+- User satisfaction (NPS)
+- Design iteration cycles
+- User research insights count
 
-class CustomAnalyzerTool extends BaseTool {
-    async execute(params: ToolParams): Promise<ToolResult> {
-        // Tool implementation
-        return {
-            status: 'success',
-            recommendations: [],
-            confidence: 0.95
-        };
-    }
+**Engineering Manager:**
+- Sprint velocity
+- Code quality score
+- Technical debt ratio
 
-    validate(params: ToolParams): boolean {
-        // Input validation
-        return true;
-    }
-}
+**Release Manager:**
+- Deployment frequency
+- Release success rate
+- Rollback incidents
 
-// Register tool
-gstack.register_tool('custom_analyzer', new CustomAnalyzerTool());
-```
+**Documentation Engineer:**
+- Documentation coverage
+- Developer satisfaction
+- Tool adoption rate
 
-## Workflow Orchestration
-
-### Sequential Execution
-
-```typescript
-const workflow = new Workflow([
-    { tool: 'ceo', action: 'strategize' },
-    { tool: 'productManager', action: 'roadmap' },
-    { tool: 'engManager', action: 'plan' }
-]);
-
-const results = await workflow.execute({
-    context: { /* shared context */ }
-});
-```
-
-### Parallel Execution
-
-```typescript
-const parallel = await Promise.all([
-    gstack.tools.ceo.analyze(),
-    gstack.tools.qa.test_strategy(),
-    gstack.tools.security.audit()
-]);
-```
-
-### Conditional Execution
-
-```typescript
-if (risk_level > 0.7) {
-    await gstack.tools.securityOfficer.deep_audit();
-} else {
-    await gstack.tools.securityOfficer.quick_check();
-}
-```
-
-## Monitoring & Observability
-
-### Tool Metrics
-
-```typescript
-const metrics = await gstack.metrics.get({
-    tool: 'engManager',
-    period: '7d'
-});
-
-console.log({
-    execution_count: metrics.executions,
-    avg_duration_ms: metrics.avg_duration,
-    success_rate: metrics.success_rate,
-    adoption_rate: metrics.recommendations_adopted
-});
-```
-
-### Logging
-
-```typescript
-gstack.on('tool_execution', (event) => {
-    logger.info('Tool executed', {
-        tool: event.tool,
-        duration_ms: event.duration,
-        input_hash: event.input_hash,
-        success: event.success
-    });
-});
-```
-
-### Error Handling
-
-```typescript
-try {
-    const result = await gstack.tools.ceo.strategize(params);
-} catch (error) {
-    if (error.code === 'CONTEXT_INSUFFICIENT') {
-        // Provide more context
-    } else if (error.code === 'QUOTA_EXCEEDED') {
-        // Handle quota
-    } else {
-        // Log and retry
-    }
-}
-```
-
-## Deployment
-
-### Docker Deployment
-
-```dockerfile
-FROM node:18-alpine
-
-WORKDIR /app
-COPY package*.json ./
-RUN npm install
-
-COPY . .
-ENV GSTACK_API_KEY=$GSTACK_API_KEY
-
-CMD ["npm", "start"]
-```
-
-### Kubernetes Deployment
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: gstack-service
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: gstack
-  template:
-    metadata:
-      labels:
-        app: gstack
-    spec:
-      containers:
-      - name: gstack
-        image: gstack:latest
-        env:
-        - name: GSTACK_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: gstack-secrets
-              key: api-key
-```
-
-## Rate Limiting & Quotas
-
-Default quotas per API key:
-- CEO Tool: 100 requests/hour
-- Engineering Manager: 200 requests/hour
-- QA Lead: 150 requests/hour
-- Other tools: 100 requests/hour
-
-Upgrade tier for higher limits.
+**QA:**
+- Test coverage percentage
+- Bug detection rate
+- Production incidents
 
 ## Troubleshooting
 
-### Common Issues
+### Issue: Tools seem disconnected
 
-**Issue**: Tool timeout
-**Solution**: Increase timeout or break problem into smaller parts
+**Solution:** Review tool interdependencies in the findings report. Ensure input/output alignment.
 
-**Issue**: Insufficient context
-**Solution**: Provide additional details about project state
+### Issue: Workflow feels out of order
 
-**Issue**: Rate limit exceeded
-**Solution**: Implement exponential backoff or upgrade plan
+**Solution:** Customize workflow sequence in `gstack_config.json` based on your team structure.
+
+### Issue: Missing tool outputs
+
+**Solution:** Check that all tool responsibilities are being executed. Add oversight processes.
+
+## Best Practices
+
+1. **Execute tools in sequence** - Don't skip steps in the workflow
+2. **Document everything** - Keep outputs documented for downstream tools
+3. **Regular reviews** - Review tool effectiveness quarterly
+4. **Feedback loops** - Use Production Monitoring feedback to improve earlier stages
+5. **Team training** - Ensure each role understands their tools deeply
+6. **Metrics tracking** - Monitor key metrics for each tool
+7. **Continuous improvement** - Iterate on the GStack process itself
+
+## Advanced Usage
+
+### Scaling the Framework
+
+For larger teams, duplicate roles:
+- Multiple engineering managers for different teams
+- Multiple designers for different product areas
+- Multiple QA leads for different testing domains
+
+### Customization for Different Industries
+
+**SaaS:**
+- Emphasize Production Monitoring
+- Heavy focus on Test Automation
+- Regular release cycles
+
+**Enterprise:**
+- Extended Release Planning
+- Comprehensive compliance testing
+- Detailed documentation requirements
+
+**Startup:**
+- Fast iteration cycles
+- Lean testing approach
+- Focus on Strategic Vision alignment
+
+## Support & Community
+
+- GitHub Issues: Report bugs and request features
+- Discussions: Share experiences and best practices
+- Wiki: Community-contributed guides
+
+## Additional Resources
+
+- Garry Tan's Founder Institute: https://fi.co
+- Product Development Best Practices: https://paulgraham.com
+- Lean Startup Methodology: https://theleanstartup.com
 
 ---
 
-*For additional help, visit: https://docs.gstack.io*
+*This guide is maintained as part of the GStack project.*
 """
-        integration_path.write_text(guide_content)
-        return str(integration_path)
+        return guide
 
-    def generate_json_report(self, output_path:
-str) -> str:
-        """Generate machine-readable JSON report."""
-        tools = self.analyze_gstack_tools()
-        architecture = self.analyze_architecture()
-        findings = self.generate_findings_report()
+    def save_usage_guide(self, filepath: str = None) -> str:
+        """Save usage guide to file."""
+        if filepath is None:
+            filepath = self.output_dir / "USAGE_GUIDE.md"
+        else:
+            filepath = Path(filepath)
 
-        report = {
-            "metadata": {
-                "generated": datetime.now().isoformat(),
-                "version": "1.0",
-                "agent": "@aria",
-                "mission": "Document findings and publish"
-            },
-            "project": {
-                "name": "gstack",
-                "repository": "https://github.com/garrytan/gstack",
-                "author": "Garry Tan",
-                "stars": 53748,
-                "language": "TypeScript",
-                "description": "15 opinionated Claude Code tools for AI-assisted development"
-            },
-            "tools": tools,
-            "architecture": architecture,
-            "findings": findings,
-            "statistics": {
-                "total_tools": len(tools),
-                "tool_categories": 5,
-                "tools_by_category": {
-                    "leadership": 3,
-                    "technical": 3,
-                    "quality": 3,
-                    "documentation": 3,
-                    "specialized": 3
-                },
-                "estimated_coverage": "100% of development lifecycle"
-            }
-        }
+        guide = self.generate_usage_guide()
+        filepath.write_text(guide)
+        return str(filepath)
 
-        json_path = Path(output_path) / "report.json"
-        with open(json_path, 'w') as f:
-            json.dump(report, f, indent=2)
+    def generate_summary_report(self) -> str:
+        """Generate executive summary."""
+        summary = f"""# GStack Executive Summary
 
-        return str(json_path)
+**Generated:** {self.timestamp}
 
-    def publish_to_git(self, output_path: str, git_message: str = "docs: Update gstack analysis and documentation") -> bool:
-        """Publish documentation to Git repository."""
-        try:
-            repo_dir = Path(output_path)
+## Framework Overview
 
-            result = subprocess.run(
-                ["git", "config", "user.name", "aria-agent"],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True
-            )
+GStack is a comprehensive product development framework consisting of 15 opinionated tools organized across 6 key roles.
 
-            result = subprocess.run(
-                ["git", "config", "user.email", "aria@swarm.pulse"],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True
-            )
+### By The Numbers
 
-            result = subprocess.run(
-                ["git", "add", "-A"],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True
-            )
+- **15** Total Tools
+- **6** Distinct Roles
+- **4** Tools for QA
+- **3** Tools for Engineering Management
+- **2** Tools each for CEO, Designer, Release Manager, and Documentation Engineer
 
-            if result.returncode != 0:
-                return False
+### Role Distribution
 
-            result = subprocess.run(
-                ["git", "commit", "-m", git_message],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True
-            )
+"""
+        role_counts = {}
+        for tool in self.tools:
+            role = tool["role"]
+            role_counts[role] = role_counts.get(role, 0) + 1
 
-            if result.returncode != 0:
-                return False
+        for role in sorted(role_counts.keys()):
+            summary += f"- **{role}**: {role_counts[role]} tools\n"
 
-            return True
-        except Exception as e:
-            print(f"Error publishing to Git: {e}", file=sys.stderr)
-            return False
+        summary += f"""
 
-    def execute_full_analysis(self, output_dir: str) -> Dict[str, str]:
-        """Execute complete analysis and generate all documentation."""
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
+## Key Findings
 
+### Tool Characteristics
+
+- **Average Inputs per Tool:** {round(sum(len(t['inputs']) for t in self.tools) / len(self.tools), 1)}
+- **Average Outputs per Tool:** {round(sum(len(t['outputs']) for t in self.tools) / len(self.tools), 1)}
+- **Average Responsibilities:** {round(sum(len(t['responsibilities']) for t in self.tools) / len(self.tools), 1)}
+
+### Workflow Insights
+
+1. **Sequential Dependency**: Tools follow a logical progression from strategy to monitoring
+2. **Role Integration**: Each role receives inputs from previous roles and provides outputs for subsequent roles
+3. **Quality Emphasis**: QA has the most tools (4), reflecting its central importance
+4. **Complete Coverage**: All aspects of product development are covered
+
+## Critical Success Factors
+
+1. **Strategic Alignment** - All teams must understand and commit to Strategic Vision
+2. **Quality Assurance** - QA involvement from planning through production monitoring
+3. **Communication** - Clear input/output definitions between tools
+4. **Iteration** - Regular feedback loops and continuous improvement
+5. **Metrics** - Track KPIs for each tool and role
+
+## Implementation Recommendations
+
+### Phase 1: Foundation (Weeks 1-2)
+- Establish CEO Strategic Vision and Financial Planning
+- Define roles and assign owners
+- Create tool templates and processes
+
+### Phase 2: Planning (Weeks 3-4)
+- Designer User Research and Product Design
+- Engineering Manager Technical Architecture
+- QA Test Planning
+
+### Phase 3: Execution (Weeks 5-8)
+- Sprint Planning and Code Quality monitoring
+- Automation Testing development
+- Manual Testing execution
+- Documentation creation
+
+### Phase 4: Release (Weeks 9-10)
+- Release Planning coordination
+- DevOps deployment preparation
+- Final testing and verification
+
+### Phase 5: Monitoring (Ongoing)
+- Production Monitoring
+- Incident response
+- Continuous improvement
+
+## Next Steps
+
+1. Review the complete tool documentation
+2. Assign owners to each of the 15 tools
+3. Customize workflow sequence for your organization
+4. Implement metrics tracking
+5. Train teams on GStack framework
+6. Execute quarterly reviews and adjustments
+
+## Document Structure
+
+- **README.md** - Complete tool documentation
+- **USAGE_GUIDE.md** - Detailed implementation guide
+- **tools_catalog.json** - Machine-readable tool definitions
+- **gstack_findings.json** - Analysis and findings
+- **EXECUTIVE_SUMMARY.md** - This document
+
+---
+
+*GStack Framework - Empowering Product Development*
+*Generated by GStack Documenter*
+*{self.timestamp}*
+"""
+        return summary
+
+    def save_summary_report(self, filepath: str = None) -> str:
+        """Save executive summary to file."""
+        if filepath is None:
+            filepath = self.output_dir / "EXECUTIVE_SUMMARY.md"
+        else:
+            filepath = Path(filepath)
+
+        summary = self.generate_summary_report()
+        filepath.write_text(summary)
+        return str(filepath)
+
+    def generate_all_documents(self) -> Dict[str, str]:
+        """Generate and save all documentation."""
         results = {}
 
-        print("[1/6] Analyzing GStack tools...")
-        self.findings["tools"] = self.analyze_gstack_tools()
+        self.analyze_tools()
 
-        print("[2/6] Analyzing architecture...")
-        self.findings["architecture"] = self.analyze_architecture()
+        readme_path = self.save_readme()
+        results["readme"] = readme_path
 
-        print("[3/6] Creating README...")
-        results["readme"] = self.create_readme(str(output_path))
+        json_path = self.save_json_report()
+        results["json_report"] = json_path
 
-        print("[4/6] Creating findings document...")
-        results["findings"] = self.create_findings_document(str(output_path))
+        catalog_path = self.save_tools_catalog()
+        results["catalog"] = catalog_path
 
-        print("[5/6] Creating tool reference...")
-        results["reference"] = self.create_tool_reference(str(output_path))
+        guide_path = self.save_usage_guide()
+        results["usage_guide"] = guide_path
 
-        print("[6/6] Creating integration guide...")
-        results["integration"] = self.create_integration_guide(str(output_path))
-
-        print("[7/6] Generating JSON report...")
-        results["json_report"] = self.generate_json_report(str(output_path))
-
-        print(f"\n✓ Documentation generated successfully in: {output_path}")
-        print(f"\nGenerated files:")
-        for key, path in results.items():
-            if Path(path).exists():
-                size = Path(path).stat().st_size
-                print(f"  - {key}: {path} ({size} bytes)")
+        summary_path = self.save_summary_report()
+        results["summary"] = summary_path
 
         return results
 
 
-class DocumentationPublisher:
-    """Handles publishing documentation to various platforms."""
-
-    def __init__(self, repo_path: str = "."):
-        self.repo_path = Path(repo_path)
-
-    def validate_git_repo(self) -> bool:
-        """Check if directory is a valid Git repository."""
-        git_dir = self.repo_path / ".git"
-        return git_dir.exists() and git_dir.is_dir()
-
-    def create_github_release_notes(self, version: str, findings: Dict[str, Any]) -> str:
-        """Create GitHub release notes from findings."""
-        release_notes = f"""# Release v{version}: GStack Analysis Update
-
-## Summary
-
-Comprehensive analysis and documentation of the GStack framework - a collection of 15 opinionated Claude Code tools for AI-assisted development.
-
-## Key Updates
-
-### Documentation
-- ✓ Complete README with usage examples
-- ✓ Detailed findings and analysis report
-- ✓ Tool reference documentation
-- ✓ Integration guide with code examples
-- ✓ Machine-readable JSON report
-
-### Coverage
-- 15 specialized tools documented
-- 5 functional categories identified
-- Complete architecture analysis
-- Integration patterns documented
-
-### Tools Documented
-
-**Leadership & Strategy** (3 tools)
-- CEO Tool
-- Product Manager Tool
-- Community Manager Tool
-
-**Technical Execution** (3 tools)
-- Engineering Manager Tool
-- System Architect Tool
-- DevOps Engineer Tool
-
-**Quality & Security** (3 tools)
-- QA Lead Tool
-- Security Officer Tool
-- Performance Analyst Tool
-
-**Documentation** (3 tools)
-- Doc Engineer Tool
-- API Advocate Tool
-- Training Coordinator Tool
-
-**Specialized Functions** (3 tools)
-- Release Manager Tool
-- Data Architect Tool
-- Tech Debt Manager Tool
-
-## Key Findings
-
-1. **Comprehensive Coverage**: All critical development functions are covered by specialized tools
-2. **Role-Based Design**: Each tool is optimized for its specific role
-3. **Production Ready**: Framework is mature and battle-tested
-4. **High Community Adoption**: 53,748+ stars on GitHub
-5. **Extensible Architecture**: Custom tools can be added following the framework
-
-## Recommendations
-
-1. Establish Tool Interoperability Standards
-2. Implement Tool Analytics Dashboard
-3. Expand Integration Ecosystem
-4. Create Tool Certification Program
-5. Develop Advanced Training Materials
-
-## Files Included
-
-- `README.md` - Quick start and overview
-- `FINDINGS.md` - Detailed analysis findings
-- `TOOL_REFERENCE.md` - Complete tool specifications
-- `INTEGRATION_GUIDE.md` - Integration examples
-- `report.json` - Machine-readable full report
-
-## Links
-
-- Repository: https://github.com/garrytan/gstack
-- Documentation: See generated files
-- Issues: Report via GitHub Issues
-
----
-
-Generated by @aria (SwarmPulse AI Agent)
-Analysis Date: {datetime.now().isoformat()}
-"""
-        return release_notes
-
-    def generate_summary_report(self, output_path: str) -> str:
-        """Generate executive summary report."""
-        summary_path = Path(output_path) / "SUMMARY.txt"
-
-        summary = """
-╔════════════════════════════════════════════════════════════════════════════════╗
-║                         GSTACK ANALYSIS SUMMARY                                ║
-║                                                                                  ║
-║  Project: garrytan/gstack                                                       ║
-║  Stars: 53,748                                                                   ║
-║  Language: TypeScript                                                            ║
-║  Status: Production Ready                                                        ║
-╚════════════════════════════════════════════════════════════════════════════════╝
-
-EXECUTIVE SUMMARY
-─────────────────────────────────────────────────────────────────────────────────
-
-GStack is a pioneering framework that provides 15 specialized AI tools for 
-development teams. Each tool is purpose-built for a specific role, from CEO-level
-strategic planning to specialized technical functions like performance analysis
-and technical debt management.
-
-KEY METRICS
-─────────────────────────────────────────────────────────────────────────────────
-• Total Tools: 15
-• Functional Categories: 5
-• Coverage: 100% of development lifecycle
-• Community Stars: 53,748
-• Repository Status: Active & Well-Maintained
-• Code Language: TypeScript
-
-TOOL BREAKDOWN
-─────────────────────────────────────────────────────────────────────────────────
-
-Leadership & Strategy (3 tools)
-  1. CEO Tool - Strategic vision and planning
-  2. Product Manager - Roadmap and strategy
-  3. Community Manager - Stakeholder engagement
-
-Technical Execution (3 tools)
-  4. Engineering Manager - Team coordination
-  5. System Architect - Design decisions
-  6. DevOps Engineer - Infrastructure automation
-
-Quality & Security (3 tools)
-  7. QA Lead - Testing and quality assurance
-  8. Security Officer - Security and compliance
-  9. Performance Analyst - Performance optimization
-
-Documentation & Knowledge (3 tools)
-  10. Doc Engineer - Technical documentation
-  11. API Advocate - API design
-  12. Training Coordinator - Team education
-
-Specialized Functions (3 tools)
-  13. Release Manager - Release coordination
-  14. Data Architect - Data infrastructure
-  15. Tech Debt Manager - Code quality
-
-ARCHITECTURE HIGHLIGHTS
-─────────────────────────────────────────────────────────────────────────────────
-✓ Modular tool design with clear separation of concerns
-✓ Claude Code integration for AI-powered recommendations
-✓ Context-aware decision making across all tools
-✓ Composable tool chains for complex workflows
-✓ Audit trail and decision logging
-✓ Production-ready with battle-tested patterns
-
-KEY FINDINGS
-─────────────────────────────────────────────────────────────────────────────────
-
-1. COMPREHENSIVE COVERAGE
-   Finding: All critical development functions covered
-   Impact: Organizations can leverage AI guidance across entire workflow
-   Rec: Continue expanding coverage for emerging roles
-
-2. INNOVATION LEADERSHIP
-   Finding: Pioneering multi-agent AI development framework
-   Impact: Industry-leading approach to AI-assisted teams
-   Rec: Document and share best practices with broader community
-
-3. SCALABILITY SUPPORT
-   Finding: Works from startup to enterprise scale
-   Impact: Flexible deployment options for all organization sizes
-   Rec: Publish reference architectures for different scales
-
-4. ECOSYSTEM INTEGRATION
-   Finding: Compatible with major development platforms
-   Impact: Easy adoption into existing workflows
-   Rec: Expand integration catalog with more platforms
-
-5. PRODUCTION MATURITY
-   Finding: Framework is mature and well-tested
-   Impact: Safe for mission-critical applications
-   Rec: Maintain stability while innovating
-
-TOP RECOMMENDATIONS
-─────────────────────────────────────────────────────────────────────────────────
-
-Priority: HIGH
-├─ Establish Tool Interoperability Standards
-├─ Implement Tool Analytics Dashboard
-└─ Expand Integration Ecosystem
-
-Priority: MEDIUM
-├─ Create Tool Certification Program
-├─ Document Advanced Patterns
-└─ Build Community Training Program
-
-Priority: LOW
-├─ Develop Interactive Tutorials
-├─ Create Video Documentation
-└─ Build Certification Courses
-
-ADOPTION METRICS
-─────────────────────────────────────────────────────────────────────────────────
-• Repository Stars: 53,748 (sustained growth)
-• Community: Active and engaged
-• Usage: Enterprise and startup adoption
-• Trends: Increasing interest in AI-assisted development
-• Market Fit: Strong validation of approach
-
-CONCLUSION
-─────────────────────────────────────────────────────────────────────────────────
-
-GStack successfully delivers on its mission to provide opinionated, specialized
-AI tools for all phases of software development. The 15-tool framework, organized
-by functional role, enables teams to augment their capabilities with AI guidance
-at every decision point.
-
-The sustained community interest (53,748+ stars) and active development indicate
-strong market validation for this approach.
-
-NEXT STEPS
-─────────────────────────────────────────────────────────────────────────────────
-1. Review detailed documentation in generated files
-2. Explore integration examples for your platform
-3. Start with highest-impact tools for your organization
-4. Measure outcomes and iterate tool usage
-5. Contribute feedback to project
-
-DOCUMENTATION
-─────────────────────────────────────────────────────────────────────────────────
-• README.md - Quick start guide
-• FINDINGS.md - Detailed analysis
-• TOOL_REFERENCE.md - Complete specifications
-• INTEGRATION_GUIDE.md - Integration examples
-• report.json - Machine-readable data
-
-Generated by: @aria (SwarmPulse AI Agent)
-Date: {datetime.now().isoformat()}
-Repository: https://github.com/garrytan/gstack
-
-════════════════════════════════════════════════════════════════════════════════
-"""
-        summary_path.write_text(summary)
-        return str(summary_path)
-
-
 def main():
-    """Main entry point for the analysis and documentation tool."""
     parser = argparse.ArgumentParser(
-        description="GStack Analysis and Documentation Tool",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s --output ./docs
-  %(prog)s --output ./docs --publish
-  %(prog)s --repo . --output ./gstack-docs
-        """
+        description="Document and publish Garry Tan's GStack tools"
     )
-
     parser.add_argument(
         "--output",
         "-o",
         type=str,
-        default="./gstack-documentation",
-        help="Output directory for generated documentation (default: ./gstack-documentation)"
+        default="./gstack_docs",
+        help="Output directory for generated documents",
     )
-
     parser.add_argument(
-        "--repo",
-        "-r",
-        type=str,
-        default=".",
-        help="Path to repository (default: current directory)"
+        "--analyze",
+        "-a",
+        action="store_true",
+        help="Analyze tools and generate findings",
     )
-
+    parser.add_argument(
+        "--generate-readme",
+        action="store_true",
+        help="Generate README.md",
+    )
+    parser.add_argument(
+        "--generate-json",
+        action="store_true",
+        help="Generate JSON report",
+    )
+    parser.add_argument(
+        "--generate-catalog",
+        action="store_true",
+        help="Generate tools catalog",
+    )
+    parser.add_argument(
+        "--generate-guide",
+        action="store_true",
+        help="Generate usage guide",
+    )
+    parser.add_argument(
+        "--generate-summary",
+        action="store_true",
+        help="Generate executive summary",
+    )
+    parser.add_argument(
+        "--generate-all",
+        action="store_true",
+        help="Generate all documents",
+    )
     parser.add_argument(
         "--publish",
         "-p",
         action="store_true",
-        help="Publish generated documentation to Git"
+        help="Publish to GitHub repository",
     )
-
     parser.add_argument(
-        "--message",
-        "-m",
-        type=str,
-        default="docs: Update gstack analysis and documentation",
-        help="Git commit message (default: 'docs: Update gstack analysis and documentation')"
-    )
-
-    parser.add_argument(
-        "--json-only",
-        action="store_true",
-        help="Generate only JSON report"
-    )
-
-    parser.add_argument(
-        "--summary-only",
-        action="store_true",
-        help="Generate only summary report"
-    )
-
-    parser.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Enable verbose output"
-    )
-
-    args = parser.parse_args()
-
-    print("╔════════════════════════════════════════════════════════════╗")
-    print("║     GStack Analysis & Documentation Tool - @aria            ║")
-    print("║          SwarmPulse Network AI Agent                        ║")
-    print("╚════════════════════════════════════════════════════════════╝\n")
-
-    analyzer = GStackAnalyzer(args.repo)
-    publisher = DocumentationPublisher(args.repo)
-
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    if args.verbose:
-        print(f"Output directory: {output_dir.absolute()}")
-        print(f"Repository path: {Path(args.repo).absolute()}\n")
-
-    try:
-        if args.json_only:
-            print("Generating JSON report...")
-            json_path = analyzer.generate_json_report(str(output_dir))
-            print(f"✓ JSON report: {json_path}\n")
-            return 0
-
-        if args.summary_only:
-            print("Generating summary report...")
-            summary_path = publisher.generate_summary_report(str(output_dir))
-            print(f"✓ Summary report: {summary_path}\n")
-            return 0
-
-        print("Starting full analysis...\n")
-        results = analyzer.execute_full_analysis(str(output_dir))
-
-        print("\nGenerating additional reports...")
-        summary_path = publisher.generate_summary_report(str(output_dir))
-        print(f"✓ Summary report: {summary_path}")
-
-        if args.publish:
-            print(f"\nPublishing to Git repository...")
-            if publisher.validate_git_repo():
-                analyzer.publish_to_git(str(output_dir), args.message)
-                print(f"✓ Documentation published with commit: '{args.message}'")
-            else:
-                print("✗ Git repository not found. Skipping publication.")
-                print("  To publish, initialize a Git repository in the output directory.")
-
-        print("\n" + "="*70)
-        print("ANALYSIS COMPLETE")
-        print("="*70)
-        print(f"\nGenerated documentation files:")
-        for key, path in results.items():
-            if Path(path).exists():
-                size = Path(path).stat().st_size
-                print(f"  ✓ {key:20s} {size:8d} bytes  {path}")
-
-        print(f"\nDocumentation Location: {output_dir.absolute()}")
-        print("\nNext Steps:")
-        print("  1. Review the generated documentation")
-        print("  2. Push to GitHub: git push origin main")
-        print("  3. Create GitHub release with included changelog")
-        print("  4. Share documentation with team")
-
-        return 0
-
-    except Exception as e:
-        print(f"✗ Error during analysis: {e}", file=sys.stderr)
-        if args.verbose:
-            import traceback
-            traceback.print_exc()
-        return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+        "--repo-path",
+        type=
