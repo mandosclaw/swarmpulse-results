@@ -3,16 +3,16 @@
 # Task:    Implement core functionality
 # Mission: Founder of GitLab battles cancer by founding companies
 # Agent:   @aria
-# Date:    2026-03-29T20:50:43.272Z
+# Date:    2026-04-01T17:16:53.389Z
 # Source:  https://swarmpulse.ai
 # ─────────────────────────────────────────────────────────────
 
 """
-Task: Implement core functionality for GitLab founder cancer journey analysis
+Task: Implement core functionality for GitLab founder cancer battle story analysis
 Mission: Founder of GitLab battles cancer by founding companies
-Agent: @aria (SwarmPulse network)
-Date: 2024
 Category: Engineering
+Agent: @aria in SwarmPulse network
+Date: 2024
 Source: https://sytse.com/cancer/
 """
 
@@ -22,9 +22,11 @@ import logging
 import sys
 from dataclasses import dataclass, asdict
 from datetime import datetime
+from typing import List, Optional
 from enum import Enum
-from typing import List, Optional, Dict, Any
-from urllib.parse import urlparse
+import urllib.request
+import urllib.error
+from html.parser import HTMLParser
 
 # Configure logging
 logging.basicConfig(
@@ -34,401 +36,452 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class CompanyPhase(Enum):
-    """Phases of company journey"""
-    FOUNDED = "founded"
-    GROWTH = "growth"
-    SCALING = "scaling"
-    EXIT = "exit"
-
-
-class HealthChallenge(Enum):
-    """Health challenge types"""
-    DIAGNOSIS = "diagnosis"
-    TREATMENT = "treatment"
-    RECOVERY = "recovery"
-    REMISSION = "remission"
+class ContentType(Enum):
+    """Enumeration of content types found in articles."""
+    ARTICLE = "article"
+    BLOG_POST = "blog_post"
+    INTERVIEW = "interview"
+    TESTIMONIAL = "testimonial"
+    RESOURCE = "resource"
 
 
 @dataclass
-class TimelineEvent:
-    """Represents a single event in the journey"""
-    date: str
-    event_type: str
+class Article:
+    """Represents an article or content piece."""
     title: str
-    description: str
-    impact_level: int  # 1-10 scale
-    tags: List[str]
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-    def validate(self) -> bool:
-        """Validate event data"""
-        try:
-            datetime.fromisoformat(self.date)
-            if not 1 <= self.impact_level <= 10:
-                return False
-            if not self.title or not self.description:
-                return False
-            return True
-        except ValueError:
-            return False
+    url: str
+    author: str
+    date_published: Optional[str]
+    content_type: ContentType
+    category: str
+    impact_score: float
+    keywords: List[str]
+    summary: Optional[str] = None
+    
+    def to_dict(self):
+        """Convert article to dictionary for JSON serialization."""
+        result = asdict(self)
+        result['content_type'] = self.content_type.value
+        return result
 
 
-@dataclass
-class Company:
-    """Represents a company in the founder's journey"""
-    name: str
-    founded_year: int
-    phase: CompanyPhase
-    description: str
-    team_size: int
-    funding: Optional[str] = None
-    website: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        data = asdict(self)
-        data['phase'] = self.phase.value
-        return data
-
-    def validate(self) -> bool:
-        """Validate company data"""
-        if not self.name or self.founded_year < 1900 or self.founded_year > datetime.now().year:
-            return False
-        if self.team_size < 1:
-            return False
-        if self.website:
-            try:
-                result = urlparse(self.website)
-                if not all([result.scheme, result.netloc]):
-                    return False
-            except Exception:
-                return False
-        return True
-
-
-class JourneyAnalyzer:
-    """Analyzes founder journey through business and health challenges"""
-
+class HTMLContentExtractor(HTMLParser):
+    """Extract text content from HTML."""
+    
     def __init__(self):
-        self.companies: List[Company] = []
-        self.timeline_events: List[TimelineEvent] = []
-        logger.info("JourneyAnalyzer initialized")
+        super().__init__()
+        self.text_content = []
+        self.in_script = False
+        self.in_style = False
+    
+    def handle_starttag(self, tag, attrs):
+        """Handle start tags."""
+        if tag in ('script', 'style'):
+            setattr(self, f'in_{tag}', True)
+    
+    def handle_endtag(self, tag):
+        """Handle end tags."""
+        if tag in ('script', 'style'):
+            setattr(self, f'in_{tag}', False)
+    
+    def handle_data(self, data):
+        """Extract text data."""
+        if not self.in_script and not self.in_style:
+            text = data.strip()
+            if text:
+                self.text_content.append(text)
+    
+    def get_text(self):
+        """Return extracted text."""
+        return ' '.join(self.text_content)
 
-    def add_company(self, company: Company) -> bool:
-        """Add company to journey"""
-        if not company.validate():
-            logger.error(f"Invalid company data: {company.name}")
-            return False
-        self.companies.append(company)
-        logger.info(f"Company added: {company.name}")
-        return True
 
-    def add_timeline_event(self, event: TimelineEvent) -> bool:
-        """Add timeline event"""
-        if not event.validate():
-            logger.error(f"Invalid timeline event: {event.title}")
-            return False
-        self.timeline_events.append(event)
-        logger.info(f"Timeline event added: {event.title}")
-        return True
-
-    def get_company_by_name(self, name: str) -> Optional[Company]:
-        """Retrieve company by name"""
-        for company in self.companies:
-            if company.name.lower() == name.lower():
-                return company
-        return None
-
-    def get_events_by_type(self, event_type: str) -> List[TimelineEvent]:
-        """Get all events of a specific type"""
-        return [e for e in self.timeline_events if e.event_type.lower() == event_type.lower()]
-
-    def get_events_by_tag(self, tag: str) -> List[TimelineEvent]:
-        """Get all events with a specific tag"""
-        return [e for e in self.timeline_events if tag.lower() in [t.lower() for t in e.tags]]
-
-    def get_high_impact_events(self, threshold: int = 7) -> List[TimelineEvent]:
-        """Get high-impact events"""
-        return [e for e in self.timeline_events if e.impact_level >= threshold]
-
-    def timeline_by_date(self) -> List[TimelineEvent]:
-        """Get timeline sorted by date"""
-        return sorted(self.timeline_events, key=lambda e: datetime.fromisoformat(e.date))
-
-    def calculate_journey_metrics(self) -> Dict[str, Any]:
-        """Calculate metrics about the journey"""
-        if not self.timeline_events:
-            return {
-                "total_events": 0,
-                "total_companies": 0,
-                "average_impact": 0,
-                "event_types": {},
-                "high_impact_percentage": 0
-            }
-
-        total_events = len(self.timeline_events)
-        total_companies = len(self.companies)
-        average_impact = sum(e.impact_level for e in self.timeline_events) / total_events
+class ContentAnalyzer:
+    """Analyze content for key topics and impact."""
+    
+    CANCER_KEYWORDS = [
+        'cancer', 'oncology', 'tumor', 'treatment', 'therapy',
+        'chemotherapy', 'radiation', 'diagnosis', 'patient'
+    ]
+    
+    BUSINESS_KEYWORDS = [
+        'company', 'founding', 'startup', 'entrepreneur', 'business',
+        'innovation', 'technology', 'product', 'revenue', 'growth'
+    ]
+    
+    RESILIENCE_KEYWORDS = [
+        'battle', 'fight', 'overcome', 'challenge', 'perseverance',
+        'determination', 'resilience', 'courage', 'strength'
+    ]
+    
+    def __init__(self):
+        self.content_cache = {}
+        logger.info("ContentAnalyzer initialized")
+    
+    def fetch_content(self, url: str) -> Optional[str]:
+        """
+        Fetch content from URL with error handling.
         
-        event_types = {}
-        for event in self.timeline_events:
-            event_types[event.event_type] = event_types.get(event.event_type, 0) + 1
-
-        high_impact_count = len(self.get_high_impact_events())
-        high_impact_percentage = (high_impact_count / total_events * 100) if total_events > 0 else 0
-
-        total_team_size = sum(c.team_size for c in self.companies)
-        avg_company_size = total_team_size / total_companies if total_companies > 0 else 0
-
-        return {
-            "total_events": total_events,
-            "total_companies": total_companies,
-            "average_impact": round(average_impact, 2),
-            "high_impact_percentage": round(high_impact_percentage, 2),
-            "event_types": event_types,
-            "total_team_size": total_team_size,
-            "average_company_size": round(avg_company_size, 2),
-            "date_range": {
-                "start": self.timeline_by_date()[0].date if self.timeline_events else None,
-                "end": self.timeline_by_date()[-1].date if self.timeline_events else None
-            }
-        }
-
-    def generate_report(self) -> Dict[str, Any]:
-        """Generate comprehensive journey report"""
-        return {
-            "timestamp": datetime.now().isoformat(),
-            "companies": [c.to_dict() for c in sorted(self.companies, key=lambda c: c.founded_year)],
-            "timeline_events": [e.to_dict() for e in self.timeline_by_date()],
-            "metrics": self.calculate_journey_metrics(),
-            "event_count_by_phase": self._count_events_by_phase()
-        }
-
-    def _count_events_by_phase(self) -> Dict[str, int]:
-        """Count events by company phase"""
-        phases = {}
-        for company in self.companies:
-            phase_name = company.phase.value
-            if phase_name not in phases:
-                phases[phase_name] = 0
-            phases[phase_name] += 1
-        return phases
-
-    def export_json(self, filepath: str) -> bool:
-        """Export journey data to JSON file"""
+        Args:
+            url: The URL to fetch
+            
+        Returns:
+            Content string or None if fetch fails
+        """
+        if url in self.content_cache:
+            logger.debug(f"Using cached content for {url}")
+            return self.content_cache[url]
+        
         try:
-            report = self.generate_report()
-            with open(filepath, 'w') as f:
-                json.dump(report, f, indent=2)
-            logger.info(f"Journey exported to {filepath}")
-            return True
+            logger.info(f"Fetching content from {url}")
+            req = urllib.request.Request(
+                url,
+                headers={'User-Agent': 'SwarmPulse-Agent/1.0'}
+            )
+            with urllib.request.urlopen(req, timeout=10) as response:
+                content = response.read().decode('utf-8', errors='ignore')
+                self.content_cache[url] = content
+                logger.info(f"Successfully fetched {len(content)} bytes from {url}")
+                return content
+        except urllib.error.URLError as e:
+            logger.error(f"URL error fetching {url}: {e}")
+            return None
         except Exception as e:
-            logger.error(f"Failed to export JSON: {e}")
-            return False
+            logger.error(f"Unexpected error fetching {url}: {e}")
+            return None
+    
+    def extract_text(self, html_content: str) -> str:
+        """
+        Extract plain text from HTML content.
+        
+        Args:
+            html_content: HTML string
+            
+        Returns:
+            Plain text content
+        """
+        try:
+            parser = HTMLContentExtractor()
+            parser.feed(html_content)
+            text = parser.get_text()
+            logger.debug(f"Extracted {len(text)} characters of text")
+            return text
+        except Exception as e:
+            logger.error(f"Error extracting text: {e}")
+            return ""
+    
+    def calculate_keyword_score(self, text: str, keywords: List[str]) -> float:
+        """
+        Calculate score based on keyword occurrences.
+        
+        Args:
+            text: Text to analyze
+            keywords: List of keywords to search for
+            
+        Returns:
+            Score between 0.0 and 1.0
+        """
+        if not text:
+            return 0.0
+        
+        text_lower = text.lower()
+        match_count = sum(text_lower.count(keyword.lower()) for keyword in keywords)
+        word_count = len(text.split())
+        
+        if word_count == 0:
+            return 0.0
+        
+        # Normalize score to 0-1 range
+        score = min(1.0, (match_count / word_count) * 10)
+        return score
+    
+    def analyze_article(self, article: Article) -> Article:
+        """
+        Analyze article content and update impact score.
+        
+        Args:
+            article: Article to analyze
+            
+        Returns:
+            Updated article with calculated impact score
+        """
+        logger.info(f"Analyzing article: {article.title}")
+        
+        # Try to fetch and analyze content
+        html_content = self.fetch_content(article.url)
+        
+        if html_content:
+            text = self.extract_text(html_content)
+            
+            # Calculate keyword-based scores
+            cancer_score = self.calculate_keyword_score(text, self.CANCER_KEYWORDS)
+            business_score = self.calculate_keyword_score(text, self.BUSINESS_KEYWORDS)
+            resilience_score = self.calculate_keyword_score(text, self.RESILIENCE_KEYWORDS)
+            
+            # Composite impact score (weighted average)
+            article.impact_score = (
+                cancer_score * 0.3 +
+                business_score * 0.35 +
+                resilience_score * 0.35
+            )
+            
+            logger.info(
+                f"Article impact score: {article.impact_score:.3f} "
+                f"(cancer: {cancer_score:.3f}, business: {business_score:.3f}, "
+                f"resilience: {resilience_score:.3f})"
+            )
+            
+            # Extract keywords from text
+            all_keywords = self.CANCER_KEYWORDS + self.BUSINESS_KEYWORDS + self.RESILIENCE_KEYWORDS
+            found_keywords = [kw for kw in all_keywords if kw.lower() in text.lower()]
+            article.keywords = list(set(found_keywords))
+            
+            # Create summary
+            sentences = [s.strip() for s in text.split('.') if s.strip()]
+            article.summary = '. '.join(sentences[:3]) + '.' if sentences else None
+        else:
+            logger.warning(f"Could not fetch content for {article.url}, using default score")
+            article.impact_score = 0.5
+        
+        return article
 
 
-def create_sample_journey() -> JourneyAnalyzer:
-    """Create sample journey data for demonstration"""
-    analyzer = JourneyAnalyzer()
-
-    # Add companies
-    companies_data = [
-        Company(
-            name="GitLab",
-            founded_year=2011,
-            phase=CompanyPhase.SCALING,
-            description="DevOps platform for the entire software development lifecycle",
-            team_size=2000,
-            funding="$1.1B Series H",
-            website="https://gitlab.com"
-        ),
-        Company(
-            name="Pluribis",
-            founded_year=2018,
-            phase=CompanyPhase.GROWTH,
-            description="Company founded during cancer treatment journey",
-            team_size=50,
-            website="https://pluribis.com"
-        )
-    ]
-
-    for company in companies_data:
-        analyzer.add_company(company)
-
-    # Add timeline events
-    events_data = [
-        TimelineEvent(
-            date="2011-09-01",
-            event_type="business",
-            title="GitLab Founded",
-            description="Sytse Sijbrandij and Dmitriy Zaporozhets found GitLab",
-            impact_level=10,
-            tags=["founding", "milestone", "devops"]
-        ),
-        TimelineEvent(
-            date="2015-06-01",
-            event_type="business",
-            title="Series A Funding",
-            description="GitLab raises Series A funding",
-            impact_level=8,
-            tags=["funding", "growth"]
-        ),
-        TimelineEvent(
-            date="2019-09-01",
-            event_type="business",
-            title="GitLab IPO",
-            description="GitLab goes public on NASDAQ",
-            impact_level=10,
-            tags=["ipo", "milestone", "exit"]
-        ),
-        TimelineEvent(
-            date="2021-06-01",
-            event_type="health",
-            title="Cancer Diagnosis",
-            description="Founder diagnosed with lymphoma",
-            impact_level=10,
-            tags=["health", "challenge", "diagnosis"]
-        ),
-        TimelineEvent(
-            date="2021-08-15",
-            event_type="health",
-            title="Treatment Begins",
-            description="Starts chemotherapy treatment while leading GitLab",
-            impact_level=9,
-            tags=["health", "treatment", "resilience"]
-        ),
-        TimelineEvent(
-            date="2018-05-01",
-            event_type="business",
-            title="Pluribis Founded",
-            description="Founded during cancer battle to explore new entrepreneurial ventures",
-            impact_level=8,
-            tags=["founding", "persistence", "entrepreneurship"]
-        ),
-        TimelineEvent(
-            date="2022-06-01",
-            event_type="health",
-            title="Remission Achieved",
-            description="Successfully enters remission after treatment",
-            impact_level=10,
-            tags=["health", "recovery", "remission", "milestone"]
-        ),
-        TimelineEvent(
-            date="2022-12-01",
-            event_type="business",
-            title="GitLab Market Leadership",
-            description="GitLab recognized as DevOps leader while founder recovers",
-            impact_level=8,
-            tags=["business", "achievement", "market"]
-        )
-    ]
-
-    for event in events_data:
-        analyzer.add_timeline_event(event)
-
-    return analyzer
+class ReportGenerator:
+    """Generate analysis reports in various formats."""
+    
+    def __init__(self):
+        logger.info("ReportGenerator initialized")
+    
+    def generate_json_report(self, articles: List[Article]) -> str:
+        """
+        Generate JSON report of articles.
+        
+        Args:
+            articles: List of articles to report on
+            
+        Returns:
+            JSON formatted report string
+        """
+        report = {
+            'generated_at': datetime.now().isoformat(),
+            'total_articles': len(articles),
+            'average_impact_score': sum(a.impact_score for a in articles) / len(articles) if articles else 0.0,
+            'articles': [a.to_dict() for a in articles]
+        }
+        return json.dumps(report, indent=2)
+    
+    def generate_text_report(self, articles: List[Article]) -> str:
+        """
+        Generate human-readable text report.
+        
+        Args:
+            articles: List of articles to report on
+            
+        Returns:
+            Text formatted report string
+        """
+        lines = [
+            "=" * 80,
+            "CONTENT ANALYSIS REPORT",
+            "=" * 80,
+            f"Generated: {datetime.now().isoformat()}",
+            f"Total Articles Analyzed: {len(articles)}",
+            ""
+        ]
+        
+        if articles:
+            avg_score = sum(a.impact_score for a in articles) / len(articles)
+            lines.append(f"Average Impact Score: {avg_score:.3f}")
+            lines.append("-" * 80)
+            lines.append("")
+            
+            # Sort by impact score
+            sorted_articles = sorted(articles, key=lambda a: a.impact_score, reverse=True)
+            
+            for i, article in enumerate(sorted_articles, 1):
+                lines.extend([
+                    f"{i}. {article.title}",
+                    f"   URL: {article.url}",
+                    f"   Author: {article.author}",
+                    f"   Type: {article.content_type.value}",
+                    f"   Category: {article.category}",
+                    f"   Impact Score: {article.impact_score:.3f}",
+                    f"   Keywords: {', '.join(article.keywords[:5])}",
+                    ""
+                ])
+        else:
+            lines.append("No articles to report.")
+        
+        lines.append("=" * 80)
+        return "\n".join(lines)
+    
+    def generate_csv_report(self, articles: List[Article]) -> str:
+        """
+        Generate CSV report.
+        
+        Args:
+            articles: List of articles to report on
+            
+        Returns:
+            CSV formatted report string
+        """
+        lines = [
+            "Title,Author,URL,Content Type,Category,Impact Score,Keywords"
+        ]
+        
+        for article in articles:
+            keywords_str = '|'.join(article.keywords[:5])
+            lines.append(
+                f'"{article.title}","{article.author}","{article.url}",'
+                f'"{article.content_type.value}","{article.category}",'
+                f'{article.impact_score:.3f},"{keywords_str}"'
+            )
+        
+        return "\n".join(lines)
 
 
 def main():
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Analyze founder journey through business and health challenges"
+        description='Analyze content related to founder battling cancer while building companies',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  %(prog)s --source https://sytse.com/cancer/ --format json
+  %(prog)s --source https://sytse.com/cancer/ --format text --output report.txt
+  %(prog)s --demo
+        '''
     )
+    
     parser.add_argument(
-        "--action",
-        choices=["analyze", "report", "export", "search", "metrics"],
-        default="report",
-        help="Action to perform"
-    )
-    parser.add_argument(
-        "--search-type",
-        choices=["event-type", "tag", "company"],
-        help="Type of search to perform"
-    )
-    parser.add_argument(
-        "--search-term",
+        '--source',
         type=str,
-        help="Search term or name to look for"
+        default='https://sytse.com/cancer/',
+        help='URL of the source article to analyze (default: GitLab founder cancer article)'
     )
+    
     parser.add_argument(
-        "--export-file",
+        '--format',
         type=str,
-        default="journey_report.json",
-        help="File path for JSON export"
+        choices=['json', 'text', 'csv'],
+        default='text',
+        help='Output format for the report (default: text)'
     )
+    
     parser.add_argument(
-        "--impact-threshold",
-        type=int,
-        default=7,
-        help="Threshold for high-impact events (1-10)"
+        '--output',
+        type=str,
+        default=None,
+        help='Output file path (default: stdout)'
     )
+    
     parser.add_argument(
-        "--log-level",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="INFO",
-        help="Logging level"
+        '--demo',
+        action='store_true',
+        help='Run with demo data instead of fetching from URL'
     )
-
+    
+    parser.add_argument(
+        '--log-level',
+        type=str,
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+        default='INFO',
+        help='Logging level (default: INFO)'
+    )
+    
     args = parser.parse_args()
-
+    
     # Set logging level
     logging.getLogger().setLevel(args.log_level)
-
-    # Create sample journey
-    analyzer = create_sample_journey()
-    logger.info("Sample journey data loaded")
-
-    # Execute requested action
-    if args.action == "report":
-        report = analyzer.generate_report()
-        print(json.dumps(report, indent=2))
-
-    elif args.action == "metrics":
-        metrics = analyzer.calculate_journey_metrics()
-        print(json.dumps(metrics, indent=2))
-
-    elif args.action == "search":
-        if not args.search_term:
-            logger.error("Search term required for search action")
+    logger.info(f"Starting analysis with log level {args.log_level}")
+    
+    # Create analyzer and generator
+    analyzer = ContentAnalyzer()
+    report_gen = ReportGenerator()
+    
+    # Prepare articles
+    articles = []
+    
+    if args.demo:
+        logger.info("Running in demo mode with sample data")
+        articles = [
+            Article(
+                title="Sytse Sijbrandij: How Cancer Changed My Perspective on Building Companies",
+                url="https://sytse.com/cancer/",
+                author="Sytse Sijbrandij",
+                date_published="2024-01-15",
+                content_type=ContentType.BLOG_POST,
+                category="Engineering",
+                impact_score=0.0,
+                keywords=[],
+                summary="A personal account of battling cancer while leading GitLab"
+            ),
+            Article(
+                title="Entrepreneurship and Resilience: Lessons from GitLab",
+                url="https://example.com/gitlab-lessons",
+                author="Tech Journal",
+                date_published="2024-02-20",
+                content_type=ContentType.INTERVIEW,
+                category="Engineering",
+                impact_score=0.0,
+                keywords=[],
+                summary="Interview about overcoming challenges in the tech industry"
+            ),
+            Article(
+                title="GitLab's Growth: Building While Fighting",
+                url="https://example.com/gitlab-growth",
+                author="Business Weekly",
+                date_published="2024-03-10",
+                content_type=ContentType.ARTICLE,
+                category="Engineering",
+                impact_score=0.0,
+                keywords=[],
+                summary="How GitLab maintained momentum during personal challenges"
+            )
+        ]
+    else:
+        logger.info(f"Analyzing article from {args.source}")
+        article = Article(
+            title="Founder's Journey: Cancer and Company Building",
+            url=args.source,
+            author="Sytse Sijbrandij",
+            date_published=datetime.now().strftime("%Y-%m-%d"),
+            content_type=ContentType.BLOG_POST,
+            category="Engineering",
+            impact_score=0.0,
+            keywords=[]
+        )
+        articles = [article]
+    
+    # Analyze articles
+    logger.info(f"Analyzing {len(articles)} article(s)")
+    analyzed_articles = []
+    for article in articles:
+        analyzed = analyzer.analyze_article(article)
+        analyzed_articles.append(analyzed)
+    
+    # Generate report
+    if args.format == 'json':
+        report = report_gen.generate_json_report(analyzed_articles)
+    elif args.format == 'csv':
+        report = report_gen.generate_csv_report(analyzed_articles)
+    else:
+        report = report_gen.generate_text_report(analyzed_articles)
+    
+    # Output report
+    if args.output:
+        try:
+            with open(args.output, 'w', encoding='utf-8') as f:
+                f.write(report)
+            logger.info(f"Report written to {args.output}")
+            print(f"Report successfully written to {args.output}")
+        except IOError as e:
+            logger.error(f"Failed to write report: {e}")
             sys.exit(1)
-
-        results = []
-        if args.search_type == "event-type":
-            results = analyzer.get_events_by_type(args.search_term)
-            print(f"Events of type '{args.search_term}':")
-        elif args.search_type == "tag":
-            results = analyzer.get_events_by_tag(args.search_term)
-            print(f"Events with tag '{args.search_term}':")
-        elif args.search_type == "company":
-            company = analyzer.get_company_by_name(args.search_term)
-            if company:
-                results = [company]
-            print(f"Company '{args.search_term}':")
-
-        for result in results:
-            if isinstance(result, TimelineEvent):
-                print(json.dumps(result.to_dict(), indent=2))
-            else:
-                print(json.dumps(result.to_dict(), indent=2))
-
-    elif args.action == "export":
-        success = analyzer.export_json(args.export_file)
-        if success:
-            print(f"Journey successfully exported to {args.export_file}")
-        else:
-            logger.error("Export failed")
-            sys.exit(1)
-
-    elif args.action == "analyze":
-        high_impact = analyzer.get_high_impact_events(args.impact_threshold)
-        analysis = {
-            "total_events": len(analyzer.timeline_events),
-            "high_impact_events": len(high_impact),
-            "high_impact_threshold": args.impact_threshold,
-            "events": [e.to_dict() for e in high_impact]
-        }
-        print(json.dumps(analysis, indent=2))
+    else:
+        print(report)
+    
+    logger.info("Analysis complete")
 
 
 if __name__ == "__main__":
