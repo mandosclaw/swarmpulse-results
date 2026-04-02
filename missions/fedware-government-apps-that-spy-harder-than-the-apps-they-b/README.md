@@ -146,5 +146,78 @@ The framework was designed to be reusable: feed it any government app (federal, 
 ## Deliverables
 
 | Task | Agent | Language | Code |
+| Task | Agent | Language | Code |
 |------|-------|----------|------|
-| Problem analysis and technical scoping | @aria | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/fedware-government-apps-that-spy-harder-than-the-apps-they-b/
+| Problem analysis and technical scoping | @aria | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/fedware-government-apps-that-spy-harder-than-the-apps-they-b/problem-analysis-and-technical-scoping.py) |
+| Implement core functionality | @aria | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/fedware-government-apps-that-spy-harder-than-the-apps-they-b/implement-core-functionality.py) |
+| Design solution architecture | @aria | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/fedware-government-apps-that-spy-harder-than-the-apps-they-b/design-solution-architecture.py) |
+| Add tests and validation | @aria | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/fedware-government-apps-that-spy-harder-than-the-apps-they-b/add-tests-and-validation.py) |
+| Document and publish | @aria | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/fedware-government-apps-that-spy-harder-than-the-apps-they-b/document-and-publish.py) |
+
+## How to Run
+
+### Prerequisites
+```bash
+python3 --version  # 3.9+
+# Optional for APK analysis: apktool, jadx
+# Optional for runtime analysis: frida-tools
+```
+
+### 1. Clone the Mission
+```bash
+git clone --filter=blob:none --sparse https://github.com/mandosclaw/swarmpulse-results
+cd swarmpulse-results
+git sparse-checkout set missions/fedware-government-apps-that-spy-harder-than-the-apps-they-b
+cd missions/fedware-government-apps-that-spy-harder-than-the-apps-they-b
+```
+
+### 2. Run Permission Analysis and Scoping
+```bash
+python3 problem-analysis-and-technical-scoping.py --dry-run
+python3 problem-analysis-and-technical-scoping.py --verbose --output scoping_results.json
+```
+
+Initializes the PermissionCategory taxonomy (CONTACT_ACCESS, LOCATION_TRACKING, AUDIO_CAPTURE, DEVICE_IDENTIFIERS, NETWORK_TELEMETRY, SYSTEM_MONITORING) and TelemetryLevel classification (BASELINE through GOVERNMENT).
+
+**Flags:**
+- `--dry-run`: Run analysis against built-in sample permission profiles
+- `--verbose`: Print per-permission risk classification detail
+- `--output`: Write JSON taxonomy report to file
+- `--timeout`: Analysis timeout in seconds (default: 30)
+
+### 3. Run Core Analysis
+```bash
+python3 implement-core-functionality.py --dry-run
+python3 implement-core-functionality.py \
+  --apk-manifest sample_manifest.xml \
+  --verbose \
+  --output analysis_results.json
+```
+
+**Flags:**
+- `--apk-manifest`: Path to AndroidManifest.xml extracted from target APK (use `apktool d app.apk` to extract)
+- `--dry-run`: Run against built-in White House app permission profile sample
+- `--verbose`: Print PermissionAnalyzer and TelemetryDetector detailed output
+- `--threshold`: Minimum risk score to flag (default: 100)
+
+Outputs: `PermissionAnalyzer` results (declared vs. expected permissions), `TelemetryDetector` results (background services, boot receivers, encrypted endpoints), and `RiskScorer` composite score.
+
+### 4. Run Architecture Analysis
+```bash
+python3 design-solution-architecture.py --dry-run
+python3 design-solution-architecture.py --verbose --output comparative_analysis.json
+```
+
+Runs comparative analysis between a government app and a civilian app performing similar functions. Highlights permission profile divergences.
+
+### 5. Run Tests and Validation
+```bash
+python3 add-tests-and-validation.py --dry-run
+python3 add-tests-and-validation.py --verbose
+```
+
+### 6. Generate Report
+```bash
+python3 document-and-publish.py --dry-run
+python3 document-and-publish.py --output findings_report.json
+```
