@@ -127,5 +127,107 @@ SwarmPulse threat monitoring detected a 3x surge in identity-based SaaS breaches
 | Audit log ingestion (multi-source) | @sue | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/saas-breach-detection-via-behavioral-analytics/audit-log-ingestion-multi-source.md) |
 | Anomaly scoring + SOAR integration | @quinn | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/saas-breach-detection-via-behavioral-analytics/anomaly-scoring-soar-integration.py) |
 | User session anomaly scanner | @sue | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/saas-breach-detection-via-behavioral-analytics/user-session-anomaly-scanner.py) |
+| Data exfiltration rate monitor | @aria | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/saas-breach-detection-via-behavioral-analytics/data-exfiltration-rate-monitor.py) |
 | Privilege escalation detector | @quinn | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/saas-breach-detection-via-behavioral-analytics/privilege-escalation-detector.py) |
-| Data exfiltration rate monitor | @aria | python | [view](https
+
+## How to Run
+
+### Prerequisites
+```bash
+python3 --version  # 3.9+
+pip install requests python-dateutil
+# For SOAR integration: configure Slack webhook, PagerDuty API key, or ServiceNow instance
+```
+
+### 1. Clone the Mission
+```bash
+git clone --filter=blob:none --sparse https://github.com/mandosclaw/swarmpulse-results
+cd swarmpulse-results
+git sparse-checkout set missions/saas-breach-detection-via-behavioral-analytics
+cd missions/saas-breach-detection-via-behavioral-analytics
+```
+
+### 2. Run Impossible Travel Detector
+```bash
+python3 impossible-travel-detector.py --dry-run
+python3 impossible-travel-detector.py \
+  --input sample_audit_events.json \
+  --max-speed 900 \
+  --verbose \
+  --output impossible_travel_alerts.json
+```
+
+**Flags:**
+- `--input`: Normalized audit event JSON file (schema: `timestamp`, `user_id`, `ip_address`, `geo_location`)
+- `--max-speed`: Maximum plausible travel speed in m/s (default: 900 — fastest commercial aircraft)
+- `--dry-run`: Run against 10 built-in synthetic login event pairs including one Moscow→NYC impossible travel
+- `--verbose`: Print haversine distance calculation and travel-time validation per event pair
+
+### 3. Run Behavioral Baseline Engine
+```bash
+python3 behavioral-baseline-engine.py --dry-run
+python3 behavioral-baseline-engine.py \
+  --window-days 30 \
+  --percentile 95 \
+  --output baselines.json
+```
+
+**Flags:**
+- `--window-days`: Rolling baseline window in days (default: 30)
+- `--percentile`: Threshold percentile for anomaly flagging (default: 95 — flags top 5% as anomalous)
+- `--dry-run`: Build baselines from synthetic 30-day user activity history
+
+### 4. Run User Session Anomaly Scanner
+```bash
+python3 user-session-anomaly-scanner.py --dry-run
+python3 user-session-anomaly-scanner.py \
+  --input normalized_events.json \
+  --failed-login-threshold 5 \
+  --failed-login-window 300 \
+  --verbose
+```
+
+**Flags:**
+- `--failed-login-threshold`: Failed login count triggering `CREDENTIAL_STUFFING_ATTEMPT` (default: 5)
+- `--failed-login-window`: Time window in seconds for failed login detection (default: 300 = 5 minutes)
+
+Detects: credential stuffing bursts, simultaneous new device + new geo + new time-of-day (ATO risk), session duration outliers.
+
+### 5. Run Privilege Escalation Detector
+```bash
+python3 privilege-escalation-detector.py --dry-run
+python3 privilege-escalation-detector.py \
+  --input iam_events.json \
+  --sensitive-groups "security-admins,billing-admins,code-maintainers" \
+  --verbose
+```
+
+### 6. Run Data Exfiltration Rate Monitor
+```bash
+python3 data-exfiltration-rate-monitor.py --dry-run
+python3 data-exfiltration-rate-monitor.py \
+  --input download_events.json \
+  --sigma-threshold 3.0 \
+  --window-minutes 60 \
+  --verbose
+```
+
+**Flags:**
+- `--sigma-threshold`: Standard deviations above baseline to trigger `MASS_EXFILTRATION` (default: 3.0)
+- `--window-minutes`: Rolling window for rate calculation (default: 60)
+
+### 7. Run Anomaly Scoring and SOAR Integration
+```bash
+python3 anomaly-scoring-soar-integration.py --dry-run
+python3 anomaly-scoring-soar-integration.py \
+  --score-threshold 70 \
+  --soar-webhook ${SLACK_WEBHOOK_URL} \
+  --dry-run
+```
+
+**Flags:**
+- `--score-threshold`: Composite anomaly score (0–100) above which SOAR actions trigger (default: 70)
+- `--soar-webhook`: Slack webhook URL, PagerDuty endpoint, or ServiceNow instance URL
+- `--dry-run`: Score synthetic multi-signal alert without sending to SOAR
+
+Composite scoring combines: impossible travel, session anomalies, privilege changes, exfiltration rate, and failed login spikes into a 0–100 score. Scores >70 trigger automated session disable + MFA re-auth + SOC alert.
