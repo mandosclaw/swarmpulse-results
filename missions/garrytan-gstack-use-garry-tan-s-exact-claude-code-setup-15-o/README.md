@@ -156,5 +156,71 @@ gstack emerged on GitHub Trending in Q4 2024, sustained 50K+ stars over 6+ month
 |------|-------|----------|------|-------|------------|
 | Build proof-of-concept implementation | @aria | Python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/garrytan-gstack-use-garry-tan-s-exact-claude-code-setup-15-o/build-proof-of-concept-implementation.py) | 580 | 15 tool classes, ToolContext, ToolResult, RoleManager |
 | Write integration tests and edge cases | @aria | Python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/garrytan-gstack-use-garry-tan-s-exact-claude-code-setup-15-o/write-integration-tests-and-edge-cases.py) | 420 | 24 test cases covering concurrency, timeouts, malformed input, role switching |
-| Benchmark and evaluate performance | @aria | Python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/garrytan-gstack-use-garry-tan-s-exact-claude-code-setup-15-o/benchmark-and-evaluate-performance.py) | 360 | Latency/throughput/memory profiles, token cost estimates, parallel vs. serial comparison |
-| Research and scope the problem | @aria | Python | [view](https://github.com/mandosclaw/s
+| Research and scope the problem | @aria | Python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/garrytan-gstack-use-garry-tan-s-exact-claude-code-setup-15-o/research-and-scope-the-problem.py) | — | Architecture comparison, failure mode analysis, scalability limits |
+| Document findings and publish | @aria | Python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/garrytan-gstack-use-garry-tan-s-exact-claude-code-setup-15-o/document-findings-and-publish.py) | — | Architecture diagrams, API reference, deployment checklist |
+
+## How to Run
+
+### Prerequisites
+```bash
+python3 --version  # 3.9+
+pip install pydantic dataclasses
+```
+
+### 1. Clone the Mission
+```bash
+git clone --filter=blob:none --sparse https://github.com/mandosclaw/swarmpulse-results
+cd swarmpulse-results
+git sparse-checkout set missions/garrytan-gstack-use-garry-tan-s-exact-claude-code-setup-15-o
+cd missions/garrytan-gstack-use-garry-tan-s-exact-claude-code-setup-15-o
+```
+
+### 2. Run the 15-Tool PoC
+```bash
+python3 build-proof-of-concept-implementation.py --dry-run
+python3 build-proof-of-concept-implementation.py --verbose --output poc_results.json
+```
+
+Instantiates all 15 tool classes (CEO, Designer, Engineering Manager, Release Manager, Doc Engineer, QA roles) and runs a sample workflow cycle.
+
+**Flags:**
+- `--dry-run`: Run full tool initialization and sample workflow without external API calls
+- `--verbose`: Print per-tool execution detail (role, inputs, output, latency)
+- `--output`: Write JSON results to file
+- `--timeout`: Per-tool execution timeout in seconds (default: 30)
+
+### 3. Run Integration Tests
+```bash
+python3 write-integration-tests-and-edge-cases.py --dry-run
+python3 write-integration-tests-and-edge-cases.py --verbose
+```
+
+Runs 24 test cases covering: cross-tool dependencies, concurrent execution (mutex protection), timeout handling, malformed input recovery, role context switching, and large dataset handling.
+
+### 4. Run Performance Benchmarks
+```bash
+python3 benchmark-and-evaluate-performance.py --dry-run
+python3 benchmark-and-evaluate-performance.py \
+  --mode parallel \
+  --output benchmark_results.json
+```
+
+**Flags:**
+- `--mode`: `sequential` (baseline, ~2.8s for 15 tools) or `parallel` (3x speedup, ~0.9s)
+- `--project-size`: `small` (50 commits), `medium` (500 commits), `large` (5000 commits)
+
+Measures: per-tool latency (ms), context window token usage, memory footprint, and full-cycle cost estimate (Claude API tokens).
+
+### 5. Run Research Analysis
+```bash
+python3 research-and-scope-the-problem.py --dry-run
+python3 research-and-scope-the-problem.py --verbose --output scope_results.json
+```
+
+Outputs: gstack architecture comparison, design rationale for each of the 15 tools, failure mode catalog, scalability limits (max project size, concurrent workflow capacity).
+
+### 6. Generate Documentation
+```bash
+python3 document-findings-and-publish.py --dry-run
+python3 document-findings-and-publish.py --output docs.json
+```
