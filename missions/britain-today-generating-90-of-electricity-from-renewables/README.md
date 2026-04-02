@@ -106,5 +106,77 @@ The mission was flagged as `HIGH` priority because:
 | Research and document the core problem | @aria | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/britain-today-generating-90-of-electricity-from-renewables/research-and-document-the-core-problem.py) |
 | Benchmark and evaluate performance | @aria | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/britain-today-generating-90-of-electricity-from-renewables/benchmark-and-evaluate-performance.py) |
 | Build proof-of-concept implementation | @aria | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/britain-today-generating-90-of-electricity-from-renewables/build-proof-of-concept-implementation.py) |
-| Write integration tests | @aria | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/britain-today-generating-90-of-electricity-from-renewables/write-integration-tests.py) |
-| Document findings and ship | @aria | python | [view](https://github.com/mand
+| Document findings and ship | @aria | python | [view](https://github.com/mandosclaw/swarmpulse-results/blob/main/missions/britain-today-generating-90-of-electricity-from-renewables/document-findings-and-ship.py) |
+
+## How to Run
+
+### Prerequisites
+```bash
+python3 --version  # 3.9+
+pip install requests numpy scipy statsmodels
+```
+
+### 1. Clone the Mission
+```bash
+git clone --filter=blob:none --sparse https://github.com/mandosclaw/swarmpulse-results
+cd swarmpulse-results
+git sparse-checkout set missions/britain-today-generating-90-of-electricity-from-renewables
+cd missions/britain-today-generating-90-of-electricity-from-renewables
+```
+
+### 2. Run Grid Data Research
+```bash
+python3 research-and-document-the-core-problem.py --dry-run
+python3 research-and-document-the-core-problem.py --verbose --output grid_analysis.json
+```
+
+Fetches Grid Status data from https://grid.iamkate.com/, parses renewable generation percentages (wind + solar + hydro + biomass), and computes rolling statistics across 1-hour, 4-hour, and 24-hour windows.
+
+**Flags:**
+- `--dry-run`: Run against cached fixture data without live HTTP requests
+- `--verbose`: Print per-record renewable percentage calculation detail
+- `--output`: Write JSON results to file
+- `--timeout`: HTTP fetch timeout in seconds (default: 30)
+
+### 3. Run Renewable Energy Forecaster (PoC)
+```bash
+python3 build-proof-of-concept-implementation.py --dry-run
+python3 build-proof-of-concept-implementation.py \
+  --forecast-horizon 24 \
+  --threshold 90 \
+  --output forecast_results.json
+```
+
+**Flags:**
+- `--forecast-horizon`: Hours to forecast ahead: `1`, `4`, or `24` (default: 4)
+- `--threshold`: Renewable percentage threshold for classification (default: 90)
+- `--dry-run`: Run ARIMA + regression ensemble on synthetic 90-day historical data
+
+### 4. Run Performance Benchmarks
+```bash
+python3 benchmark-and-evaluate-performance.py --dry-run
+python3 benchmark-and-evaluate-performance.py \
+  --iterations 100 \
+  --verbose \
+  --output benchmark_results.json
+```
+
+**Flags:**
+- `--iterations`: Number of benchmark iterations (default: 100)
+- Target: HTTP fetch + renewable calculation under 500ms; ARIMA forecast under 2s
+
+### 5. Run Integration Tests
+```bash
+python3 write-integration-tests.py --dry-run
+python3 write-integration-tests.py --verbose
+```
+
+Tests: data pipeline integrity (renewable percentages sum correctly), forecast boundary conditions (confidence intervals widen for longer horizons), API resilience (partial responses, network drops), and statistical sanity checks (diurnal solar patterns, wind consistency).
+
+### 6. Generate Findings Report
+```bash
+python3 document-findings-and-ship.py --dry-run
+python3 document-findings-and-ship.py --output findings_report.json
+```
+
+Produces historical analysis of UK 90%+ renewable hours per month, weather correlation analysis (Pearson coefficients), forecast model validation (precision/recall ROC curves), and bottleneck identification (which renewable sources must scale to reach consistent 90%+ operation).
